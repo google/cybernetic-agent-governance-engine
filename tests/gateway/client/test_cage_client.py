@@ -336,16 +336,20 @@ async def test_validate_action_defer_raises_deferral_pending(
     cage_client: CageClient,
     mock_gateway_url: str,
 ) -> None:
-    """Test HTTP 200 DEFER envelope raises DeferralPending with ticket_id."""
-    expires_at = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(hours=4)
+    """Test HTTP 200 DEFER envelope raises DeferralPending with separated ticket TTL."""
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    envelope_exp = now + timedelta(minutes=5)
+    defer_exp = now + timedelta(hours=4)
     envelope_data = create_mock_allow_envelope()
-    envelope_data["expires_at"] = expires_at.isoformat()
+    envelope_data["issued_at"] = now.isoformat()
+    envelope_data["expires_at"] = envelope_exp.isoformat()
     envelope_data["payload"] = {
         "verdict": "DEFER",
         "violations": [],
         "defer_token": "defer-ticket-789",
         "defer_reason": "Action requires manual approval",
         "retry_after_seconds": 14400,
+        "defer_expires_at": defer_exp.isoformat(),
     }
 
     respx.post(f"{mock_gateway_url}/governance/validate-action").mock(
@@ -366,8 +370,10 @@ async def test_validate_action_defer_raises_deferral_pending(
     assert exc.ticket_id == "defer-ticket-789"
     assert exc.defer_reason == "Action requires manual approval"
     assert exc.ttl_seconds == 14400
-    assert isinstance(exc.expires_at, datetime)
-    assert exc.expires_at > datetime.now(timezone.utc)
+    assert exc.defer_expires_at == defer_exp
+    assert exc.expires_at == defer_exp
+    assert exc.envelope_expires_at == envelope_exp
+    assert exc.defer_expires_at > datetime.now(timezone.utc) + timedelta(hours=3)
 
 
 @respx.mock
@@ -958,55 +964,63 @@ async def test_client_acts_only_on_the_values_that_were_signed(
     )
     valid_json = json.dumps(valid)
 
+    def _corr_of(req: httpx.Request) -> str:
+        return str(json.loads(req.content)["correlation_id"])
+
     def signed(body: dict[str, Any]) -> str:
         return json.dumps(
             _sign_client_envelope(body, priv_key=priv, kid=kid, alg="ES256")
         )
 
-    def signed_payload(**payload: Any) -> str:
+    def signed_with_corr(body: dict[str, Any], corr: str) -> str:
+        updated = {**body, "payload": {**body["payload"], "correlation_id": corr}}
+        return signed(updated)
+
+    def signed_payload(corr: str, **payload: Any) -> str:
         return json.dumps(
             _build_signed_allow_envelope(
                 action="query_portfolio",
                 parameters=params,
                 priv_key=priv,
                 kid=kid,
-                payload_overrides=payload,
+                payload_overrides={**payload, "correlation_id": corr},
             )
         )
 
     def relabelled(**signature: str) -> str:
         return json.dumps({**valid, "signature": {**valid["signature"], **signature}})
 
-    cases: list[tuple[str, str, type[CageGatewayError], str]] = [
+    cases: list[tuple[str, Any, type[CageGatewayError], str]] = [
         (
             "padded key beside the signed DENY",
-            signed_payload(
-                **{"verdict": "DENY", "decision": "DENY", "verdict ": "ALLOW"}
+            lambda corr: signed_payload(
+                corr, **{"verdict": "DENY", "decision": "DENY", "verdict ": "ALLOW"}
             ),
             PolicyViolationException,
             "POLICY_DENIED",
         ),
         (
             "padded subject.action",
-            signed(
+            lambda corr: signed_with_corr(
                 {
                     **valid,
                     "subject": {**valid["subject"], "action": " query_portfolio "},
-                }
+                },
+                corr,
             ),
             RoutingSealVerificationError,
             "subject.action mismatch",
         ),
         (
             "lower-case verdict",
-            signed_payload(verdict="allow", decision="allow"),
+            lambda corr: signed_payload(corr, verdict="allow", decision="allow"),
             CageGatewayError,
             "unrecognised verdict 'allow'",
         ),
         *[
             (
                 f"expires_at {value!r}",
-                signed({**valid, "expires_at": value}),
+                lambda _corr, v=value: signed({**valid, "expires_at": v}),
                 CageGatewayError,
                 "Failed to parse governance envelope",
             )
@@ -1014,25 +1028,29 @@ async def test_client_acts_only_on_the_values_that_were_signed(
         ],
         (
             "padded kid",
-            relabelled(kid=f" {kid}"),
+            lambda _corr: relabelled(kid=f" {kid}"),
             RoutingSealVerificationError,
             "unknown kid",
         ),
         (
             "padded signature value",
-            relabelled(value=f"{valid['signature']['value']} "),
+            lambda _corr: relabelled(value=f"{valid['signature']['value']} "),
             RoutingSealVerificationError,
             "Invalid base64url encoding",
         ),
         (
             "repeated key",
-            valid_json.replace('"payload": {', '"payload": {"verdict": "DENY", ', 1),
+            lambda _corr: valid_json.replace(
+                '"payload": {', '"payload": {"verdict": "DENY", ', 1
+            ),
             RoutingSealVerificationError,
             "duplicate JSON object key 'verdict'",
         ),
         (
             "NaN",
-            valid_json.replace('"payload": {', '"payload": {"score": NaN, ', 1),
+            lambda _corr: valid_json.replace(
+                '"payload": {', '"payload": {"score": NaN, ', 1
+            ),
             RoutingSealVerificationError,
             "non-finite JSON number NaN",
         ),
@@ -1042,14 +1060,22 @@ async def test_client_acts_only_on_the_values_that_were_signed(
     async with CageClient(
         gateway_url=mock_gateway_url, public_keys={kid: pem}
     ) as client:
-        route.mock(return_value=httpx.Response(200, content=valid_json.encode()))
+        route.mock(
+            side_effect=lambda req: httpx.Response(
+                200, content=signed_with_corr(valid, _corr_of(req)).encode()
+            )
+        )
         allowed = await client.validate_action(
             action="query_portfolio", parameters=params, agent_id="test-agent"
         )
         assert allowed.payload["verdict"] == "ALLOW"
 
-        for name, body, expected, message in cases:
-            route.mock(return_value=httpx.Response(200, content=body.encode()))
+        for name, body_fn, expected, message in cases:
+            route.mock(
+                side_effect=lambda req, fn=body_fn: httpx.Response(
+                    200, content=fn(_corr_of(req)).encode()
+                )
+            )
             try:
                 await client.validate_action(
                     action="query_portfolio", parameters=params, agent_id="test-agent"
@@ -1164,7 +1190,21 @@ async def test_only_es256_and_eddsa_are_accepted(
         gateway_url=mock_gateway_url,
         public_keys={"p256-kid": p256_priv.public_key().public_bytes(*pem)},
     ) as client:
-        route.mock(return_value=httpx.Response(status_code=200, json=valid_env))
+        route.mock(
+            side_effect=lambda req: httpx.Response(
+                status_code=200,
+                json=_build_signed_allow_envelope(
+                    action="query_portfolio",
+                    parameters=params,
+                    priv_key=p256_priv,
+                    kid="p256-kid",
+                    alg="ES256",
+                    payload_overrides={
+                        "correlation_id": json.loads(req.content)["correlation_id"]
+                    },
+                ),
+            )
+        )
         verified = await client.validate_action(
             action="query_portfolio", parameters=params, agent_id="test-agent"
         )
@@ -1360,7 +1400,21 @@ async def test_evaluated_action_hash_is_signed_metadata_never_the_request_bindin
             kid="ec-pin-01",
             subject_overrides={"evaluated_action_hash": evaluated_hash},
         )
-        respx.post(route).mock(return_value=httpx.Response(status_code=200, json=env))
+        respx.post(route).mock(
+            side_effect=lambda req: httpx.Response(
+                status_code=200,
+                json=_build_signed_allow_envelope(
+                    action="query_portfolio",
+                    parameters=params,
+                    priv_key=priv,
+                    kid="ec-pin-01",
+                    subject_overrides={"evaluated_action_hash": evaluated_hash},
+                    payload_overrides={
+                        "correlation_id": json.loads(req.content)["correlation_id"]
+                    },
+                ),
+            )
+        )
         accepted = await client.validate_action(
             action="query_portfolio", parameters=params, agent_id="test-agent"
         )
@@ -1439,18 +1493,26 @@ async def test_jwks_ttl_staleness_304_and_key_rotation_eviction(
         priv_key=priv1,
         kid="rot-kid-1",
     )
-    env2 = _build_signed_allow_envelope(
-        action="query_portfolio",
-        parameters=params,
-        priv_key=priv2,
-        kid="rot-kid-2",
-    )
+
+    def _sign_rot(priv_k: Any, kid_k: str):
+        return lambda req: httpx.Response(
+            status_code=200,
+            json=_build_signed_allow_envelope(
+                action="query_portfolio",
+                parameters=params,
+                priv_key=priv_k,
+                kid=kid_k,
+                payload_overrides={
+                    "correlation_id": json.loads(req.content)["correlation_id"]
+                },
+            ),
+        )
 
     jwks_route = respx.get(f"{mock_gateway_url}/governance/.well-known/jwks.json").mock(
         return_value=httpx.Response(status_code=200, json={"keys": [jwk1]})
     )
     respx.post(f"{mock_gateway_url}/governance/validate-action").mock(
-        return_value=httpx.Response(status_code=200, json=env1)
+        side_effect=_sign_rot(priv1, "rot-kid-1")
     )
 
     client = CageClient(
@@ -1491,7 +1553,7 @@ async def test_jwks_ttl_staleness_304_and_key_rotation_eviction(
             return_value=httpx.Response(status_code=200, json={"keys": [jwk2]})
         )
         respx.post(f"{mock_gateway_url}/governance/validate-action").mock(
-            return_value=httpx.Response(status_code=200, json=env2)
+            side_effect=_sign_rot(priv2, "rot-kid-2")
         )
         clock[0] = 4700.0
         await client.validate_action(

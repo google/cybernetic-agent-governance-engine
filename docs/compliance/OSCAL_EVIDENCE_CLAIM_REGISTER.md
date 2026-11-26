@@ -4,25 +4,25 @@
 
 ## 1. Executive Summary & Cross-Tabulation
 
-Across all 8 structured OSCAL files (`212` entries plus `SA11-SYSTEMIC` = **`213` entries**), **`120` entries are substantively graded CAGE claims** (`28 HOLDS` / `23.3%`, `68 WEAKER`, `24 NOT_IN_FORCE`), alongside **`45 INHERITED`** (`common-controls-catalog.yaml`), **`35 ROLLUP`** (`29` generated `SA-11` by-components evaluated together under `SA11-SYSTEMIC` plus `6` duplicate `component-definition.yaml` entries), and **`13 NOT_A_CLAIM`** (`planned` or `under-development`).
+Across all 8 structured OSCAL files (`212` entries plus `SA11-SYSTEMIC` = **`213` entries**), **`120` entries are substantively graded CAGE claims** (`29 HOLDS` / `24.2%`, `67 WEAKER`, `24 NOT_IN_FORCE`), alongside **`45 INHERITED`** (`common-controls-catalog.yaml`), **`35 ROLLUP`** (`29` generated `SA-11` by-components evaluated together under `SA11-SYSTEMIC` plus `6` duplicate `component-definition.yaml` entries), and **`13 NOT_A_CLAIM`** (`planned` or `under-development`).
 
 | Slice | OSCAL File(s) | Entries | `HOLDS` | `WEAKER` | `NOT_IN_FORCE` | `INHERITED` | `ROLLUP` | `NOT_A_CLAIM` | `w_binding=true` | Reopen |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | **Ring 1a** | [`system-security-plan.yaml`](../../compliance/oscal/system-security-plan.yaml) (`US_FED`) | 54 | 4 | 31 | 8 | 0 | 9 | 2 | 12 | 1 |
 | **Ring 1b** | [`system-security-plan-eu-ecb.yaml`](../../compliance/oscal/system-security-plan-eu-ecb.yaml), [`system-security-plan-apac-mas.yaml`](../../compliance/oscal/system-security-plan-apac-mas.yaml) + `SA11-SYSTEMIC` | 47 | 10 | 7 | 0 | 0 | 19 | 11 | 1 | 0 |
-| **Ring 2a** | [`sp800-53-component-definition.yaml`](../../compliance/oscal/sp800-53-component-definition.yaml), [`components/cage_client_sdk.yaml`](../../compliance/oscal/components/cage_client_sdk.yaml) | 38 | 14 | 17 | 7 | 0 | 0 | 0 | 6 | 1 |
+| **Ring 2a** | [`sp800-53-component-definition.yaml`](../../compliance/oscal/sp800-53-component-definition.yaml), [`components/cage_client_sdk.yaml`](../../compliance/oscal/components/cage_client_sdk.yaml) | 38 | 15 | 16 | 7 | 0 | 0 | 0 | 6 | 1 |
 | **Ring 2b** | [`component-definition.yaml`](../../compliance/oscal/component-definition.yaml), [`stpa_compiler_ssp_patch.yaml`](../../compliance/oscal/stpa_compiler_ssp_patch.yaml) | 29 | 0 | 13 | 9 | 0 | 7 | 0 | 6 | 1 |
 | **Ring 2c** | [`common-controls-catalog.yaml`](../../compliance/oscal/common-controls-catalog.yaml) | 45 | 0 | 0 | 0 | 45 | 0 | 0 | 0 | 0 |
-| **Total** | **All 8 OSCAL structured files + `SA11-SYSTEMIC`** | **213** | **28** | **68** | **24** | **45** | **35** | **13** | **25** | **3** |
+| **Total** | **All 8 OSCAL structured files + `SA11-SYSTEMIC`** | **213** | **29** | **67** | **24** | **45** | **35** | **13** | **25** | **3** |
 
 ### Read-Back x Verdict (120 Substantively Graded Entries: `HOLDS` + `WEAKER` + `NOT_IN_FORCE`)
 
 | `read_back` Grade | `HOLDS` | `WEAKER` | `NOT_IN_FORCE` | Total | Rate Holding |
 |---|---:|---:|---:|---:|---:|
-| **`OBSERVES`** (behavioural / runtime check exists) | 25 | 50 | 6 | 81 | 30.9% |
+| **`OBSERVES`** (behavioural / runtime check exists) | 26 | 49 | 6 | 81 | 32.1% |
 | **`PRESENCE`** (static / shape / consistency check only) | 3 | 11 | 5 | 19 | 15.8% |
 | **`NONE`** (no check or schema-broken Lula check) | 0 | 7 | 13 | 20 | 0.0% |
-| **Total** | **28** | **68** | **24** | **120** | **23.3%** |
+| **Total** | **29** | **67** | **24** | **120** | **24.2%** |
 
 ### Baseline Sweep Reopenings (Classified by Closure-Failure Shape)
 
@@ -170,7 +170,7 @@ Across all 8 structured OSCAL files (`212` entries plus `SA11-SYSTEMIC` = **`213
 | `1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d` | `ac-3` | CAGE Client SDK (`partially-i…`) | Preview-plane HTTP access mediation in CageClient.validate_action(); fail-closed HTT… | **`CONFIG`**: Client-side preview library; CageClient.validate_action() evaluates POST /… | **`OBSERVES`**: tests/gateway/client/test_cage_client.py:90-415 and packages/cage-client/t… | **`REPO`**: Client wheel code at commit. | **`False`** | **`HOLDS`** (`holds`) | — [`POAM-2026-251 (open)`] |
 | `2b3c4d5e-6f7a-8b9c-0d1e-2f3a4b5c6d7e` | `au-10` | CAGE Client SDK (`partially-i…`) | Client-side RFC 8785 JCS asymmetric signature verification (ES256/EdDSA only) agains… | **`CONFIG`**: Client-side signature verifier; JwksKeyResolver._refresh() evicts cached k… | **`OBSERVES`**: tests/gateway/client/test_cage_client.py:500-1200 and packages/cage-client… | **`REPO`**: Client wheel code at commit. | **`False`** | **`HOLDS`** (`holds`) | — [`POAM-2026-241 (open)`] |
 | `3c4d5e6f-7a8b-9c0d-1e2f-3a4b5c6d7e8f` | `sc-8` | CAGE Client SDK (`implemented`) | create_mtls_transport() enforces CERT_REQUIRED, check_hostname, fail-closed cert/key… | **`CONFIG`**: Client transport configuration in code. | **`OBSERVES`**: tests/gateway/client/test_cage_client.py:417-485 (unit/local) verifies tes… | **`REPO`**: Client wheel code at commit. | **`False`** | **`HOLDS`** (`holds`) | — |
-| `4d5e6f7a-8b9c-0d1e-2f3a-4b5c6d7e8f9a` | `sc-23` | CAGE Client SDK (`partially-i…`) | CageClient verifies timezone-aware issued_at/expires_at windows and constant-time RF… | **`CONFIG`**: Client-side freshness and action_hash verifier; per-call correlation_id is… | **`OBSERVES`**: tests/gateway/client/test_cage_client.py:1201-1650 (unit/local) verifies e… | **`REPO`**: Client wheel code at commit. | **`False`** | **`WEAKER`** (`fix`) | Bind per-call correlation_id inside GovernanceEnvelope.payload and separate defer_expires_at from 5-minute envelop… [`POAM-2026-241`] |
+| `4d5e6f7a-8b9c-0d1e-2f3a-4b5c6d7e8f9a` | `sc-23` | CAGE Client SDK (`implemented`) | CageClient verifies timezone-aware issued_at/expires_at windows, constant-time RFC 8… | **`CONFIG`**: Client-side freshness, action_hash, and per-call correlation_id verifier p… | **`OBSERVES`**: packages/cage-client/tests/test_sc23_correlation_and_ttl.py:1-338, tests/g… | **`REPO`**: Client wheel + gateway code at commit. | **`False`** | **`HOLDS`** (`holds`) | — |
 
 ## 5. Ring 2b — `component-definition.yaml` & `stpa_compiler_ssp_patch.yaml` (29 entries)
 

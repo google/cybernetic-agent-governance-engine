@@ -166,8 +166,12 @@ def _signed_preview_envelope(
     priv: Any,
     kid: str,
     alg: str = "EdDSA",
+    correlation_id: str | None = None,
 ) -> dict[str, Any]:
     now = datetime.now(timezone.utc)
+    final_payload = dict(payload)
+    if correlation_id is not None:
+        final_payload["correlation_id"] = correlation_id
     env = {
         "envelope_version": "3.0",
         "envelope_type": "cage_governance_decision",
@@ -185,7 +189,7 @@ def _signed_preview_envelope(
             "agent_id": "trader-01",
         },
         "governance_context": {"policy_version": "sha256:abc", "tiers_passed": ["opa"]},
-        "payload": payload,
+        "payload": final_payload,
     }
     return _sign_jcs(env, priv=priv, kid=kid, alg=alg)
 
@@ -209,6 +213,9 @@ def test_preview_covers_all_five_governance_decisions() -> None:
     def handler(req: httpx.Request) -> httpx.Response:
         if req.url.path == "/governance/.well-known/jwks.json":
             return httpx.Response(200, json={"keys": [jwk]})
+        import json as _json
+
+        corr = _json.loads(req.content).get("correlation_id")
         cur = mode[0]
         if cur == "ALLOW":
             return httpx.Response(
@@ -219,6 +226,7 @@ def test_preview_covers_all_five_governance_decisions() -> None:
                     payload={"verdict": "ALLOW"},
                     priv=priv,
                     kid=jwk["kid"],
+                    correlation_id=corr,
                 ),
             )
         if cur == "NARROW":
@@ -234,6 +242,7 @@ def test_preview_covers_all_five_governance_decisions() -> None:
                     },
                     priv=priv,
                     kid=jwk["kid"],
+                    correlation_id=corr,
                 ),
             )
         if cur == "DENY":
@@ -250,9 +259,15 @@ def test_preview_covers_all_five_governance_decisions() -> None:
                     },
                     priv=priv,
                     kid=jwk["kid"],
+                    correlation_id=corr,
                 ),
             )
         if cur == "REQUIRE_APPROVAL":
+            defer_exp = (
+                (datetime.now(timezone.utc) + timedelta(hours=4))
+                .isoformat(timespec="milliseconds")
+                .replace("+00:00", "Z")
+            )
             return httpx.Response(
                 200,
                 json=_signed_preview_envelope(
@@ -262,9 +277,12 @@ def test_preview_covers_all_five_governance_decisions() -> None:
                         "verdict": "REQUIRE_APPROVAL",
                         "deferred_id": "def-req-1",
                         "defer_reason": "amount_threshold",
+                        "ttl_seconds": 14400,
+                        "defer_expires_at": defer_exp,
                     },
                     priv=priv,
                     kid=jwk["kid"],
+                    correlation_id=corr,
                 ),
             )
         if cur == "DEFER":
@@ -277,9 +295,11 @@ def test_preview_covers_all_five_governance_decisions() -> None:
                         "verdict": "DEFER",
                         "defer_token": "def-hold-1",
                         "defer_reason": "CONFIDENCE_BELOW_THRESHOLD",
+                        "retry_after_seconds": 300,
                     },
                     priv=priv,
                     kid=jwk["kid"],
+                    correlation_id=corr,
                 ),
             )
         return httpx.Response(503, json={"error": "redis_unavailable"})
@@ -317,12 +337,17 @@ def test_preview_covers_all_five_governance_decisions() -> None:
             assert r_req.decision is GovernanceDecision.DEFERRED
             assert r_req.requires_approval is True
             assert r_req.deferred_id == "def-req-1"
+            assert r_req.defer_expires_at is not None
+            assert r_req.defer_expires_at > datetime.now(timezone.utc) + timedelta(
+                hours=3
+            )
 
             mode[0] = "DEFER"
             r_def = await client.preview("execute_trade", params, "trader-01")
             assert r_def.decision is GovernanceDecision.DEFERRED
             assert r_def.requires_approval is False
             assert r_def.deferred_id == "def-hold-1"
+            assert r_def.defer_expires_at is not None
 
             mode[0] = "503"
             r_unavail = await client.preview("execute_trade", params, "trader-01")
@@ -814,6 +839,7 @@ def test_governed_tool_node_pairs_all_tool_messages_on_batch_halt() -> None:
                     payload={"verdict": "ALLOW"},
                     priv=priv,
                     kid=jwk["kid"],
+                    correlation_id=data.get("correlation_id"),
                 ),
             )
         p = data["params"]
@@ -923,6 +949,7 @@ def test_governed_tool_node_routes_unavailable_decode_error_and_gateway_error() 
                     payload={"verdict": "ALLOW"},
                     priv=priv,
                     kid=jwk["kid"],
+                    correlation_id=data.get("correlation_id"),
                 ),
             )
         if mode[0] == "503":
@@ -1036,6 +1063,7 @@ def test_real_checkpointer_defer_interrupt_resume_redeem_and_second_replay_refus
                     },
                     priv=priv,
                     kid=jwk["kid"],
+                    correlation_id=data.get("correlation_id"),
                 ),
             )
         p = data["params"]

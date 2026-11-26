@@ -73,7 +73,7 @@ from .crypto import (
     load_pinned_public_key,
     verify_envelope_signature,
 )
-from .envelope import GovernanceEnvelope
+from .envelope import _RFC3339_TIMESTAMP, GovernanceEnvelope
 from .exceptions import (
     CageGatewayError,
     CommitOutcomeDecodeError,
@@ -98,6 +98,7 @@ from .outcomes import (
 _HTTP2_AVAILABLE = importlib.util.find_spec("h2") is not None
 
 _USER_AGENT = "CageClient/0.5.0"
+_DEFAULT_DEFER_TTL_S = 14400
 _BRACKETED_CODE_RE = re.compile(r"^\[([A-Za-z0-9_.:-]+)\]\s+")
 _DEV_POSTURES: frozenset[str] = frozenset({"dev", "development", "test", "testing"})
 _ALLOWED_SIGNATURE_KEYS: frozenset[str] = frozenset({"algorithm", "kid", "value"})
@@ -409,12 +410,18 @@ class CageClient:
 
         if response.status_code == 200:
             return await self._handle_allow_response(
-                response, action=action, parameters=parameters
+                response,
+                action=action,
+                parameters=parameters,
+                correlation_id=correlation_id,
             )
 
         if response.status_code == 403:
             await self._handle_deny_response(
-                response, action=action, parameters=parameters
+                response,
+                action=action,
+                parameters=parameters,
+                correlation_id=correlation_id,
             )
             raise AssertionError("_handle_deny_response must raise")
 
@@ -550,6 +557,7 @@ class CageClient:
         *,
         action: str | None,
         parameters: Mapping[str, Any] | None,
+        correlation_id: str | None = None,
     ) -> None:
         if not action or parameters is None:
             raise RoutingSealVerificationError(
@@ -573,6 +581,19 @@ class CageClient:
             raise RoutingSealVerificationError(
                 "GovernanceEnvelope subject.action_hash does not match requested action parameters"
             )
+        if correlation_id is not None:
+            envelope_corr = envelope.payload.get("correlation_id")
+            if not isinstance(envelope_corr, str) or not envelope_corr.strip():
+                raise RoutingSealVerificationError(
+                    "GovernanceEnvelope payload is missing required non-empty 'correlation_id' binding"
+                )
+            if not hmac.compare_digest(
+                envelope_corr.encode("utf-8"),
+                correlation_id.encode("utf-8"),
+            ):
+                raise RoutingSealVerificationError(
+                    "GovernanceEnvelope payload.correlation_id does not match request correlation_id"
+                )
 
     @staticmethod
     def _extract_envelope_dict(
@@ -608,6 +629,7 @@ class CageClient:
         *,
         action: str | None = None,
         parameters: Mapping[str, Any] | None = None,
+        correlation_id: str | None = None,
         response_label: str = "ALLOW",
     ) -> GovernanceEnvelope:
         """Parse and cryptographically verify a ``GovernanceEnvelope`` response fail-closed.
@@ -616,7 +638,8 @@ class CageClient:
         embedded-key rejection, strict immutable Pydantic parsing, out-of-band ``kid``
         ``ES256``/``EdDSA`` signature verification over RFC 8785 JCS canonical bytes,
         timezone-aware ``issued_at``/``expires_at`` freshness, and ``subject.action`` +
-        ``subject.action_hash`` request binding before any verdict is read or dispatched.
+        ``subject.action_hash`` + ``payload.correlation_id`` request binding before any
+        verdict is read or dispatched.
         """
         # The signature covers one reading of these bytes, so refuse JSON that a
         # second parser could read differently (a repeated key) or that is not
@@ -649,7 +672,12 @@ class CageClient:
             await self._verify_signature_block(envelope_data, envelope)
         self._verify_timestamps(envelope)
         if self._verify_subject:
-            self._verify_subject_binding(envelope, action=action, parameters=parameters)
+            self._verify_subject_binding(
+                envelope,
+                action=action,
+                parameters=parameters,
+                correlation_id=correlation_id,
+            )
         return envelope
 
     @staticmethod
@@ -753,18 +781,66 @@ class CageClient:
             or _non_blank_str(envelope.payload.get("reason"))
             or "Human approval required"
         )
-        ttl_seconds = int(
-            envelope.payload.get("ttl_seconds")
-            or envelope.payload.get("retry_after_seconds")
-            or 14400
-        )
+
+        raw_ttl = envelope.payload.get("ttl_seconds")
+        if raw_ttl is None:
+            raw_ttl = envelope.payload.get("retry_after_seconds")
+        parsed_ttl: int | None = None
+        if raw_ttl is not None:
+            if (
+                isinstance(raw_ttl, bool)
+                or not isinstance(raw_ttl, int)
+                or raw_ttl <= 0
+            ):
+                raise CageGatewayError(
+                    "DEFER envelope carries invalid non-positive 'ttl_seconds' or 'retry_after_seconds'"
+                )
+            parsed_ttl = raw_ttl
+
+        raw_defer_exp = envelope.payload.get("defer_expires_at")
+        parsed_defer_exp: datetime | None = None
+        if raw_defer_exp is not None:
+            if not isinstance(raw_defer_exp, str) or not _RFC3339_TIMESTAMP.fullmatch(
+                raw_defer_exp
+            ):
+                raise CageGatewayError(
+                    "DEFER envelope carries invalid RFC 3339 'defer_expires_at'"
+                )
+            parsed_defer_exp = datetime.fromisoformat(
+                raw_defer_exp.replace("Z", "+00:00")
+            )
+
+        if parsed_defer_exp is not None:
+            defer_expires_at = parsed_defer_exp
+            ttl_seconds = (
+                parsed_ttl
+                if parsed_ttl is not None
+                else max(
+                    1, int((parsed_defer_exp - envelope.issued_at).total_seconds())
+                )
+            )
+        else:
+            if parsed_ttl is not None:
+                ttl_seconds = parsed_ttl
+            else:
+                logger.warning(
+                    "DEFER envelope missing 'defer_expires_at' and 'ttl_seconds'; "
+                    "defaulting deferral TTL to %ds (envelope_id=%s)",
+                    _DEFAULT_DEFER_TTL_S,
+                    envelope.envelope_id,
+                )
+                ttl_seconds = _DEFAULT_DEFER_TTL_S
+            defer_expires_at = envelope.issued_at + timedelta(seconds=ttl_seconds)
+
         verdict_val = CageClient._extract_verdict(envelope)
         raise DeferralPending(
             ticket_id=ticket_id,
             defer_reason=defer_reason,
-            expires_at=envelope.expires_at,
+            expires_at=defer_expires_at,
             ttl_seconds=ttl_seconds,
             verdict=str(verdict_val) if isinstance(verdict_val, str) else None,
+            defer_expires_at=defer_expires_at,
+            envelope_expires_at=envelope.expires_at,
         )
 
     async def preview(
@@ -837,6 +913,7 @@ class CageClient:
                 gateway_verdict=verdict_str,
                 deferred_id=exc.ticket_id,
                 defer_reason=exc.defer_reason,
+                defer_expires_at=exc.defer_expires_at,
                 requires_approval=(verdict_str == "REQUIRE_APPROVAL"),
             )
         except RoutingSealVerificationError as exc:
@@ -1146,14 +1223,15 @@ class CageClient:
         *,
         action: str | None = None,
         parameters: Mapping[str, Any] | None = None,
+        correlation_id: str | None = None,
     ) -> GovernanceEnvelope:
         """
         Parse, cryptographically verify, and mediate an HTTP 200 envelope response.
 
         Verifies out-of-band ``kid`` signature, ``expires_at`` freshness, and
-        ``subject.action`` + ``subject.action_hash`` request binding **before**
-        returning ``ALLOW`` or dispatching ``NARROW``, ``DENY``/``DENIED``, or
-        ``DEFER``/``REQUIRE_APPROVAL`` verdicts.
+        ``subject.action`` + ``subject.action_hash`` + ``payload.correlation_id``
+        request binding **before** returning ``ALLOW`` or dispatching ``NARROW``,
+        ``DENY``/``DENIED``, or ``DEFER``/``REQUIRE_APPROVAL`` verdicts.
 
         Security & Verification Scope:
             1. ``GovernanceEnvelope.signature``, ``expires_at``, and ``subject``
@@ -1164,7 +1242,11 @@ class CageClient:
                signature verification.**
         """
         envelope = await self._verify_envelope_response(
-            response, action=action, parameters=parameters, response_label="ALLOW"
+            response,
+            action=action,
+            parameters=parameters,
+            correlation_id=correlation_id,
+            response_label="ALLOW",
         )
 
         # Matched exactly as signed: no case folding, no coercion to str.
@@ -1194,20 +1276,25 @@ class CageClient:
         *,
         action: str | None = None,
         parameters: Mapping[str, Any] | None = None,
+        correlation_id: str | None = None,
     ) -> NoReturn:
         """
         Parse, cryptographically verify, and mediate an HTTP 403 refusal envelope.
 
         Applies the exact same strict JSON parsing, out-of-band ``kid`` ``ES256`` /
         ``EdDSA`` signature verification, ``expires_at`` freshness, and
-        ``subject.action`` + ``subject.action_hash`` request binding as HTTP 200
-        before raising ``PolicyViolationException``. Non-envelope 403 responses
-        (for example, mesh/proxy rejections) raise ``CageGatewayError``; unsigned,
-        tampered, expired, or misbound 403 envelopes raise
-        ``RoutingSealVerificationError``.
+        ``subject.action`` + ``subject.action_hash`` + ``payload.correlation_id``
+        request binding as HTTP 200 before raising ``PolicyViolationException``.
+        Non-envelope 403 responses (for example, mesh/proxy rejections) raise
+        ``CageGatewayError``; unsigned, tampered, expired, or misbound 403 envelopes
+        raise ``RoutingSealVerificationError``.
         """
         envelope = await self._verify_envelope_response(
-            response, action=action, parameters=parameters, response_label="DENY"
+            response,
+            action=action,
+            parameters=parameters,
+            correlation_id=correlation_id,
+            response_label="DENY",
         )
 
         verdict = self._extract_verdict(envelope)

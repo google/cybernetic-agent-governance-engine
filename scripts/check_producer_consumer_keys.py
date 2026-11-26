@@ -1458,6 +1458,7 @@ def collect_gateway_http_producers(
             "handle_require_approval",
             "handle_defer",
             "_reliance_field",
+            "_defer_ttl_fields",
         ):
             v_fn = verdicts_mod.functions.get(fn_name)
             if v_fn is not None:
@@ -1480,6 +1481,29 @@ def collect_gateway_http_producers(
                                 node.value.body, verdicts_mod, modules, catalog
                             )
                         )
+
+    env_mod = modules.get("src.gateway.governance.governance_envelope")
+    if env_mod is not None:
+        builder_cls = env_mod.classes.get("GovernanceEnvelopeBuilder")
+        if builder_cls is not None:
+            for item in builder_cls.body:
+                if (
+                    isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and item.name == "build_unsigned"
+                ):
+                    for node in ast.walk(item):
+                        if isinstance(node, ast.Assign):
+                            for tgt in node.targets:
+                                if (
+                                    isinstance(tgt, ast.Subscript)
+                                    and isinstance(tgt.value, ast.Name)
+                                    and tgt.value.id == "payload_data"
+                                ):
+                                    added = _resolve_expr_strings(
+                                        tgt.slice, env_mod, modules
+                                    )
+                                    http_cat.validate_action_payload_keys.update(added)
+                                    http_cat.validate_action_refusal_keys.update(added)
 
     # validate_action_endpoint hoists external_attestations out of payload_result.
     http_cat.validate_action_payload_keys.discard("external_attestations")

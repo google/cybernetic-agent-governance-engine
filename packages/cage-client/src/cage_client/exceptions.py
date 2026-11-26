@@ -57,15 +57,21 @@ class DeferralPending(CageGatewayError):
         expires_at: datetime,
         ttl_seconds: int = 14400,
         verdict: str | None = None,
+        defer_expires_at: datetime | None = None,
+        envelope_expires_at: datetime | None = None,
     ) -> None:
         self.ticket_id = ticket_id
         self.defer_reason = defer_reason
-        self.expires_at = expires_at
+        self.defer_expires_at = (
+            defer_expires_at if defer_expires_at is not None else expires_at
+        )
+        self.expires_at = self.defer_expires_at
+        self.envelope_expires_at = envelope_expires_at
         self.ttl_seconds = ttl_seconds
         self.verdict = verdict
         super().__init__(
             f"Action deferred: {defer_reason} [ticket_id={ticket_id}, "
-            f"expires_at={expires_at.isoformat()}]"
+            f"expires_at={self.defer_expires_at.isoformat()}]"
         )
 
 
