@@ -56,15 +56,38 @@ class DeferralPending(CageGatewayError):
         defer_reason: str,
         expires_at: datetime,
         ttl_seconds: int = 14400,
+        verdict: str | None = None,
     ) -> None:
         self.ticket_id = ticket_id
         self.defer_reason = defer_reason
         self.expires_at = expires_at
         self.ttl_seconds = ttl_seconds
+        self.verdict = verdict
         super().__init__(
             f"Action deferred: {defer_reason} [ticket_id={ticket_id}, "
             f"expires_at={expires_at.isoformat()}]"
         )
+
+
+class GatewayUnavailableError(CageGatewayError):
+    """Raised when the gateway is unavailable before committing actuation (HTTP 503/429/connect error)."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        error_code: str | None = None,
+        dependency: str | None = None,
+        failure_code: str | None = None,
+        retry_after_seconds: int | None = None,
+    ) -> None:
+        self.status_code = status_code
+        self.error_code = error_code
+        self.dependency = dependency
+        self.failure_code = failure_code
+        self.retry_after_seconds = retry_after_seconds
+        super().__init__(message)
 
 
 class RoutingSealVerificationError(CageGatewayError):
@@ -83,3 +106,7 @@ class RoutingSealVerificationError(CageGatewayError):
       - ``subject.action`` or ``subject.action_hash`` fails to match the submitted
         request action and parameters.
     """
+
+
+class CommitOutcomeDecodeError(RoutingSealVerificationError):
+    """Raised when a committing-tool ``CommitOutcome`` fails decoding, signature, or binding verification."""
