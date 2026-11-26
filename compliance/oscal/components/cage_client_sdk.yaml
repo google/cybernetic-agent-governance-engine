@@ -87,78 +87,62 @@ component-definition:
             - uuid: "1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d"
               control-id: ac-3
               description: |
-                Preview-plane and committing-plane access mediation in packages/cage-client/
-                (v0.5.0) is implemented across packages/cage-client/src/cage_client/core.py
-                (CageClient.validate_action(), CageClient.preview(), CageClient.execute_tool(),
-                enforce_verification_posture()), packages/cage-client/src/cage_client/langgraph.py
-                (governed_node(), governed_tool_node(), approval_park_node()),
-                packages/cage-client/src/cage_client/outcomes.py (CommitOutcome,
-                ApprovalRedemptionRefusal, verify_commit_outcome_payload()), and
-                packages/cage-client/src/cage_client/idempotency.py (derive_plan_step_key(),
-                derive_transaction_id()).
+                Preview-plane access mediation in packages/cage-client/ (v0.5.0) is
+                implemented in packages/cage-client/src/cage_client/core.py
+                (CageClient.validate_action(), enforce_verification_posture()).
 
-                Preview path (POST /governance/validate-action):
-                - CageClient.validate_action() and CageClient.preview() post canonicalized
-                  action parameters to dry-run POST /governance/validate-action (which
-                  reserves no budget, mints no single-use routing seal, and performs no
-                  actuation) and mediate verdicts fail-closed across HTTP 200 (ALLOW, NARROW,
-                  DENY, DEFER / REQUIRE_APPROVAL), HTTP 403 (DENY with verified envelope and
-                  non-blank proof_hash / audit_id), HTTP 429 / 503 (GatewayUnavailableError),
-                  and unexpected / unverified responses.
+                CageClient.validate_action() posts canonicalized action parameters to
+                POST /governance/validate-action (dry-run preview only — reserves no
+                budget, mints no single-use routing seal, and performs no actuation) and
+                mediates verdicts fail-closed by HTTP response status, cryptographic
+                envelope integrity, and verdict:
+                - Network / timeout error (httpx.RequestError): raises CageGatewayError
+                - HTTP 5xx, legacy 202 / 409 / 422, or unexpected status code: raises
+                  CageGatewayError (never mediated as DeferralPending or PolicyViolationException)
+                - HTTP 403 (DENY): runs the same fail-closed GovernanceEnvelope
+                  verification pipeline as HTTP 200 (strict JSON, embedded-key
+                  rejection, out-of-band kid signature (au-10), expires_at freshness
+                  and subject.action_hash binding (sc-23)), enforces verdict in
+                  (DENY, DENIED) and non-blank proof_hash / audit_id, and raises
+                  PolicyViolationException; non-envelope 403s raise CageGatewayError
+                  and unsigned/tampered/expired/misbound 403 envelopes raise
+                  RoutingSealVerificationError
+                - HTTP 200: verifies GovernanceEnvelope schema, out-of-band kid signature
+                  (au-10), expires_at freshness and subject.action_hash binding (sc-23)
+                  prior to mediating ALLOW, NARROW (PolicyViolationException), DENY
+                  (PolicyViolationException), or DEFER / REQUIRE_APPROVAL (DeferralPending)
                 - Enforcing posture guard (enforce_verification_posture()): defaults
                   unset/blank CAGE_ENV and ENVIRONMENT fail-secure to "production",
                   treats "local" as enforcing, and rejects disabling signature,
                   expiration, or subject verification with ValueError unless CAGE_ENV /
-                  ENVIRONMENT is explicitly in {"dev", "development", "test", "testing"}.
+                  ENVIRONMENT is explicitly in {"dev", "development", "test", "testing"}
 
-                Committing path (POST /tools/execute) and LangGraph node mediation:
-                - CageClient.execute_tool() dispatches committing tool executions over
-                  POST /tools/execute with optional approval_token and idempotency_key
-                  (configurable idempotency_param), cryptographically verifying signed
-                  CommitOutcome payloads (EXECUTED, DRY_RUN, REFUSED, DEFERRED,
-                  INDETERMINATE, UNSETTLED_DUPLICATE) via verify_commit_outcome_payload()
-                  using out-of-band JWKS/pinned keys and strict RFC 8785 JCS canonicalization,
-                  mapping HTTP 429/503 or un-evidenced HTTP 403 to GatewayUnavailableError
-                  and HTTP 500/502/504/transport ambiguity to fail-closed client-inferred
-                  INDETERMINATE.
-                - governed_node(), governed_tool_node(), and approval_park_node() require
-                  explicit principal and action extractors (never fabricating default
-                  "unknown" principals or {} actions), return langgraph.types.Command
-                  updates so deferred_id checkpoints cleanly before interrupt() (raising
-                  MissingDeferralTicketError when parked without a ticket), differentiate
-                  retryable (PENDING, QUORUM_INCOMPLETE) vs terminal ApprovalRedemptionRefusal
-                  outcomes without local unsealed actuation, and isolate reference-advisor
-                  domain policy in src/governed_financial_advisor/graph/governance/tool_guard.py
-                  (TOCTOU drift revalidation, REFUSAL_DESCRIPTIONS formatting, trade allowlist).
-
-                Scope boundary: The retired preview-only @cage_guard decorator has been
-                removed. Server-side v3 asymmetric KMS JWT routing seals and Redis SETNX
-                single-use nonce consumption live in src/gateway/governance/routing_seal.py,
-                and consecutive denial budget tracking (MAX_CONSECUTIVE_DENIALS) lives in
+                Scope boundary: The legacy @cage_guard LangGraph node decorator was
+                removed in cage-client 0.5.0 because it gated arbitrary node functions
+                behind preview-only /governance/validate-action and raised across DEFER
+                before LangGraph could checkpoint deferred_id; a committing /tools/execute
+                client method and replacement LangGraph node factory (governed_node /
+                approval_park_node) are open under POAM-2026-251. Server-side v3
+                asymmetric KMS JWT routing seals and Redis SETNX single-use nonce
+                consumption live in src/gateway/governance/routing_seal.py, and
+                consecutive denial budget tracking (MAX_CONSECUTIVE_DENIALS) lives in
                 src/governed_financial_advisor/graph/nodes/safety_node.py, outside
                 packages/cage-client/.
               props:
                 - name: implementation-status
-                  value: implemented
+                  value: partially-implemented
                 - name: control-origination
                   value: system-specific
                 - name: implementation-date
-                  value: "2026-11-26"
+                  value: "2026-11-24"
+                - name: poam-reference
+                  value: "POAM-2026-251"
               links:
                 - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=AC-3"
                   rel: reference
                 - href: "../../packages/cage-client/src/cage_client/core.py"
                   rel: implementation
-                  text: "Preview/commit verification and fail-closed posture guard in CageClient"
-                - href: "../../packages/cage-client/src/cage_client/langgraph.py"
-                  rel: implementation
-                  text: "Command-based LangGraph governance factories (governed_tool_node, governed_node, approval_park_node)"
-                - href: "../../packages/cage-client/src/cage_client/outcomes.py"
-                  rel: implementation
-                  text: "Signed CommitOutcome verification and ApprovalRedemptionRefusal decoding"
-                - href: "../../tests/unit/test_advisor_sdk_checkpointer_e2e.py"
-                  rel: implementation
-                  text: "Real-checkpointer advisor DEFER -> interrupt -> premature resume -> quorum approve -> redeem -> CONSUMED replay E2E"
+                  text: "Out-of-process preview verification and fail-closed posture guard in CageClient"
 
             - uuid: "2b3c4d5e-6f7a-8b9c-0d1e-2f3a4b5c6d7e"
               control-id: au-10
