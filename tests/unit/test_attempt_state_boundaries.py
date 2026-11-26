@@ -618,6 +618,9 @@ async def test_healthcare_dispatches_inside_a_scope_on_tools_execute() -> None:
     assert observer.seen == [(True, ExecutionStatus.UNKNOWN)]
     assert code == 200
     assert body["status"] == "SUCCESS"
+    assert body["outcome"]["status"] == "EXECUTED"
+    assert body["may_have_executed"] is True
+    assert body["actuation_outcome"] == "ACCEPTED"
     governor.settle.assert_awaited_once_with("seal-252", executed=True)
     refused.assert_not_called()
 
@@ -637,17 +640,17 @@ async def test_healthcare_dispatches_inside_a_scope_on_the_mcp_path() -> None:
 @pytest.mark.parametrize(
     ("outcome", "status", "executed"),
     [
-        (_ACCEPTED, "GOVERNED", True),
-        (_UNKNOWN, "INDETERMINATE", True),
-        (_REJECTED, "BLOCKED", False),
+        (_ACCEPTED, CommitStatus.EXECUTED, True),
+        (_UNKNOWN, CommitStatus.INDETERMINATE, True),
+        (_REJECTED, CommitStatus.REFUSED, False),
     ],
 )
 async def test_healthcare_answers_and_settles_from_the_record(
-    outcome: ActuationOutcome, status: str, executed: bool
+    outcome: ActuationOutcome, status: CommitStatus, executed: bool
 ) -> None:
     with _clinical_pipeline(_ScopeObserver(outcome)) as governor:
         result = await clinical_tools.administer_dose_action(**_DOSE, governor=governor)
-    assert result["status"] == status
+    assert result.status is status
     governor.settle.assert_awaited_once_with("seal-252", executed=executed)
 
 

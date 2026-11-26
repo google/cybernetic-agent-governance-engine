@@ -46,7 +46,10 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Final
+from typing import TYPE_CHECKING, Any, Final
+
+if TYPE_CHECKING:
+    from mcp.types import CallToolResult
 
 
 class ApprovalRedemptionRefusal(str, Enum):
@@ -270,3 +273,20 @@ class CommitOutcome:
                 and payload.get("approval_retained") is True
             ),
         )
+
+
+def commit_tool_result(outcome: CommitOutcome) -> CallToolResult:
+    """Build the MCP ``CallToolResult`` for a committing run's :class:`CommitOutcome`.
+
+    The typed outcome rides in ``structuredContent`` (:meth:`CommitOutcome.to_wire`);
+    ``content`` carries only its prose. ``isError`` is set whenever nothing was
+    guaranteed executed (:data:`NOT_EXECUTED_STATUSES`), so a caller that reads
+    only ``isError`` or text still fails closed (POAM-2026-245 / POAM-2026-255).
+    """
+    from mcp.types import CallToolResult, TextContent
+
+    return CallToolResult(
+        content=[TextContent(type="text", text=outcome.message)],
+        structuredContent=outcome.to_wire(),
+        isError=outcome.status in NOT_EXECUTED_STATUSES,
+    )
