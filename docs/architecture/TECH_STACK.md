@@ -206,6 +206,8 @@ Modules, all rooted at [`packages/cage-client/src/cage_client/`](../../packages/
 
 > [!NOTE]
 > [`packages/cage-client/`](../../packages/cage-client) is the only source tree for `cage-client`; the in-tree mirror at `23b8c397:src/gateway/client` is retired. The reference advisor's `GatewayClient` ([`gateway_client.py`](../../src/governed_financial_advisor/infrastructure/gateway_client.py)) installs `cage-client` as a built non-editable wheel (`[tool.uv.sources]` in `pyproject.toml`, `editable = false`) and verifies every HTTP `200` and HTTP `403` governance envelope through it before routing on the verdict or refreshing policy pins. [`scripts/check_client_sdk_sync.py`](../../scripts/check_client_sdk_sync.py) fails in CI if the mirror returns, if anything imports it, if the advisor stops importing the wheel, if an editable install or `site-packages` SHA-256 drift is detected, or if `[tool.cage.release].status` disagrees with `client-v*` git tags.
+>
+> *Known limitation (`.git` ref state vs. worktree snapshots):* Release-tag parity reads `client-v*` tags directly from `.git` rather than the checked-out worktree — the first gate check whose ground truth includes `.git` refs (the same limitation applies to git notes or any other non-worktree `.git` state). Full `fetch-depth: 0` CI checkouts include all tags; snapshot-based or mirror test runners must sync `refs/tags/*` (non-pruning, after running `git fetch --tags` locally) alongside the snapshot ref so stale tag caches cannot mask drift or reject newly published releases.
 
 ### 5.3 Standalone Offline Evaluation & Skill Certification Plane (`src/eval_harness/`)
 
