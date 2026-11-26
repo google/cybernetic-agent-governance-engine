@@ -825,7 +825,10 @@ class TestNoVerbatimUpstreamBytes:
         assert body["error"] == "upstream_inference_error"
         assert body["upstream_status"] == 502
         assert PII not in resp.text
-        assert "418" not in resp.text
+        # Exclude the freshly minted uuid4 correlation_id (~0.7% chance of hex "418").
+        assert "418" not in json.dumps(
+            {k: v for k, v in body.items() if k != "correlation_id"}
+        )
         assert str(uuid.UUID(body["correlation_id"])) == body["correlation_id"]
         proxy.quota.rollback_step.assert_awaited_once()
         proxy.sink.ingest.assert_not_awaited()
