@@ -37,7 +37,7 @@ import os
 import sys
 import time
 import uuid
-from collections.abc import MutableMapping
+from collections.abc import Mapping, MutableMapping
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -753,6 +753,31 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
         body_params=request_body.params,
         fallback_app_obj=app,
     ):
+        if q_resp.status_code == 403:
+            import json as _json
+
+            from src.gateway.governance.commit_outcome import (
+                CommitOutcome,
+                CommitStatus,
+                extract_request_idempotency_key,
+                sign_commit_outcome_wire,
+            )
+
+            q_body = _json.loads(bytes(q_resp.body).decode("utf-8"))
+            if isinstance(q_body, dict):
+                q_msg = str(
+                    q_body.get("message")
+                    or q_body.get("error")
+                    or "workload_quarantined"
+                )
+                q_body["outcome"] = await sign_commit_outcome_wire(
+                    CommitOutcome(CommitStatus.REFUSED, q_msg),
+                    tool_name=request_body.tool_name,
+                    idempotency_key=extract_request_idempotency_key(
+                        request_body.params
+                    ),
+                )
+                return _SubscriptableJSONResponse(status_code=403, content=q_body)
         return q_resp
 
     # A4 / M-20: Shared dual-bucket GCRA rate limiting (identity + principal)
@@ -811,12 +836,15 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
         NOT_EXECUTED_STATUSES,
         CommitOutcome,
         CommitStatus,
+        extract_request_idempotency_key,
+        sign_commit_outcome_wire,
     )
     from src.gateway.governance.evidence.stream import EvidenceChainUnavailableError
     from src.gateway.governance.execution_idempotency import (
         ExecutionStatus,
         UnsettledDuplicate,
         close_actuation_attempt,
+        commit_outcome_from_governance_error,
         current_actuation_attempt,
         enforce_post_dispatch_outcome,
         exceptions_after_dispatch,
@@ -883,6 +911,19 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
     # before anything is sent (POAM-2026-252). A sync tool run by
     # asyncio.to_thread sees the same record through the copied context.
     attempt_token = open_actuation_attempt()
+
+    async def _sign_outcome(
+        outcome_or_wire: CommitOutcome | Mapping[str, Any],
+    ) -> dict[str, Any]:
+        req_idem_key = extract_request_idempotency_key(
+            request_body.params, attempt=current_actuation_attempt()
+        )
+        return await sign_commit_outcome_wire(
+            outcome_or_wire,
+            tool_name=request_body.tool_name,
+            idempotency_key=req_idem_key,
+        )
+
     try:
         if inspect.iscoroutinefunction(func):
             output = await func(**request_body.params)
@@ -917,14 +958,18 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
         )
         if san_outcome.blocked:
             mark_request_refused()
+            blocked_msg = (
+                "Tool response blocked by indirect prompt-injection guard "
+                f"({san_outcome.violation})"
+            )
             blocked_output_payload: dict[str, Any] = {
                 "status": "ERROR",
                 "error_type": "IndirectPromptInjectionError",
                 "stage": "post_execution_output_sanitizer",
                 "violation": san_outcome.violation,
-                "error": (
-                    "Tool response blocked by indirect prompt-injection guard "
-                    f"({san_outcome.violation})"
+                "error": blocked_msg,
+                "outcome": await _sign_outcome(
+                    CommitOutcome(CommitStatus.REFUSED, blocked_msg)
                 ),
             }
             proof_hash = get_last_refusal_proof_hash()
@@ -967,8 +1012,9 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
             response["error"] = scrub_pii(output_str)
         non_refusal_outcome = False
         if structured_outcome is not None:
-            response["outcome"] = structured_outcome
-            raw_status = structured_outcome.get("status")
+            signed_outcome = await _sign_outcome(structured_outcome)
+            response["outcome"] = signed_outcome
+            raw_status = signed_outcome.get("status")
             non_refusal_outcome = isinstance(raw_status, str) and raw_status in {
                 s.value for s in NON_REFUSAL_STATUSES
             }
@@ -1020,7 +1066,7 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
                     else ActuationOutcome.UNKNOWN.value
                 ),
                 "may_have_executed": True,
-                "outcome": after_dispatch.to_wire(),
+                "outcome": await _sign_outcome(after_dispatch),
                 "error": msg,
             },
         )
@@ -1055,13 +1101,24 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
         )
     except action_deferred_types as exc:
         # ActionDeferred subclasses PermissionError — catch it before PermissionError so 202 DEFERRED is reachable.
+        deferred_id = getattr(exc, "deferred_id", "") or ""
+        defer_reason = getattr(exc, "defer_reason", "") or ""
+        approval_retained = bool(getattr(exc, "approval_retained", False))
+        defer_msg = scrub_pii(str(exc) or defer_reason or "DEFERRED")
+        defer_outcome = CommitOutcome(
+            CommitStatus.DEFERRED,
+            defer_msg,
+            deferred_id=deferred_id or None,
+            approval_retained=approval_retained,
+        )
         return _SubscriptableJSONResponse(
             status_code=202,
             content={
                 "status": "DEFERRED",
-                "deferred_id": getattr(exc, "deferred_id", ""),
-                "defer_reason": getattr(exc, "defer_reason", ""),
-                "approval_retained": bool(getattr(exc, "approval_retained", False)),
+                "deferred_id": deferred_id,
+                "defer_reason": defer_reason,
+                "approval_retained": approval_retained,
+                "outcome": await _sign_outcome(defer_outcome),
             },
         )
     except actuation_indeterminate_types as exc:
@@ -1080,7 +1137,9 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
                 "error_type": type(exc).__name__,
                 "actuation_outcome": "UNKNOWN",
                 "may_have_executed": True,
-                "outcome": CommitOutcome(CommitStatus.INDETERMINATE, msg).to_wire(),
+                "outcome": await _sign_outcome(
+                    CommitOutcome(CommitStatus.INDETERMINATE, msg)
+                ),
                 "error": msg,
             },
         )
@@ -1099,9 +1158,9 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
                 "error_type": type(exc).__name__,
                 "actuation_outcome": "UNKNOWN",
                 "may_have_executed": True,
-                "outcome": CommitOutcome(
-                    CommitStatus.UNSETTLED_DUPLICATE, msg
-                ).to_wire(),
+                "outcome": await _sign_outcome(
+                    CommitOutcome(CommitStatus.UNSETTLED_DUPLICATE, msg)
+                ),
                 "error": msg,
             },
         )
@@ -1119,7 +1178,7 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
             "error_type": type(exc).__name__,
             "actuation_outcome": "REJECTED",
             "may_have_executed": False,
-            "outcome": CommitOutcome(CommitStatus.REFUSED, msg).to_wire(),
+            "outcome": await _sign_outcome(CommitOutcome(CommitStatus.REFUSED, msg)),
             "error": msg,
         }
         proof_hash = get_last_refusal_proof_hash()
@@ -1134,10 +1193,17 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
             type(exc).__name__,
             exc,
         )
+        gov_msg = scrub_pii(str(exc))
+        gov_outcome = (
+            commit_outcome_from_governance_error(exc)
+            if isinstance(exc, PermissionError)
+            else CommitOutcome(CommitStatus.REFUSED, gov_msg)
+        )
         gov_payload: dict[str, Any] = {
             "status": "ERROR",
             "error_type": type(exc).__name__,
-            "error": scrub_pii(str(exc)),
+            "error": gov_msg,
+            "outcome": await _sign_outcome(gov_outcome),
         }
         proof_hash = get_last_refusal_proof_hash()
         if proof_hash:
@@ -1150,6 +1216,7 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
             "status": "ERROR",
             "error_type": type(exc).__name__,
             "error": "Governance blocked tool execution",
+            "outcome": await _sign_outcome(commit_outcome_from_governance_error(exc)),
         }
         violated_tier = getattr(exc, "violated_tier", "")
         if violated_tier:
