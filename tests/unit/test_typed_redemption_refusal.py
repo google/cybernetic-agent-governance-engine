@@ -551,12 +551,12 @@ async def test_committing_run_reports_a_retained_deferral() -> None:
 
 
 def test_mcp_result_carries_the_outcome_and_marks_unexecuted_as_error() -> None:
-    from src.cage_finance.tools.tool_provider import _call_tool_result
+    from src.gateway.governance.commit_outcome import commit_tool_result
 
     refused = CommitOutcome(CommitStatus.REFUSED, "no", redemption_refusal=R.CONSUMED)
-    result = _call_tool_result(refused)
+    result = commit_tool_result(refused)
     assert result.isError is True
     assert CommitOutcome.from_wire(result.structuredContent) == refused
     assert [c.text for c in result.content] == ["no"]
-    executed = _call_tool_result(CommitOutcome(CommitStatus.EXECUTED, "ok"))
+    executed = commit_tool_result(CommitOutcome(CommitStatus.EXECUTED, "ok"))
     assert executed.isError is False

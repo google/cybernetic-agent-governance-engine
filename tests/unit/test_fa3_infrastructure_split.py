@@ -141,7 +141,8 @@ async def test_consensus_no_critics_returns_unavailable(
 
 
 @pytest.mark.asyncio
-async def test_healthcare_administer_dose_returns_unavailable_on_infra_error() -> None:
+async def test_healthcare_administer_dose_propagates_infra_error_for_503() -> None:
+    """POAM-2026-255 / DA-05: pre-dispatch infra error propagates (HTTP 503) without refusal."""
     from src.cage_healthcare.tools.tool_provider import administer_dose_action
     from src.gateway.governance.execution_idempotency import ExecutionLedger
 
@@ -163,8 +164,9 @@ async def test_healthcare_administer_dose_returns_unavailable_on_infra_error() -
             "src.cage_healthcare.tools.tool_provider._gm.record_refusal",
             AsyncMock(),
         ) as mock_refusal,
+        pytest.raises(GovernanceInfrastructureError) as exc_info,
     ):
-        res = await administer_dose_action(
+        await administer_dose_action(
             patient_id="P001",
             medication="vancomycin",
             dose_mg=2.0,
@@ -172,10 +174,9 @@ async def test_healthcare_administer_dose_returns_unavailable_on_infra_error() -
             governor=governor,
         )
 
-    assert res["status"] == "UNAVAILABLE"
-    assert res["error"] == "consensus_backend_unavailable"
-    assert res["dependency"] == "consensus"
-    assert res["failure_code"] == "CONSENSUS_UNAVAILABLE"
+    assert exc_info.value.error_code == "consensus_backend_unavailable"
+    assert exc_info.value.dependency == "consensus"
+    assert exc_info.value.failure_code == "CONSENSUS_UNAVAILABLE"
     mock_refusal.assert_not_awaited()
 
 

@@ -39,10 +39,13 @@ from opentelemetry import trace
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
 from src.gateway.governance.commit_outcome import (
-    NOT_EXECUTED_STATUSES,
     CommitOutcome,
+    commit_tool_result,
 )
-from src.gateway.governance.execution_idempotency import actuation_attempt_scope
+from src.gateway.governance.execution_idempotency import (
+    actuation_attempt_scope,
+    enforce_post_dispatch_outcome,
+)
 from src.gateway.governance.governor.metrics import mark_request_refused
 from src.gateway.governance.post_execution_sanitizer import (
     evaluate_post_execution_output,
@@ -111,13 +114,7 @@ async def sanitize_mcp_tool_response(
 
 def _build_redacted_call_tool_result(outcome: CommitOutcome) -> Any:
     """Build an MCP ``CallToolResult`` carrying a redacted post-execution outcome."""
-    from mcp.types import CallToolResult, TextContent
-
-    return CallToolResult(
-        content=[TextContent(type="text", text=outcome.message)],
-        structuredContent=outcome.to_wire(),
-        isError=outcome.status in NOT_EXECUTED_STATUSES,
-    )
+    return commit_tool_result(outcome)
 
 
 def patch_mcp_tools(mcp_server) -> None:  # type: ignore[no-untyped-def]
@@ -146,7 +143,7 @@ def patch_mcp_tools(mcp_server) -> None:  # type: ignore[no-untyped-def]
 
             # 3. Delegate to original inside a kernel attempt scope so any
             # dispatch_actuation() inside the tool folds into `attempt` on exit
-            # (POAM-2026-252 / POAM-2026-253).
+            # (POAM-2026-252 / POAM-2026-253 / POAM-2026-255).
             with actuation_attempt_scope() as attempt:
                 result = await original_call_tool(
                     name, arguments, context=context, convert_result=convert_result
@@ -172,17 +169,24 @@ def patch_mcp_tools(mcp_server) -> None:  # type: ignore[no-untyped-def]
                     f"({san_outcome.violation})"
                 )
             if san_outcome.redacted and san_outcome.redacted_outcome is not None:
-                redacted_result = _build_redacted_call_tool_result(
-                    san_outcome.redacted_outcome
-                )
-                span.set_attribute(
-                    SPAN_ATTR_MCP_TOOL_RESULT_LENGTH,
-                    len(san_outcome.redacted_outcome.message),
-                )
-                return redacted_result
+                result = _build_redacted_call_tool_result(san_outcome.redacted_outcome)
+                result_str = san_outcome.redacted_outcome.message
+            else:
+                result_str = _extract_mcp_result_text(result)
 
-            # 5. Record the result size only — never raw content (#774)
-            result_str = _extract_mcp_result_text(result)
+            # 5. Enforce kernel ActuationAttempt agreement on normal returns (POAM-2026-255).
+            # Runs after post-execution redaction so a poisoned + mismatched result is
+            # both redacted (zero untrusted bytes) and status-corrected to `attempt.status`.
+            enforced_outcome = enforce_post_dispatch_outcome(
+                result,
+                message=result_str,
+                attempt=attempt,
+            )
+            if enforced_outcome is not None:
+                result = commit_tool_result(enforced_outcome)
+                result_str = enforced_outcome.message
+
+            # 6. Record the result size only — never raw content (#774)
             span.set_attribute(SPAN_ATTR_MCP_TOOL_RESULT_LENGTH, len(result_str))
             return result
 

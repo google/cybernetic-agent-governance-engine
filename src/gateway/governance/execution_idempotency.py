@@ -63,14 +63,23 @@ import re
 import secrets
 import threading
 import time
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Awaitable, Iterator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from src.gateway.governance.commit_outcome import CommitOutcome, CommitStatus
+from src.gateway.governance.commit_outcome import (
+    NOT_EXECUTED_STATUSES,
+    CommitOutcome,
+    CommitOutcomeDecodeError,
+    CommitStatus,
+    commit_tool_result,
+)
+
+if TYPE_CHECKING:
+    from mcp.types import CallToolResult
 from src.gateway.governance.env_posture import is_enforcing, resolve_posture
 
 logger = logging.getLogger(__name__)
@@ -369,6 +378,162 @@ def outcome_after_dispatch(message: str) -> CommitOutcome | None:
     if attempt.status is ExecutionStatus.EXECUTED:
         return CommitOutcome(CommitStatus.EXECUTED, message)
     return CommitOutcome(CommitStatus.INDETERMINATE, message)
+
+
+def commit_outcome_from_governance_error(exc: PermissionError) -> CommitOutcome:
+    """Translate a governance ``PermissionError`` into a typed :class:`CommitOutcome`."""
+    from src.gateway.server.governance_middleware import (
+        ActionDeferred,
+        ApprovalRedemptionRefused,
+    )
+
+    if isinstance(exc, ActionDeferred):
+        return CommitOutcome(
+            CommitStatus.DEFERRED,
+            f"DEFERRED: {exc}",
+            deferred_id=exc.deferred_id or None,
+            approval_retained=exc.approval_retained,
+        )
+    if isinstance(exc, ApprovalRedemptionRefused):
+        return CommitOutcome(
+            CommitStatus.REFUSED,
+            f"BLOCKED: {exc}",
+            redemption_refusal=exc.refusal,
+        )
+    return CommitOutcome(CommitStatus.REFUSED, f"BLOCKED: {exc}")
+
+
+def commit_outcome_on_error(exc: Exception) -> CommitOutcome | None:
+    """Translate a committing tool exception into a :class:`CommitOutcome` if governed.
+
+    Checks :func:`outcome_after_dispatch` first so any error escaping once
+    dispatch may have executed is answered from the kernel attempt record
+    regardless of exception type (POAM-2026-252). Before dispatch (or after
+    a deterministic ``REJECTED`` receipt), maps ``ActuationIndeterminateError``,
+    ``UnsettledDuplicate``, and ``ActuationRejectedError`` to their typed
+    outcomes and returns ``None`` for all other errors (e.g., pre-dispatch
+    ``GovernanceInfrastructureError``, which must propagate to HTTP ``503``).
+    """
+    from src.gateway.governance.seams.actuation import (
+        ActuationIndeterminateError,
+        ActuationRejectedError,
+    )
+
+    msg = str(exc) or type(exc).__name__
+    after_dispatch = outcome_after_dispatch(msg)
+    if after_dispatch is not None:
+        logger.warning(
+            "Committing tool error after dispatch answered as %s (%s): %s",
+            after_dispatch.status.value,
+            type(exc).__name__,
+            exc,
+        )
+        return after_dispatch
+    if isinstance(exc, ActuationIndeterminateError):
+        return CommitOutcome(CommitStatus.INDETERMINATE, msg)
+    if isinstance(exc, UnsettledDuplicate):
+        return CommitOutcome(CommitStatus.UNSETTLED_DUPLICATE, msg)
+    if isinstance(exc, ActuationRejectedError):
+        return CommitOutcome(CommitStatus.REFUSED, msg)
+    return None
+
+
+async def run_commit_tool(coro: Awaitable[CommitOutcome]) -> CallToolResult:
+    """Run a committing domain action inside ``actuation_attempt_scope()`` as a ``CallToolResult``.
+
+    Answers any escaping post-dispatch error from :func:`outcome_after_dispatch`
+    (via :func:`commit_outcome_on_error`), translates pre-dispatch actuation
+    errors and :class:`UnsettledDuplicate` into typed :class:`CommitOutcome`
+    results, lets pre-dispatch infrastructure errors propagate (HTTP ``503``),
+    and wraps the outcome with :func:`commit_tool_result`.
+    """
+    with actuation_attempt_scope():
+        try:
+            outcome = await coro
+        except Exception as exc:
+            mapped = commit_outcome_on_error(exc)
+            if mapped is None:
+                raise
+            outcome = mapped
+    return commit_tool_result(outcome)
+
+
+def enforce_post_dispatch_outcome(
+    output: Any,
+    *,
+    message: str = "",
+    attempt: ActuationAttempt | None = None,
+    structured_outcome: Mapping[str, Any] | None = None,
+    is_error: bool | None = None,
+) -> CommitOutcome | None:
+    """Enforce kernel ``ActuationAttempt`` agreement on a tool's normal return.
+
+    Shared by ``POST /tools/execute`` and ``/mcp/`` (POAM-2026-255).
+
+    Returns ``None`` when no override is needed:
+
+    * nothing in ``attempt`` may have executed (``attempt is None`` or
+      ``not attempt.may_have_executed``), OR
+    * the return already carries a schema-valid :class:`CommitOutcome`
+      (``cage.commit_outcome/1``) whose ``status`` agrees with
+      ``attempt.status`` (``EXECUTED`` for ``ExecutionStatus.EXECUTED``,
+      ``INDETERMINATE`` for ``ExecutionStatus.UNKNOWN``) and whose ``isError``
+      flag agrees with ``status in NOT_EXECUTED_STATUSES``.
+
+    Otherwise synthesizes and returns a fail-closed :class:`CommitOutcome`
+    from ``attempt`` via :func:`outcome_after_dispatch` (or directly from
+    ``attempt`` when evaluated after closing ``attempt``'s scope) so no tool
+    returning a plain ``dict`` / ``str`` or a mismatched ``CallToolResult``
+    can answer ``SUCCESS`` / ``isError=False`` without ``may_have_executed``
+    and a valid ``CommitOutcome``.
+    """
+    active_attempt = attempt if attempt is not None else _current_attempt.get()
+    if active_attempt is None or not active_attempt.may_have_executed:
+        return None
+
+    expected_status = (
+        CommitStatus.EXECUTED
+        if active_attempt.status is ExecutionStatus.EXECUTED
+        else CommitStatus.INDETERMINATE
+    )
+    expected_is_error = expected_status in NOT_EXECUTED_STATUSES
+
+    candidate_wire: object = None
+    candidate_is_error: bool | None = None
+    if structured_outcome is not None or is_error is not None:
+        candidate_wire = structured_outcome
+        candidate_is_error = bool(is_error) if is_error is not None else None
+    else:
+        from mcp.types import CallToolResult
+
+        if isinstance(output, CallToolResult):
+            candidate_wire = output.structuredContent
+            candidate_is_error = bool(output.isError)
+
+    if candidate_wire is not None and candidate_is_error is expected_is_error:
+        try:
+            decoded = CommitOutcome.from_wire(candidate_wire)
+        except CommitOutcomeDecodeError:
+            decoded = None
+        if decoded is not None and decoded.status is expected_status:
+            return None
+
+    logger.warning(
+        "Normal-return ActuationAttempt guard synthesized %s (attempt=%s, output_type=%s)",
+        expected_status.value,
+        active_attempt.status.value,
+        type(output).__name__,
+    )
+    fallback_msg = (
+        message
+        if message
+        else f"{expected_status.value}: actuation attempt {active_attempt.status.value}"
+    )
+    if active_attempt is _current_attempt.get():
+        synthesized = outcome_after_dispatch(fallback_msg)
+        if synthesized is not None:
+            return synthesized
+    return CommitOutcome(expected_status, fallback_msg)
 
 
 def _bind_claim_to_attempt(claim: Claim, *, action: str, idempotency_key: str) -> Claim:
@@ -868,7 +1033,6 @@ class ExecutionClaimScope:
 
     __slots__ = (
         "_outcome_summary",
-        "_pre_dispatch_infra_failure",
         "attempt",
         "duplicate",
         "idempotency_key",
@@ -891,19 +1055,26 @@ class ExecutionClaimScope:
         self.duplicate: Duplicate | None = duplicate
         self.proof_hash: str = proof_hash
         self._outcome_summary: str | None = None
-        self._pre_dispatch_infra_failure: bool = False
+
+    @property
+    def early_outcome(self) -> CommitOutcome | None:
+        """Typed :class:`CommitOutcome` for an invalid key or settled duplicate replay."""
+        if self.invalid_key_reason is not None:
+            return CommitOutcome(
+                CommitStatus.REFUSED, f"BLOCKED: {self.invalid_key_reason}"
+            )
+        if self.duplicate is not None:
+            status = (
+                CommitStatus.EXECUTED
+                if self.duplicate.status is ExecutionStatus.EXECUTED
+                else CommitStatus.REFUSED
+            )
+            return CommitOutcome(status, self.duplicate.outcome or "")
+        return None
 
     def set_outcome_summary(self, summary: str) -> None:
         """Store the settled outcome prose for ``ExecutionLedger.record_outcome()``."""
         self._outcome_summary = summary
-
-    def mark_pre_dispatch_infra_failure(self) -> None:
-        """Request key release on normal exit when a pre-dispatch outage was caught.
-
-        Honored on exit ONLY while ``not self.attempt.dispatched``; once
-        ``dispatch_actuation()`` has run, the claim is never released.
-        """
-        self._pre_dispatch_infra_failure = True
 
 
 async def _settle_claim_on_error(
@@ -1102,12 +1273,9 @@ async def execution_claim_scope(
                 await _settle_claim_on_error(ledger, claim, attempt, exc)
             raise
         if claim is not None and ledger is not None:
-            if scope._pre_dispatch_infra_failure and not attempt.dispatched:
-                await ledger.release_unexecuted(claim)
-            else:
-                summary = (
-                    scope._outcome_summary
-                    if scope._outcome_summary is not None
-                    else attempt.status.value
-                )
-                await ledger.record_outcome(claim, attempt.status, summary)
+            summary = (
+                scope._outcome_summary
+                if scope._outcome_summary is not None
+                else attempt.status.value
+            )
+            await ledger.record_outcome(claim, attempt.status, summary)

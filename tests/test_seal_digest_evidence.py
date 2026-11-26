@@ -304,7 +304,9 @@ async def test_healthcare_records_the_digest_not_the_seal(
             "patient-1", "heparin", 2.0, dose_key, governor=governor
         )
 
-    assert result["status"] == "GOVERNED", result
+    from src.gateway.governance.commit_outcome import CommitStatus
+
+    assert result.status is CommitStatus.EXECUTED, result
     receipt = sink.only("ACTUATION_RECEIPT")
     assert receipt["governance_decision_digest"] == rs.seal_digest(hc_seal)
     _assert_seal_absent(sink.events, hc_seal)

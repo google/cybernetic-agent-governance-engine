@@ -643,7 +643,7 @@ async def _healthcare_on_unknown_dispatch() -> object:
         patch.object(clinical_tools._gm, "record_refusal", new_callable=AsyncMock),
     ):
         result = await clinical_tools.administer_dose_action(**dose, governor=governor)
-    return result["status"], governor.settle.await_args.kwargs["executed"]
+    return result.status, governor.settle.await_args.kwargs["executed"]
 
 
 # ---------------------------------------------------------------- mutants

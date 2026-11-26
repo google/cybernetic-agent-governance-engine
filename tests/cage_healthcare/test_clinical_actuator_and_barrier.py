@@ -37,6 +37,7 @@ from src.cage_healthcare.tools.tool_provider import (
     ClinicalDoseActuator,
     administer_dose_action,
 )
+from src.gateway.governance.commit_outcome import CommitOutcome, CommitStatus
 from src.gateway.governance.execution_idempotency import ExecutionLedger
 from src.gateway.governance.governor.sealing import SealedAction
 from src.gateway.governance.routing_seal import generate_seal, seal_digest
@@ -285,8 +286,9 @@ class TestClinicalDoseActuatorSecurity:
                 idempotency_key=dose_key,
                 governor=governor,
             )
-        assert res["status"] == "INDETERMINATE"
-        assert "indeterminate" in str(res["reason"])
+        assert isinstance(res, CommitOutcome)
+        assert res.status is CommitStatus.INDETERMINATE
+        assert "indeterminate" in res.message.lower()
         mock_refuse.assert_not_awaited()
         governor.settle.assert_awaited_once_with(real_seal, executed=True)
 
@@ -363,7 +365,7 @@ class TestAdministerDoseActuatesTheSealedParams:
                 governor=governor,
             )
 
-        assert res["status"] == "GOVERNED", res
+        assert res.status is CommitStatus.EXECUTED, res
         handed = enforce.await_args.args[2]
         assert handed == self._caller_params()
         verify.assert_awaited_once_with(seal, "administer_dose", evaluated)
@@ -417,7 +419,7 @@ class TestAdministerDoseActuatesTheSealedParams:
                 governor=governor,
             )
 
-        assert res["status"] == "BLOCKED"
+        assert res.status is CommitStatus.REFUSED
         refuse.assert_awaited_once()
         assert refuse.await_args.kwargs["params"] == evaluated
         assert refuse.await_args.kwargs["oscal_control_ref"] == "AC-3"

@@ -19,8 +19,11 @@ import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+from mcp.types import CallToolResult
+
 from src.cage_healthcare import ground_truth as _gt
 from src.cage_healthcare.tools.dose_order import DoseOrder
+from src.gateway.governance import commit_outcome as _co
 from src.gateway.governance import contracts as _ct
 from src.gateway.governance import execution_actuator as _act
 from src.gateway.governance import execution_idempotency as _ei
@@ -38,18 +41,14 @@ if TYPE_CHECKING:
 
 _R, _O, _ACT = _seam.ActuationReceipt, _seam.ActuationOutcome, "administer_dose"
 _ACC, _REJ, _UNK = _O.ACCEPTED, _O.REJECTED, _O.UNKNOWN
+_CS, _CO = _co.CommitStatus, _co.CommitOutcome
 _BOUND = ("patient_id", "medication", "route", "indication")
 _INDET = "Actuation indeterminate (reservations confirmed)"
 
 
-def _blocked(reason: str, ph: object = "") -> dict[str, object]:
-    out: dict[str, object] = {"status": "BLOCKED", "reason": reason}
-    return {**out, "proof_hash": str(ph)} if ph else out
-
-
-async def _refuse(reason: str, params: dict[str, Any]) -> dict[str, object]:
-    ph = await _gm.record_refusal(_ACT, reason, oscal_control_ref="AC-3", params=params)
-    return _blocked(reason, ph)
+async def _refuse(reason: str, params: dict[str, Any]) -> _co.CommitOutcome:
+    await _gm.record_refusal(_ACT, reason, oscal_control_ref="AC-3", params=params)
+    return _CO(_CS.REFUSED, f"BLOCKED: {reason}")
 
 
 def _deny(code: str, ts: str, detail: str = "") -> _seam.ActuationReceipt:
@@ -111,21 +110,15 @@ async def administer_dose_action(
     deferred_id: str | None = None,
     *,
     governor: SymbolicGovernor,
-) -> dict[str, object]:
-    from src.gateway.governance.governor.errors import GovernanceInfrastructureError
-
+) -> _co.CommitOutcome:
     base: dict[str, Any] = {"patient_id": patient_id, "medication": medication}
     raw: dict[str, Any] = {**base, "dose_mg": dose_mg, "confidence": confidence}
     raw["idempotency_key"] = str(idempotency_key or "")
     ckw: dict[str, Any] = {"action": _ACT, "idempotency_key": idempotency_key}
     ckw |= {"params": raw, "reclaim_blocked": bool(deferred_id)}
     async with _ei.execution_claim_scope(governor, **ckw) as scope:
-        if (bad := scope.invalid_key_reason) is not None:
-            return _blocked(bad, scope.proof_hash)
-        if (dup := scope.duplicate) is not None:
-            if dup.status is _ei.ExecutionStatus.EXECUTED:
-                return {"status": "GOVERNED", "replayed": True, "outcome": dup.outcome}
-            return _blocked(dup.outcome or "duplicate blocked", scope.proof_hash)
+        if (early := scope.early_outcome) is not None:
+            return early
         key = scope.idempotency_key or ""
         order = DoseOrder(**base, dose_mg=dose_mg, idempotency_key=key)
         params: dict[str, Any] = {**order.model_dump(), "confidence": confidence}
@@ -133,22 +126,15 @@ async def administer_dose_action(
             if deferred_id:
                 fn = _gm.enforce_approved_governance
                 gkw: dict[str, Any] = {"deferred_id": deferred_id}
-                gkw["approval_covers"] = _covers
-                governed = await fn(governor, _ACT, params, **gkw)
+                governed = await fn(
+                    governor, _ACT, params, approval_covers=_covers, **gkw
+                )
             else:
                 governed = await enforce_governance(governor, _ACT, params)
-        except GovernanceInfrastructureError as e:
-            scope.mark_pre_dispatch_infra_failure()
-            u: dict[str, object] = {"status": "UNAVAILABLE", "error": e.error_code}
-            u |= {"dependency": e.dependency, "failure_code": e.failure_code}
-            return u | {"reason": str(e)}
-        except _gm.ActionDeferred as exc:
-            scope.set_outcome_summary(f"DEFERRED: {exc}")
-            d: dict[str, object] = {"status": "DEFERRED", "reason": str(exc)}
-            return d | {"deferred_id": exc.deferred_id}
         except PermissionError as exc:
-            scope.set_outcome_summary(f"BLOCKED: {exc}")
-            return _blocked(str(exc), getattr(exc, "proof_hash", ""))
+            out = _ei.commit_outcome_from_governance_error(exc)
+            scope.set_outcome_summary(out.message)
+            return out
         seal, evaluated = _act.require_sealed_action(governed, _ACT)
         ca = (_ACT, key, order.patient_id, "clinician_001")
         cb = ("cage_healthcare_clinical", "HIGH_CLINICAL", evaluated, seal)
@@ -165,16 +151,16 @@ async def administer_dose_action(
                 raise _rs.SymbolicGovernorViolation("No actuator", action=_ACT)
             rec = await _act.dispatch_actuation(act, clr)
             if attempt.status is _ei.ExecutionStatus.UNKNOWN:
-                scope.set_outcome_summary(f"UNKNOWN: {_INDET}")
-                ind: dict[str, object] = {"status": "INDETERMINATE", "reason": _INDET}
-                ind |= {"receipt_id": rec.receipt_id, "findings": list(rec.findings)}
-                return ind
+                codes = "; ".join(f.get("code", "UNKNOWN") for f in rec.findings)
+                msg = f"UNKNOWN: {_INDET}" + (f" ({codes})" if codes else "")
+                scope.set_outcome_summary(msg)
+                return _CO(_CS.INDETERMINATE, msg)
             if attempt.status is _ei.ExecutionStatus.BLOCKED:
                 scope.set_outcome_summary("BLOCKED: Actuation rejected")
                 return await _refuse("Actuation rejected", evaluated)
-            scope.set_outcome_summary(f"GOVERNED: {medication} {dose_mg}mg")
-            rid = rec.receipt_id
-            return {"status": "GOVERNED", **order.model_dump(), "receipt_id": rid}
+            msg = f"EXECUTED: {order.patient_id} {medication} {dose_mg}mg (Receipt ID: {rec.receipt_id})"
+            scope.set_outcome_summary(msg)
+            return _CO(_CS.EXECUTED, msg)
         finally:
             await governor.settle(seal, executed=attempt.may_have_executed)
 
@@ -192,7 +178,9 @@ class ClinicalToolProvider(_ct.DomainToolProvider):
             idempotency_key: str,
             confidence: float = 0.99,
             deferred_id: str | None = None,
-        ) -> dict[str, object]:
+        ) -> CallToolResult:
             a = (patient_id, medication, dose_mg, idempotency_key)
-            b = (confidence, deferred_id)
-            return await administer_dose_action(*a, *b, governor=governor)
+            coro = administer_dose_action(
+                *a, confidence, deferred_id, governor=governor
+            )
+            return await _ei.run_commit_tool(coro)

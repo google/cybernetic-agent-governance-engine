@@ -814,9 +814,11 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
     )
     from src.gateway.governance.evidence.stream import EvidenceChainUnavailableError
     from src.gateway.governance.execution_idempotency import (
+        ExecutionStatus,
         UnsettledDuplicate,
         close_actuation_attempt,
         current_actuation_attempt,
+        enforce_post_dispatch_outcome,
         exceptions_after_dispatch,
         open_actuation_attempt,
         outcome_after_dispatch,
@@ -942,6 +944,18 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
             )
             structured_outcome = san_outcome.redacted_outcome.to_wire()
             tool_error = san_outcome.redacted_outcome.status in NOT_EXECUTED_STATUSES
+        active_attempt = current_actuation_attempt()
+        enforced_outcome = enforce_post_dispatch_outcome(
+            output,
+            message=output_str,
+            attempt=active_attempt,
+            structured_outcome=structured_outcome,
+            is_error=tool_error,
+        )
+        if enforced_outcome is not None:
+            output_str = enforced_outcome.message
+            structured_outcome = enforced_outcome.to_wire()
+            tool_error = enforced_outcome.status in NOT_EXECUTED_STATUSES
         response: dict[str, Any] = {
             "status": "ERROR" if tool_error else "SUCCESS",
             "output": output_str,
@@ -966,8 +980,15 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
                 response["may_have_executed"] = True
             elif raw_status == CommitStatus.EXECUTED.value:
                 response["may_have_executed"] = True
+                if enforced_outcome is not None or (
+                    active_attempt is not None
+                    and active_attempt.status is ExecutionStatus.EXECUTED
+                ):
+                    response["actuation_outcome"] = ActuationOutcome.ACCEPTED.value
         proof_hash = get_last_refusal_proof_hash()
-        if (tool_error and not non_refusal_outcome) or proof_hash:
+        if not (active_attempt is not None and active_attempt.may_have_executed) and (
+            (tool_error and not non_refusal_outcome) or proof_hash
+        ):
             mark_request_refused()
         if proof_hash:
             response["proof_hash"] = proof_hash

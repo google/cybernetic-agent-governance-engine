@@ -70,6 +70,7 @@ from src.cage_healthcare.tools.tool_provider import (
     administer_dose_action,
 )
 from src.gateway.governance import execution_actuator as exec_act
+from src.gateway.governance.commit_outcome import CommitOutcome, CommitStatus
 from src.gateway.governance.execution_actuator import dispatch_actuation
 from src.gateway.governance.execution_idempotency import (
     SHARED_CALLER,
@@ -506,13 +507,22 @@ async def test_healthcare_p1_retry_after_accepted_never_double_doses(
         # Third retry over FastMCP surface also replays without actuating.
         mcp_server = FastMCP("p1-mcp")
         ClinicalToolProvider().register_tools(mcp_server, gov)
-        await mcp_server.call_tool(
+        mcp_res = await mcp_server.call_tool(
             "administer_dose", {**dose_req, "idempotency_key": _KEY_1}
         )
 
     assert (code1, code2) == (200, 200)
     assert body1["status"] == "SUCCESS"
-    assert "'replayed': True" in body2["output"]
+    assert body1["outcome"]["status"] == "EXECUTED"
+    assert body1["may_have_executed"] is True
+    assert body2["status"] == "SUCCESS"
+    assert body2["outcome"]["status"] == "EXECUTED"
+    assert body2["may_have_executed"] is True
+    assert body2["output"] == body1["output"]
+    assert (
+        CommitOutcome.from_wire(mcp_res.structuredContent).status
+        is CommitStatus.EXECUTED
+    )
     assert actuate_spy.await_count == 1
     assert enforce.await_count == 1
     assert gov.settle.await_count == 1
@@ -576,9 +586,15 @@ async def test_healthcare_p3_retry_after_unknown_blocks_via_unsettled_duplicate(
             await administer_dose_action(**dose_req, governor=gov)
 
     assert code1 == 200
-    assert "'status': 'INDETERMINATE'" in body1["output"]
+    assert body1["status"] == "ERROR"
+    assert body1["may_have_executed"] is True
+    assert body1["actuation_outcome"] == "UNKNOWN"
+    assert body1["outcome"]["status"] == "INDETERMINATE"
+    assert (
+        CommitOutcome.from_wire(body1["outcome"]).status is CommitStatus.INDETERMINATE
+    )
     assert (code2, code3) == (200, 200)
-    assert body2["error_type"] == "UnsettledDuplicate"
+    assert body2["status"] == "ERROR"
     assert body2["may_have_executed"] is True
     assert body2["actuation_outcome"] == "UNKNOWN"
     assert body2["outcome"]["status"] == "UNSETTLED_DUPLICATE"
@@ -639,14 +655,12 @@ async def test_healthcare_blocked_replay_and_deferred_approval_takeover(
             **dose, deferred_id="defer-hc-2", governor=gov
         )
 
-    assert first["status"] == "BLOCKED"
-    assert replayed["status"] == "BLOCKED"
-    assert approved["status"] == "GOVERNED"
-    assert after_exec == {
-        "status": "GOVERNED",
-        "replayed": True,
-        "outcome": "GOVERNED: amoxicillin 2.5mg",
-    }
+    assert first.status is CommitStatus.REFUSED
+    assert replayed.status is CommitStatus.REFUSED
+    assert replayed.message == first.message
+    assert approved.status is CommitStatus.EXECUTED
+    assert after_exec.status is CommitStatus.EXECUTED
+    assert after_exec.message == approved.message
     assert enforce_deny.await_count == 1
     assert enforce_approved.await_count == 1
     assert actuate_spy.await_count == 1
@@ -656,7 +670,7 @@ async def test_healthcare_blocked_replay_and_deferred_approval_takeover(
 @pytest.mark.usefixtures("connected_evidence_sink")
 @pytest.mark.covers(
     'src.gateway.governance.execution_idempotency:execution_claim_scope#infra_dependency="execution_ledger"',
-    "src.gateway.governance.execution_idempotency:execution_claim_scope#await ledger.release_unexecuted(claim)",
+    "src.gateway.governance.execution_idempotency:_settle_claim_on_error#await ledger.release_unexecuted(claim)",
     "src.gateway.governance.execution_idempotency:ExecutionLedger.claim#no Redis is configured for the execution ledger",
 )
 async def test_healthcare_invalid_key_pre_dispatch_outage_release_and_ledger_outage(
@@ -683,12 +697,12 @@ async def test_healthcare_invalid_key_pre_dispatch_outage_release_and_ledger_out
         bad = await administer_dose_action(
             "PT-1", "amoxicillin", 2.0, "not-a-uuid", governor=gov
         )
-    assert bad["status"] == "BLOCKED"
-    assert "invalid idempotency_key" in str(bad["reason"])
+    assert bad.status is CommitStatus.REFUSED
+    assert "invalid idempotency_key" in bad.message
     enforce.assert_not_awaited()
     refusals.assert_awaited_once()
 
-    # Pre-dispatch infrastructure outage releases key so same idempotency_key can succeed next.
+    # Pre-dispatch infrastructure outage propagates (503) and releases key so retry succeeds.
     infra = GovernanceInfrastructureError(
         "OPA unreachable",
         dependency="opa",
@@ -700,11 +714,10 @@ async def test_healthcare_invalid_key_pre_dispatch_outage_release_and_ledger_out
             clinical_tools, "enforce_governance", AsyncMock(side_effect=infra)
         ),
         patch.object(gm, "record_refusal", AsyncMock()),
+        pytest.raises(GovernanceInfrastructureError) as exc_info,
     ):
-        unavail = await administer_dose_action(
-            "PT-1", "amoxicillin", 2.0, _KEY_2, governor=gov
-        )
-    assert unavail["status"] == "UNAVAILABLE"
+        await administer_dose_action("PT-1", "amoxicillin", 2.0, _KEY_2, governor=gov)
+    assert exc_info.value.failure_code == "OPA_UNAVAILABLE"
 
     with (
         patch.object(clinical_tools, "enforce_governance", enforce),
@@ -720,7 +733,7 @@ async def test_healthcare_invalid_key_pre_dispatch_outage_release_and_ledger_out
         recovered = await administer_dose_action(
             "PT-1", "amoxicillin", 2.0, _KEY_2, governor=gov
         )
-    assert recovered["status"] == "GOVERNED"
+    assert recovered.status is CommitStatus.EXECUTED
 
     # Enforcing posture without Redis -> ExecutionLedgerUnavailable -> 503 on /tools/execute.
     monkeypatch.setenv("CAGE_ENV", "production")

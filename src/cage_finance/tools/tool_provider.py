@@ -20,7 +20,7 @@ import time
 import uuid
 from typing import TYPE_CHECKING, Any, Literal, NoReturn
 
-from mcp.types import CallToolResult, TextContent, ToolAnnotations
+from mcp.types import CallToolResult, ToolAnnotations
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
@@ -32,9 +32,9 @@ from src.cage_finance.tools.market_service import get_market_data
 from src.gateway.governance import execution_actuator as _exec_actuator
 from src.gateway.governance import execution_idempotency as _idempotency
 from src.gateway.governance.commit_outcome import (
-    NOT_EXECUTED_STATUSES,
     CommitOutcome,
     CommitStatus,
+    commit_tool_result,
 )
 from src.gateway.governance.contracts import DomainToolProvider
 from src.gateway.governance.execution_actuator import get_actuator_registry
@@ -251,20 +251,6 @@ _REPLAYED_STATUS: dict[ExecutionStatus, CommitStatus] = {
 def _refused(reason: str) -> CommitOutcome:
     """A ``REFUSED`` outcome: nothing was executed."""
     return CommitOutcome(CommitStatus.REFUSED, f"BLOCKED: {reason}")
-
-
-def _call_tool_result(outcome: CommitOutcome) -> CallToolResult:
-    """The MCP result of a committing run.
-
-    The typed outcome is ``structuredContent`` (``CommitOutcome.to_wire``);
-    ``content`` carries only its prose. ``isError`` is set whenever nothing
-    was executed, so a caller that reads only the text still fails closed.
-    """
-    return CallToolResult(
-        content=[TextContent(type="text", text=outcome.message)],
-        structuredContent=outcome.to_wire(),
-        isError=outcome.status in NOT_EXECUTED_STATUSES,
-    )
 
 
 async def _govern_and_actuate(
@@ -732,7 +718,7 @@ class FinancialToolProvider(DomainToolProvider):
                         outcome = CommitOutcome(CommitStatus.REFUSED, str(exc))
                     else:
                         raise
-            return _call_tool_result(outcome)
+            return commit_tool_result(outcome)
 
         @server.tool(annotations=_READ_ONLY_TOOL)
         async def check_market_status(symbol: str) -> str:
