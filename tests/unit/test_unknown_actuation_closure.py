@@ -27,6 +27,7 @@ Covers:
 
 from __future__ import annotations
 
+import json
 import uuid
 from contextlib import ExitStack
 from types import SimpleNamespace
@@ -36,6 +37,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import fakeredis.aioredis
 import httpx
 import pytest
+from cage_client import derive_idempotency_key, derive_plan_step_key
 from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage
 from prometheus_client import CollectorRegistry
@@ -88,20 +90,18 @@ from src.gateway.governance.seams.quarantine import (
 )
 from src.gateway.server import governance_middleware as gm_mod
 from src.gateway.server import workload_identity as wid_mod
-from src.governed_financial_advisor.graph.governance import tool_guard as tg_mod
-from src.governed_financial_advisor.graph.governance.tool_guard import (
-    COMMIT_OUTCOMES,
-    TRADE_TOOL,
-    derive_plan_step_key,
-    derive_transaction_id,
-    gateway_tool_guard,
+from src.governed_financial_advisor.graph.nodes.trade_contract import TRADE_TOOL
+from src.governed_financial_advisor.graph.subgraphs.governed_trader_graph import (
+    guarded_tool_executor_node,
 )
+from src.governed_financial_advisor.infrastructure.gateway_client import GatewayClient
 from src.integrations.actuator_01.response_classifier import (
     ResponseCategory,
     classify_response,
 )
 from src.integrations.actuator_02.adapter import Actuator02Adapter
 from src.integrations.actuator_03.adapter import Actuator03Adapter
+from tests.fixtures.signed_gateway import SignedGatewayStub
 from tests.fixtures.trade_inputs import sealed_governance, trade_governor
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
@@ -718,6 +718,10 @@ class TestStage4RetrySafeIdempotencyAndAdvisorHalting:
     """Retry-safe plan/intent derivation & non-retryable terminal advisor outcome."""
 
     def test_derive_transaction_id_ignores_volatile_tool_call_id(self) -> None:
+        from src.governed_financial_advisor.graph.governance.tool_guard import (
+            canonical_trade_intent,
+        )
+
         args_a = {"symbol": "AAPL", "amount": 100.0, "side": "BUY", "currency": "USD"}
         plan = {
             "steps": [
@@ -729,12 +733,22 @@ class TestStage4RetrySafeIdempotencyAndAdvisorHalting:
                 }
             ]
         }
-        k1 = derive_plan_step_key(args_a, plan_steps=plan["steps"], occurrence=0)
-        k2 = derive_plan_step_key(dict(args_a), plan_steps=plan["steps"], occurrence=0)
+        k1 = derive_plan_step_key(
+            args_a,
+            plan_steps=plan["steps"],
+            occurrence=0,
+            canonical_extractor=canonical_trade_intent,
+        )
+        k2 = derive_plan_step_key(
+            dict(args_a),
+            plan_steps=plan["steps"],
+            occurrence=0,
+            canonical_extractor=canonical_trade_intent,
+        )
         assert k1 == k2
 
-        tx1 = derive_transaction_id(k1, thread_id="thread-abc", message_id="msg-1")
-        tx2 = derive_transaction_id(k2, thread_id="thread-abc", message_id="msg-2")
+        tx1 = derive_idempotency_key(k1, thread_id="thread-abc", message_id="msg-1")
+        tx2 = derive_idempotency_key(k2, thread_id="thread-abc", message_id="msg-2")
         assert tx1 == tx2
         assert uuid.UUID(tx1).version == 5
 
@@ -742,27 +756,38 @@ class TestStage4RetrySafeIdempotencyAndAdvisorHalting:
     async def test_advisor_tool_guard_halts_on_indeterminate_with_reconcile_message(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        import cage_client.langgraph as lg_mod
+
         seen_txns: list[str] = []
+        GatewayClient._instance = None
+        stub = SignedGatewayStub()
 
-        async def _node(state: dict[str, Any]) -> dict[str, Any]:
-            call = state["messages"][-1].tool_calls[0]
-            seen_txns.append(call["args"]["transaction_id"])
-            return {
-                "messages": [],
-                COMMIT_OUTCOMES: {
-                    call["id"]: CommitOutcome(
-                        CommitStatus.INDETERMINATE,
-                        "Execution outcome is indeterminate",
-                    )
+        def _handler(request: httpx.Request) -> httpx.Response:
+            sent = json.loads(request.content)
+            seen_txns.append(str(sent["params"]["transaction_id"]))
+            return httpx.Response(
+                200,
+                json={
+                    "status": "ERROR",
+                    "actuation_outcome": "UNKNOWN",
+                    "may_have_executed": True,
+                    "outcome": {
+                        "status": "INDETERMINATE",
+                        "message": "Execution outcome is indeterminate",
+                    },
                 },
-            }
+            )
 
+        gw_client = GatewayClient()
+        gw_client._http = httpx.AsyncClient(
+            transport=httpx.MockTransport(stub.transport_handler(_handler)),
+            base_url="http://gateway.test",
+        )
         monkeypatch.setattr(
-            tg_mod,
+            lg_mod,
             "get_config",
             lambda: {"configurable": {"thread_id": "thread-reconcile"}},
         )
-        guarded = gateway_tool_guard("execute_trade", approvable=True)(_node)
         state = {
             "messages": [
                 AIMessage(
@@ -785,38 +810,44 @@ class TestStage4RetrySafeIdempotencyAndAdvisorHalting:
             "deferred_id": "def-1",
             "approval_decision": {"approved": True},
         }
-        out = await guarded(state)
-        assert out["governance_status"] == "DENIED"
-        msg = out["messages"][0].content
-        assert "could not be confirmed" in msg
-        assert "Do not submit it again until it has been reconciled" in msg
-        assert "Submit a new request" not in msg
+        try:
+            cmd = await guarded_tool_executor_node(state)
+            out = dict(cmd.update or {})
+            assert out["governance_status"] == CommitStatus.INDETERMINATE.value
+            assert out["may_have_executed"] is True
+            msg = out["messages"][0].content
+            assert "could not be confirmed" in msg
+            assert "Do not submit it again until it has been reconciled" in msg
+            assert "Submit a new request" not in msg
 
-        # Even if caller/LLM replays with a fresh tool_call_id, transaction_id is identical.
-        replay_state = {
-            **state,
-            "messages": [
-                AIMessage(
-                    content="",
-                    tool_calls=[
-                        {
-                            "name": TRADE_TOOL,
-                            "args": {
-                                "symbol": "AAPL",
-                                "amount": 100.0,
-                                "side": "BUY",
-                                "currency": "USD",
-                            },
-                            "id": "llm-call-second-fresh-id",
-                        }
-                    ],
-                    id="ai-second",
-                )
-            ],
-        }
-        await guarded(replay_state)
-        assert len(seen_txns) == 2
-        assert seen_txns[0] == seen_txns[1]
+            # Even if caller/LLM replays with a fresh tool_call_id, transaction_id is identical.
+            replay_state = {
+                **state,
+                "messages": [
+                    AIMessage(
+                        content="",
+                        tool_calls=[
+                            {
+                                "name": TRADE_TOOL,
+                                "args": {
+                                    "symbol": "AAPL",
+                                    "amount": 100.0,
+                                    "side": "BUY",
+                                    "currency": "USD",
+                                },
+                                "id": "llm-call-second-fresh-id",
+                            }
+                        ],
+                        id="ai-second",
+                    )
+                ],
+            }
+            await guarded_tool_executor_node(replay_state)
+            assert len(seen_txns) == 2
+            assert seen_txns[0] == seen_txns[1]
+        finally:
+            await gw_client.close()
+            GatewayClient._instance = None
 
 
 class TestEndToEndUnknownActuationLifecycle:
@@ -902,64 +933,84 @@ class TestEndToEndUnknownActuationLifecycle:
             outcome=ActuationOutcome.UNKNOWN,
         )
 
-        async def _gateway_node(state: dict[str, Any]) -> dict[str, Any]:
-            call = state["messages"][-1].tool_calls[0]
-            with (
-                patch.object(
-                    wid_mod, "extract_client_identity", return_value=trusted_id
-                ),
-                patch.object(wid_mod, "load_identity_policy", return_value=policy),
-                patch.object(
-                    mts, "refuse_if_quarantined", AsyncMock(return_value=None)
-                ),
-                patch.object(mts, "_check_rate_limit", AsyncMock(return_value=True)),
-                patch.object(
-                    gm_mod, "sanitize_mcp_tool_response", AsyncMock(return_value=None)
-                ),
-                patch.object(
-                    mts.mcp._tool_manager, "list_tools", return_value=fake_tools
-                ),
-                patch(
-                    "src.cage_finance.tools.tool_provider.enforce_governance",
-                    new_callable=AsyncMock,
-                    side_effect=_enforce_with_reserve,
-                ),
-                patch(
-                    "src.cage_finance.tools.tool_provider.enforce_approved_governance",
-                    new_callable=AsyncMock,
-                    side_effect=_enforce_with_reserve,
-                ),
-                patch(
-                    "src.gateway.governance.routing_seal.verify_and_consume_seal",
-                    AsyncMock(),
-                ),
-                patch("src.gateway.infrastructure.redis_client.redis_client", None),
-                patch(
-                    "src.cage_finance.tools.tool_provider._broker_actuator.actuate",
-                    AsyncMock(return_value=timeout_receipt),
-                ),
-            ):
-                client = TestClient(mts.app)
-                resp = client.post(
-                    "/tools/execute",
-                    json={"tool_name": TRADE_TOOL, "params": dict(call["args"])},
-                )
-            body = resp.json()
-            assert body["actuation_outcome"] == "UNKNOWN"
-            assert body["may_have_executed"] is True
-            return {
-                "messages": [],
-                COMMIT_OUTCOMES: {
-                    call["id"]: CommitOutcome.from_wire(body["outcome"]),
-                },
-            }
+        import cage_client.langgraph as lg_mod
 
+        GatewayClient._instance = None
+        stub = SignedGatewayStub()
+        asgi_transport = httpx.ASGITransport(app=mts.app)
+
+        class _MtsSigningTransport(httpx.AsyncBaseTransport):
+            async def handle_async_request(
+                self, request: httpx.Request
+            ) -> httpx.Response:
+                if request.url.path == "/governance/.well-known/jwks.json":
+                    return httpx.Response(200, json=stub.jwks)
+                with (
+                    patch.object(
+                        wid_mod, "extract_client_identity", return_value=trusted_id
+                    ),
+                    patch.object(wid_mod, "load_identity_policy", return_value=policy),
+                    patch.object(
+                        mts, "refuse_if_quarantined", AsyncMock(return_value=None)
+                    ),
+                    patch.object(
+                        mts, "_check_rate_limit", AsyncMock(return_value=True)
+                    ),
+                    patch.object(
+                        gm_mod,
+                        "sanitize_mcp_tool_response",
+                        AsyncMock(return_value=None),
+                    ),
+                    patch.object(
+                        mts.mcp._tool_manager, "list_tools", return_value=fake_tools
+                    ),
+                    patch(
+                        "src.cage_finance.tools.tool_provider.enforce_governance",
+                        new_callable=AsyncMock,
+                        side_effect=_enforce_with_reserve,
+                    ),
+                    patch(
+                        "src.cage_finance.tools.tool_provider.enforce_approved_governance",
+                        new_callable=AsyncMock,
+                        side_effect=_enforce_with_reserve,
+                    ),
+                    patch(
+                        "src.gateway.governance.routing_seal.verify_and_consume_seal",
+                        AsyncMock(),
+                    ),
+                    patch("src.gateway.infrastructure.redis_client.redis_client", None),
+                    patch(
+                        "src.cage_finance.tools.tool_provider._broker_actuator.actuate",
+                        AsyncMock(return_value=timeout_receipt),
+                    ),
+                ):
+                    resp = await asgi_transport.handle_async_request(request)
+                await resp.aread()
+                body = json.loads(resp.content)
+                assert body["actuation_outcome"] == "UNKNOWN"
+                assert body["may_have_executed"] is True
+                sent = json.loads(request.content)
+                params = sent.get("params") or {}
+                signed_outcome = stub.commit_outcome(
+                    body["outcome"],
+                    tool_name=str(sent.get("tool_name") or ""),
+                    idempotency_key=params.get("transaction_id"),
+                )
+                return httpx.Response(
+                    resp.status_code,
+                    json={**body, "outcome": signed_outcome},
+                )
+
+        gw_client = GatewayClient()
+        gw_client._http = httpx.AsyncClient(
+            transport=_MtsSigningTransport(),
+            base_url="http://gateway.test",
+        )
         monkeypatch.setattr(
-            tg_mod,
+            lg_mod,
             "get_config",
             lambda: {"configurable": {"thread_id": "thread-e2e-232"}},
         )
-        guarded = gateway_tool_guard("execute_trade", approvable=True)(_gateway_node)
 
         first_state = {
             "messages": [
@@ -983,51 +1034,57 @@ class TestEndToEndUnknownActuationLifecycle:
             "deferred_id": "def-e2e-1",
             "approval_decision": {"approved": True},
         }
-        with patch.object(mts, "mark_request_refused") as mark_refused:
-            first_out = await guarded(first_state)
-            mark_refused.assert_not_called()
+        try:
+            with patch.object(mts, "mark_request_refused") as mark_refused:
+                first_cmd = await guarded_tool_executor_node(first_state)
+                first_out = dict(first_cmd.update or {})
+                mark_refused.assert_not_called()
 
-        # Stage 4: advisor halted without loop, transaction_id bound, fiscal held.
-        assert first_out["governance_status"] == "DENIED"
-        assert "Do not submit it again until it has been reconciled" in (
-            first_out["messages"][0].content
-        )
-        assert await fiscal_guard.current_spend_usd() == pytest.approx(250.0)
-        unverified = await fiscal_guard.list_unverified_unknown()
-        assert len(unverified) == 1
-        tx_id = unverified[0].transaction_id
+            # Stage 4: advisor halted without loop, transaction_id bound, fiscal held.
+            assert first_out["governance_status"] == CommitStatus.INDETERMINATE.value
+            assert "Do not submit it again until it has been reconciled" in (
+                first_out["messages"][0].content
+            )
+            assert await fiscal_guard.current_spend_usd() == pytest.approx(250.0)
+            unverified = await fiscal_guard.list_unverified_unknown()
+            assert len(unverified) == 1
+            tx_id = unverified[0].transaction_id
 
-        # Simulated LLM retry with fresh tool_call_id collides deterministically as UNSETTLED_DUPLICATE.
-        retry_state = {
-            **first_state,
-            "messages": [
-                AIMessage(
-                    content="",
-                    tool_calls=[
-                        {
-                            "name": TRADE_TOOL,
-                            "args": {
-                                "symbol": "AAPL",
-                                "amount": 250.0,
-                                "side": "buy",
-                                "currency": "USD",
-                            },
-                            "id": "call-e2e-2-fresh-id",
-                        }
-                    ],
-                    id="ai-e2e-2",
-                )
-            ],
-        }
-        dup_out = await guarded(retry_state)
-        assert dup_out["governance_status"] == "DENIED"
-        assert "Do not submit it again until it has been reconciled" in (
-            dup_out["messages"][0].content
-        )
-        # Re-claim check confirms key is still UNKNOWN before reconciliation.
-        pre_reconcile = await ledger.claim("execute_trade", SHARED_CALLER, tx_id)
-        assert isinstance(pre_reconcile, Duplicate)
-        assert pre_reconcile.status is ExecutionStatus.UNKNOWN
+            # Simulated LLM retry with fresh tool_call_id collides deterministically as UNSETTLED_DUPLICATE.
+            retry_state = {
+                **first_state,
+                "messages": [
+                    AIMessage(
+                        content="",
+                        tool_calls=[
+                            {
+                                "name": TRADE_TOOL,
+                                "args": {
+                                    "symbol": "AAPL",
+                                    "amount": 250.0,
+                                    "side": "buy",
+                                    "currency": "USD",
+                                },
+                                "id": "call-e2e-2-fresh-id",
+                            }
+                        ],
+                        id="ai-e2e-2",
+                    )
+                ],
+            }
+            dup_cmd = await guarded_tool_executor_node(retry_state)
+            dup_out = dict(dup_cmd.update or {})
+            assert dup_out["governance_status"] == CommitStatus.INDETERMINATE.value
+            assert "Do not submit it again until it has been reconciled" in (
+                dup_out["messages"][0].content
+            )
+            # Re-claim check confirms key is still UNKNOWN before reconciliation.
+            pre_reconcile = await ledger.claim("execute_trade", SHARED_CALLER, tx_id)
+            assert isinstance(pre_reconcile, Duplicate)
+            assert pre_reconcile.status is ExecutionStatus.UNKNOWN
+        finally:
+            await gw_client.close()
+            GatewayClient._instance = None
 
         # Stage 2: broker lookup reconciliation resolves non-fill (reclaim) vs fill (retain).
         monkeypatch.setattr(broker_lookup_mod, "_is_mock_broker", lambda: False)

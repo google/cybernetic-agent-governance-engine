@@ -111,19 +111,19 @@ NOT_EXECUTED_STATUSES: frozenset[CommitStatus] = frozenset(
 class ApprovalRedemptionRefusal(str, Enum):
     """Why a ``deferred_id`` submitted on an approved resume could not be redeemed."""
 
-    PENDING = "pending"
-    QUORUM_INCOMPLETE = "quorum_incomplete"
-    UNKNOWN_OR_EXPIRED = "unknown_or_expired"
-    NOT_AN_APPROVAL = "not_an_approval"
-    CONSUMED = "consumed"
-    EXPIRED = "expired"
-    RESOLVED_WITHOUT_APPROVAL = "resolved_without_approval"
-    QUORUM_NOT_DISTINCT = "quorum_not_distinct"
-    UNRECOGNIZED_STATE = "unrecognized_state"
-    ACTION_MISMATCH = "action_mismatch"
-    STALE_BARRIER_PREVIEW = "stale_barrier_preview"
-    NO_APPROVED_PARAMS = "no_approved_params"
-    PARAMS_NOT_COVERED = "params_not_covered"
+    PENDING = "PENDING"
+    QUORUM_INCOMPLETE = "QUORUM_INCOMPLETE"
+    UNKNOWN_OR_EXPIRED = "UNKNOWN_OR_EXPIRED"
+    NOT_AN_APPROVAL = "NOT_AN_APPROVAL"
+    CONSUMED = "CONSUMED"
+    EXPIRED = "EXPIRED"
+    RESOLVED_WITHOUT_APPROVAL = "RESOLVED_WITHOUT_APPROVAL"
+    QUORUM_NOT_DISTINCT = "QUORUM_NOT_DISTINCT"
+    UNRECOGNIZED_STATE = "UNRECOGNIZED_STATE"
+    ACTION_MISMATCH = "ACTION_MISMATCH"
+    STALE_BARRIER_PREVIEW = "STALE_BARRIER_PREVIEW"
+    NO_APPROVED_PARAMS = "NO_APPROVED_PARAMS"
+    PARAMS_NOT_COVERED = "PARAMS_NOT_COVERED"
 
 
 RETRYABLE_REFUSALS: frozenset[ApprovalRedemptionRefusal] = frozenset(

@@ -52,7 +52,11 @@ from src.cage_finance.stpa import uca_rules
 from src.cage_finance.tools.tool_provider import execute_trade_action
 from src.gateway.governance import jwks as jwks_mod
 from src.gateway.governance import kms_signer as kms_signer_mod
-from src.gateway.governance.commit_outcome import CommitOutcome, CommitStatus
+from src.gateway.governance.commit_outcome import (
+    CommitOutcome,
+    CommitStatus,
+    sign_commit_outcome_wire,
+)
 from src.gateway.governance.contracts import NormBinding
 from src.gateway.governance.defer_queue import DeferQueue, DeferReason
 from src.gateway.governance.ftra import classifier as ftra_classifier_mod
@@ -67,16 +71,15 @@ from src.gateway.governance.seams.ground_truth import FaultMode
 from src.gateway.governance.warrant.cache import WarrantCache
 from src.gateway.server.governance_middleware import governance_app
 from src.gateway.server.workload_identity import CLIENT_IDENTITY_HEADER, _serving
-from src.governed_financial_advisor.graph.governance.tool_guard import (
-    COMMIT_OUTCOMES,
-    gateway_tool_guard,
-)
 from src.governed_financial_advisor.graph.graph import _build_workflow
 from src.governed_financial_advisor.graph.nodes.defer_node import defer_node
 from src.governed_financial_advisor.graph.nodes.safety_node import (
     MAX_CONSECUTIVE_DENIALS,
     route_safety,
     safety_check_node,
+)
+from src.governed_financial_advisor.graph.subgraphs.governed_trader_graph import (
+    guarded_tool_executor_node,
 )
 from src.governed_financial_advisor.infrastructure.gateway_client import GatewayClient
 from tests.fixtures.governor import (
@@ -156,46 +159,65 @@ def _tool_call(side: str = "buy", **extra: Any) -> dict[str, Any]:
     }
 
 
-def _trader(gateway: Gateway, results: list[CommitOutcome]) -> Any:
-    """The governed trader: the trade tool's committing run, per tool call.
+class _PreviewAndExecuteTransport(httpx.AsyncBaseTransport):
+    """Routes preview/JWKS calls to ``gw.http`` and ``/tools/execute`` to ``execute_trade_action``."""
 
-    The live node calls the tool over MCP; arguments the tool does not accept
-    are rejected there, so they are dropped here too. The MCP request carries
-    the advisor's verified identity (WorkloadIdentityMiddleware). As the live
-    node does, it reports each call's typed ``CommitOutcome`` under
-    ``COMMIT_OUTCOMES`` for the guard to route on; the message carries prose.
-    """
+    def __init__(self, gateway: Gateway, results: list[CommitOutcome]) -> None:
+        self._gateway = gateway
+        self._results = results
 
-    async def node(state: dict[str, Any]) -> dict[str, Any]:
-        messages = []
-        outcomes: dict[str, CommitOutcome] = {}
-        for call in state["messages"][-1].tool_calls:
-            kwargs = {k: v for k, v in call["args"].items() if k in _TOOL_KWARGS}
-            with _serving(ADVISOR):
-                result = await execute_trade_action(
-                    **kwargs,
-                    deferred_id=state.get("deferred_id"),
-                    governor=gateway.governor,
-                )
-            results.append(result)
-            outcomes[str(call["id"])] = result
-            messages.append(
-                ToolMessage(content=result.message, tool_call_id=call["id"])
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path != "/tools/execute":
+            return await self._gateway.http.request(
+                request.method,
+                request.url.raw_path.decode("ascii"),
+                content=request.content if request.method == "POST" else None,
+                headers=dict(request.headers),
             )
-        return {"messages": messages, COMMIT_OUTCOMES: outcomes}
-
-    return node
+        sent = json.loads(request.content)
+        params = sent.get("params") or {}
+        kwargs = {k: v for k, v in params.items() if k in _TOOL_KWARGS}
+        with _serving(ADVISOR):
+            result = await execute_trade_action(
+                **kwargs,
+                governor=self._gateway.governor,
+            )
+        self._results.append(result)
+        signed_wire = await sign_commit_outcome_wire(
+            result,
+            tool_name=str(sent.get("tool_name") or ""),
+            idempotency_key=params.get("transaction_id"),
+        )
+        return httpx.Response(
+            200,
+            json={
+                "status": "SUCCESS",
+                "output": result.message,
+                "outcome": signed_wire,
+            },
+        )
 
 
 async def _run_trader(
     gateway: Gateway, call: dict[str, Any]
 ) -> tuple[dict, list[CommitOutcome]]:
     results: list[CommitOutcome] = []
-    guarded = gateway_tool_guard("execute_trade", approvable=True)(
-        _trader(gateway, results)
+    client = GatewayClient()
+    saved_http = client._http
+    client._http = httpx.AsyncClient(
+        transport=_PreviewAndExecuteTransport(gateway, results),
+        base_url="http://gateway.test",
     )
-    out = await guarded({"messages": [AIMessage(content="", tool_calls=[call])]})
-    return out, results
+    try:
+        cmd = await guarded_tool_executor_node(
+            {"messages": [AIMessage(content="", tool_calls=[call])]}
+        )
+        return dict(cmd.update or {}), results
+    finally:
+        await client.sdk_client()
+        await client._http.aclose()
+        client._http = saved_http
 
 
 def _refused_codes(gateway: Gateway) -> str:

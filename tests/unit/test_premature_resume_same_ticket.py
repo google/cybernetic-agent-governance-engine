@@ -321,23 +321,67 @@ def hitl_graph(
     monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[SimpleNamespace]:
     """Compile the real parent graph with stubbed leaves and install it on the app."""
+    import httpx
+
     import src.governed_financial_advisor.graph.graph as graph_mod
     import src.governed_financial_advisor.graph.subgraphs.governed_trader_graph as trader_mod
     from src.governed_financial_advisor.infrastructure.gateway_client import (
         GatewayClient,
     )
+    from tests.fixtures.signed_gateway import SignedGatewayStub
 
     events: list[tuple[str, Any]] = []
     validate_calls: list[dict[str, Any]] = []
+    llm = _FakeLLM(events)
+    trade_tool = _FakeTradeTool(events)
+    mcp = _FakeMCPClient(trade_tool)
 
-    async def _validate_action(
-        self: Any, action: str, params: dict[str, Any], *a: Any, **k: Any
-    ) -> dict[str, Any]:
-        validate_calls.append({"action": action, "params": dict(params)})
-        events.append(("validate", action))
-        return {"verdict": "REQUIRE_APPROVAL", "deferred_id": _DEFERRED_ID}
+    GatewayClient._instance = None
+    stub = SignedGatewayStub()
 
-    monkeypatch.setattr(GatewayClient, "validate_action", _validate_action)
+    def _gw_handler(request: httpx.Request) -> httpx.Response:
+        sent = json.loads(request.content)
+        if request.url.path == "/governance/validate-action":
+            validate_calls.append(
+                {"action": sent["action"], "params": dict(sent["params"])}
+            )
+            events.append(("validate", sent["action"]))
+            return httpx.Response(
+                200,
+                json={"verdict": "REQUIRE_APPROVAL", "deferred_id": _DEFERRED_ID},
+            )
+        if request.url.path == "/tools/execute":
+            params = dict(sent.get("params") or {})
+            trade_tool.invocations.append(params)
+            events.append(("commit", params.get("deferred_id")))
+            cur = trade_tool.outcome
+            if isinstance(cur, BaseException):
+                return httpx.Response(
+                    200,
+                    json={"status": "ERROR", "outcome": {"status": "BOGUS"}},
+                )
+            http_status = (
+                200
+                if cur.status in {CommitStatus.EXECUTED, CommitStatus.DEFERRED}
+                else 403
+            )
+            return httpx.Response(
+                http_status,
+                json={
+                    "status": "SUCCESS"
+                    if cur.status is CommitStatus.EXECUTED
+                    else "ERROR",
+                    "output": cur.message,
+                    "outcome": cur.to_wire(include_signature=False),
+                },
+            )
+        return httpx.Response(404)
+
+    gw_client = GatewayClient()
+    gw_client._http = httpx.AsyncClient(
+        transport=httpx.MockTransport(stub.transport_handler(_gw_handler)),
+        base_url="http://gateway.test",
+    )
 
     # --- Upstream parent nodes (stubbed; topology stays real) ---------------
     async def _guardrail(state: Any) -> dict[str, Any]:
@@ -381,10 +425,6 @@ def hitl_graph(
     monkeypatch.setattr(graph_mod, "nemo_output_rail_node", _passthrough)
 
     # --- Governed-trader subgraph leaves ------------------------------------
-    llm = _FakeLLM(events)
-    trade_tool = _FakeTradeTool(events)
-    mcp = _FakeMCPClient(trade_tool)
-
     async def _ref_quote(state: Any, *, ticker: str, **_: Any) -> dict[str, Any]:
         return {
             "ticker": ticker,
@@ -420,6 +460,7 @@ def hitl_graph(
             events=events,
         )
     finally:
+        GatewayClient._instance = None
         app.dependency_overrides.clear()
         app.dependency_overrides.update(saved_overrides)
         if had_graph:
@@ -669,7 +710,8 @@ async def test_terminal_redemption_outcome_denies_and_ends(
     assert not snapshot.next, f"terminal outcome re-parked: {snapshot.next}"
     assert not _interrupts(snapshot)
     sub = _latest_subgraph_values(env.graph, thread_id)
-    assert sub.get("governance_status") == "DENIED"
+    expected_status = "INDETERMINATE" if case == "UNRECOGNIZED_OUTCOME" else "DENIED"
+    assert sub.get("governance_status") == expected_status
     assert sub.get("redemption_refusal") == expected_refusal
     for field in (
         "deferred_id",

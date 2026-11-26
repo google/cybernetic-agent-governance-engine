@@ -31,6 +31,7 @@ from .exceptions import (
     CommitOutcomeDecodeError,
     DeferralPending,
     GatewayUnavailableError,
+    MissingDeferralTicketError,
     PolicyViolationException,
     RoutingSealVerificationError,
 )
@@ -79,6 +80,7 @@ __all__ = [
     "IndeterminateProvenance",
     "JwksCache",
     "JwksKeyResolver",
+    "MissingDeferralTicketError",
     "PolicyViolationException",
     "PreviewResult",
     "RoutingSealVerificationError",

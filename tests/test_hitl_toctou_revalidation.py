@@ -893,6 +893,7 @@ class TestApprovalNodeSlippageAndTTL:
             return_value=decision,
         ):
             state = {
+                "deferred_id": "def-toctou-1",
                 "execution_plan": _make_plan_json(),
                 "evaluation_result": '{"verdict": "APPROVED"}',
             }
@@ -960,7 +961,11 @@ class TestApprovalNodeSlippageAndTTL:
             "src.governed_financial_advisor.graph.nodes.approval_node.interrupt",
             side_effect=mock_interrupt,
         ):
-            state = {"execution_plan": _make_plan_json(), "evaluation_result": ""}
+            state = {
+                "deferred_id": "def-toctou-ttl-1",
+                "execution_plan": _make_plan_json(),
+                "evaluation_result": "",
+            }
             approval_node(state)
 
         assert "expires_at" in captured_payload, (
@@ -970,6 +975,18 @@ class TestApprovalNodeSlippageAndTTL:
         now = datetime.now(timezone.utc)
         delta = (expires_at - now).total_seconds()
         assert 0 < delta <= 305, f"expires_at delta={delta}s not in expected TTL range"
+
+    def test_missing_deferred_id_raises(self):
+        from cage_client import MissingDeferralTicketError
+
+        from src.governed_financial_advisor.graph.nodes.approval_node import (
+            approval_node,
+        )
+
+        with pytest.raises(MissingDeferralTicketError):
+            approval_node(
+                {"execution_plan": _make_plan_json(), "evaluation_result": ""}
+            )
 
 
 # ---------------------------------------------------------------------------

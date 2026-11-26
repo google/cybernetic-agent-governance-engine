@@ -319,6 +319,23 @@ class GatewayClient:
         self._sdk_http = http
         return sdk
 
+    async def sdk_client(self, timeout: float = 60.0) -> CageClient:
+        """Return the singleton's :class:`CageClient` bound to its active HTTP transport."""
+        return await self._ensure_sdk(await self._ensure_client(), timeout)
+
+    @staticmethod
+    def _set_preview_pin(
+        policy_version_id: str | None, timeout: float = 60.0
+    ) -> tuple[contextvars.Token[_Preview | None], _Preview]:
+        """Bind a ``policy_version_id`` preview pin for the current async context."""
+        preview = _Preview(policy_version_id=policy_version_id, timeout=timeout)
+        return _current_preview.set(preview), preview
+
+    @staticmethod
+    def _reset_preview_pin(token: contextvars.Token[_Preview | None]) -> None:
+        """Reset the active ``policy_version_id`` preview context."""
+        _current_preview.reset(token)
+
     def _build_headers(self) -> dict[str, str]:
         """Construct outbound request headers with W3C trace context and x-cage-principal.
 

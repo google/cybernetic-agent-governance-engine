@@ -998,6 +998,7 @@ class CageClient:
         params: Mapping[str, Any],
         *,
         idempotency_key: str | None = None,
+        idempotency_param: str = "idempotency_key",
         approval_token: str | None = None,
         verify_signature: bool | None = None,
         require_commit_outcome: bool = True,
@@ -1016,7 +1017,11 @@ class CageClient:
             params: Tool call arguments (model-supplied ``deferred_id`` is stripped
                 unless ``approval_token`` is passed explicitly).
             idempotency_key: Optional caller idempotency key injected into tool params
-                and verified against the signed outcome's ``idempotency_key`` binding.
+                under ``idempotency_param`` and verified against the signed outcome's
+                ``idempotency_key`` binding.
+            idempotency_param: Wire parameter name inside ``params`` receiving
+                ``idempotency_key`` (default ``"idempotency_key"``; domain tools
+                like finance's ``execute_trade_action`` pass ``"transaction_id"``).
             approval_token: Optional human-approved ``deferred_id`` forwarded as
                 ``params["deferred_id"]`` on resume.
             verify_signature: Optional per-call override (defaults to client's
@@ -1033,6 +1038,9 @@ class CageClient:
             raise ValueError("execute_tool() requires a non-empty 'tool_name' string")
         if not isinstance(params, Mapping):
             raise ValueError("execute_tool() requires a mapping for 'params'")
+        if not isinstance(idempotency_param, str) or not idempotency_param.strip():
+            raise ValueError("idempotency_param must be a non-empty string")
+        param_name = idempotency_param.strip()
         if timeout_s is not None and (not math.isfinite(timeout_s) or timeout_s <= 0):
             raise ValueError("timeout_s must be a finite number > 0")
 
@@ -1063,10 +1071,11 @@ class CageClient:
                 raise ValueError(
                     "idempotency_key must be a non-empty string when provided"
                 )
-            wire_params["idempotency_key"] = idempotency_key
+            wire_params[param_name] = idempotency_key
 
         expected_key = (
             _non_blank_str(idempotency_key)
+            or _non_blank_str(wire_params.get(param_name))
             or _non_blank_str(wire_params.get("idempotency_key"))
             or _non_blank_str(wire_params.get("transaction_id"))
         )

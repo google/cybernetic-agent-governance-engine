@@ -34,6 +34,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
+from cage_client import COMMIT_OUTCOME_SCHEMA
 from cage_client._jcs import canonicalize
 from cage_client.crypto import compute_expected_action_hash
 from cryptography.hazmat.primitives import serialization
@@ -122,6 +123,47 @@ class SignedGatewayStub:
         self.issued.append(signed)
         return signed
 
+    def commit_outcome(
+        self,
+        outcome: Mapping[str, Any],
+        *,
+        tool_name: str,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        """Return a JCS-signed ``CommitOutcome`` bound to ``tool_name`` and ``idempotency_key``."""
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        unsigned: dict[str, Any] = {
+            "schema": outcome.get("schema") or COMMIT_OUTCOME_SCHEMA,
+            "status": outcome.get("status", "EXECUTED"),
+            "message": outcome.get("message", "executed"),
+            "tool_name": outcome.get("tool_name") or tool_name,
+            "issued_at": outcome.get("issued_at") or _rfc3339(now),
+            **{
+                k: v
+                for k, v in outcome.items()
+                if k
+                not in {
+                    "schema",
+                    "status",
+                    "message",
+                    "tool_name",
+                    "issued_at",
+                    "signature",
+                }
+            },
+        }
+        if idempotency_key and "idempotency_key" not in unsigned:
+            unsigned["idempotency_key"] = idempotency_key
+        signature = self._key.sign(canonicalize(unsigned))
+        return {
+            **unsigned,
+            "signature": {
+                "algorithm": "EdDSA",
+                "kid": self.kid,
+                "value": _b64u(signature),
+            },
+        }
+
     def signature_values(self) -> list[str]:
         """The ``signature.value`` of every envelope signed so far, in order."""
         return [str(envelope["signature"]["value"]) for envelope in self.issued]
@@ -148,16 +190,44 @@ class SignedGatewayStub:
         answer carrying an evidenced refusal payload (``verdict`` in
         ``DENY``/``DENIED`` with a non-blank ``proof_hash``/``audit_id``), are
         replaced by a signed envelope bound to the request's ``action`` and
-        ``params``; an ``envelope_id`` in the body is kept. A body that already
-        carries a signature block (a deliberately forged or tampered envelope),
-        an un-evidenced or non-JSON 403 (such as a proxy/mesh rejection), any
-        other status, and any other path pass through unchanged.
+        ``params``; an ``envelope_id`` in the body is kept. A response from
+        ``POST /tools/execute`` containing an unsigned ``outcome`` dict (without
+        a ``signature`` key) has its ``outcome`` signed automatically. A body
+        that already carries a signature block (a deliberately forged or
+        tampered envelope), an un-evidenced or non-JSON 403 (such as a
+        proxy/mesh rejection), any other status, and any other path pass
+        through unchanged.
         """
 
         def signing(request: httpx.Request) -> httpx.Response:
             if request.url.path == JWKS_PATH:
                 return httpx.Response(200, json=self.jwks)
             response = handler(request)
+            if request.url.path == "/tools/execute":
+                try:
+                    body = response.json()
+                except ValueError:
+                    return response
+                if (
+                    isinstance(body, dict)
+                    and isinstance(body.get("outcome"), dict)
+                    and "signature" not in body["outcome"]
+                ):
+                    sent = json.loads(request.content)
+                    params = sent.get("params") or {}
+                    idem = params.get("idempotency_key") or params.get("transaction_id")
+                    signed_body = {
+                        **body,
+                        "outcome": self.commit_outcome(
+                            body["outcome"],
+                            tool_name=str(sent.get("tool_name") or ""),
+                            idempotency_key=str(idem)
+                            if isinstance(idem, str) and idem
+                            else None,
+                        ),
+                    }
+                    return httpx.Response(response.status_code, json=signed_body)
+                return response
             if request.url.path != VALIDATE_ACTION_PATH or response.status_code not in (
                 200,
                 403,

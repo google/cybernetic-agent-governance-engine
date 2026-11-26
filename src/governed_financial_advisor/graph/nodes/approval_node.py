@@ -38,6 +38,7 @@ from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from cage_client.langgraph import approval_park_node
 from langgraph.types import Command, interrupt
 
 from src.governed_financial_advisor.graph.nodes.approval_contract import (
@@ -61,114 +62,100 @@ def create_approval_node(
     approved_target: str = "post_hitl_rehydrate",
     rejected_target: str = "rejection",
 ) -> Callable[..., Any]:
-    """Create a human-in-the-loop approval node with configurable resume targets.
+    """Create a human-in-the-loop approval node delegated to ``cage_client.langgraph.approval_park_node``.
 
     Defaults to the ``governed_trader`` subgraph targets
     (``post_hitl_rehydrate`` / ``rejection``) while allowing the parent graph to
-    route to ``governed_trader`` / ``explainer``.
+    route to ``governed_trader`` / ``explainer``. Raises
+    :class:`~cage_client.MissingDeferralTicketError` when reached without a
+    checkpointed ``deferred_id`` or ``deferred_step_ids``.
     """
 
     def _node(state: dict[str, Any]) -> Command:
         logger.info("[ApprovalNode] Trade requires human approval — suspending graph.")
+        captured: dict[str, Any] = {}
 
-        ttl_seconds: int = resolve_hitl_approval_ttl_seconds()
-        step_ids = [
-            str(d)
-            for d in (state.get("deferred_step_ids") or [])
-            if isinstance(d, str) and d
-        ]
-        deferred_ids = step_ids or (
-            [str(state["deferred_id"])] if state.get("deferred_id") else []
-        )
-        execution_plan_view = (
-            state.get("execution_plan_output")
-            if state.get("execution_plan_output") is not None
-            else state.get("execution_plan")
-        )
-        trade_payload: dict[str, Any] = {
-            "reason": "trade_approval_required",
-            # The gateway-held approval token(s). The authoritative approval is
-            # recorded against each token at POST /v1/defer/{deferred_id}/escalate
-            # (the compliance bridge); this interrupt only pauses the advisor's graph.
-            "deferred_id": state.get("deferred_id"),
-            "deferred_ids": deferred_ids,
-            "trade": {
-                "execution_plan": execution_plan_view,
-                "evaluation_result": state.get("evaluation_result"),
-            },
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "expires_at": (
+        def _build_trade_payload(
+            cur_state: Any, _primary_ticket: str, _deferred_ids: list[str]
+        ) -> dict[str, Any]:
+            ttl_seconds = resolve_hitl_approval_ttl_seconds()
+            expires_at = (
                 datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)
-            ).isoformat(),
-        }
+            ).isoformat()
+            captured["expires_at"] = expires_at
+            execution_plan_view = (
+                cur_state.get("execution_plan_output")
+                if cur_state.get("execution_plan_output") is not None
+                else cur_state.get("execution_plan")
+            )
+            return {
+                "reason": "trade_approval_required",
+                "trade": {
+                    "execution_plan": execution_plan_view,
+                    "evaluation_result": cur_state.get("evaluation_result"),
+                },
+                "expires_at": expires_at,
+            }
 
-        # Pause the graph here. On first invocation this raises GraphInterrupt.
-        # On resume it returns the value supplied via Command(resume={...}).
-        decision: dict[str, Any] = interrupt(trade_payload)
+        def _validate_decision(resumed: Any, _payload: Any) -> dict[str, Any]:
+            # Enforce mandatory rationale & slippage bounds via ApprovalDecision.
+            validated_decision = ApprovalDecision(**resumed)
+            timestamp = str(
+                resumed.get("timestamp") or datetime.now(timezone.utc).isoformat()
+            )
+            record: dict[str, Any] = {
+                "approved": validated_decision.approved,
+                "reviewer": validated_decision.reviewer,
+                "rationale": validated_decision.rationale,
+                "comment": validated_decision.comment,
+                "timestamp": timestamp,
+                "max_slippage_pct": validated_decision.max_slippage_pct,
+            }
+            captured["decision"] = record
+            logger.info(
+                "[ApprovalNode] Decision received: approved=%s reviewer=%s rationale=%r",
+                validated_decision.approved,
+                validated_decision.reviewer,
+                validated_decision.rationale[:120],
+            )
+            return record
 
-        # Enforce mandatory rationale validation via ApprovalDecision contract
-        # A resume payload without a rationale will raise a ValidationError here,
-        # protecting the compliance chain from unexplained approvals.
-        validated_decision = ApprovalDecision(**decision)
-
-        approved: bool = validated_decision.approved
-        reviewer: str = validated_decision.reviewer
-        rationale: str = validated_decision.rationale
-        comment: str = validated_decision.comment
-        timestamp: str = decision.get(
-            "timestamp", datetime.now(timezone.utc).isoformat()
+        park = approval_park_node(
+            approved_target=approved_target,
+            rejected_target=rejected_target,
+            payload_builder=_build_trade_payload,
+            decision_validator=_validate_decision,
+            interrupt_fn=lambda payload: interrupt(payload),
         )
+        cmd = park(state)
+        update_payload = dict(cmd.update or {})
+        expires_at = captured.get("expires_at")
+        if expires_at is not None:
+            update_payload["hitl_expires_at"] = expires_at
 
-        approval_decision: dict[str, Any] = {
-            "approved": approved,
-            "reviewer": reviewer,
-            "rationale": rationale,
-            "comment": comment,
-            "timestamp": timestamp,
-            "max_slippage_pct": validated_decision.max_slippage_pct,
-        }
-
-        logger.info(
-            "[ApprovalNode] Decision received: approved=%s reviewer=%s rationale=%r",
-            approved,
-            reviewer,
-            rationale[:120],
-        )
-
-        if approved:
+        decision_record = captured.get("decision") or {}
+        if decision_record.get("approved"):
             logger.info(
                 "[ApprovalNode] ✅ Trade approved — routing to %s.",
                 approved_target,
             )
-            return Command(
-                update={
-                    "approval_decision": approval_decision,
-                    "hitl_expires_at": trade_payload["expires_at"],
-                    "approval_required": False,
-                },
-                goto=approved_target,
-            )
+            return Command(update=update_payload, goto=cmd.goto)
 
         logger.info(
             "[ApprovalNode] ❌ Trade rejected — routing to %s.", rejected_target
         )
-        update_payload: dict[str, Any] = {
-            "approval_decision": approval_decision,
-            "hitl_expires_at": trade_payload["expires_at"],
-            "deferred_id": None,
-            "deferred_step_ids": None,
-            "hitl_reference_quote": None,
-            "routing_verdict_cache": None,
-            "approval_required": False,
-        }
-        if rejected_target != "rejection":
-            rejection_update = rejection_node({"approval_decision": approval_decision})
-            update_payload["messages"] = rejection_update["messages"]
-            update_payload["approval_decision"] = None
-        return Command(
-            update=update_payload,
-            goto=rejected_target,
-        )
+        update_payload["hitl_reference_quote"] = None
+        update_payload["routing_verdict_cache"] = None
+        if decision_record:
+            if rejected_target == "rejection":
+                update_payload["approval_decision"] = decision_record
+            else:
+                rejection_update = rejection_node(
+                    {"approval_decision": decision_record}
+                )
+                update_payload["messages"] = rejection_update["messages"]
+                update_payload["approval_decision"] = None
+        return Command(update=update_payload, goto=cmd.goto)
 
     return _node
 
@@ -177,11 +164,13 @@ def approval_node(state: dict[str, Any]) -> Command:
     """
     Human-in-the-loop approval gate for high-value or high-risk trades.
 
-    Suspends the graph via interrupt() and surfaces the trade payload to a
-    human reviewer. On resume, routes via Command(goto=...) based on decision.
+    Suspends the graph via ``cage_client.langgraph.approval_park_node`` and
+    surfaces the trade payload to a human reviewer. On resume, routes via
+    ``Command(goto=...)`` based on decision.
 
     Args:
-        state: AgentState with execution_plan_output and evaluation_result.
+        state: AgentState with deferred_id, execution_plan/execution_plan_output,
+            and evaluation_result.
 
     Returns:
         Command that updates approval_decision and routes to the next node.
