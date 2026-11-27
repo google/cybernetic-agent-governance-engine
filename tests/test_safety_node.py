@@ -389,7 +389,8 @@ class TestSafetyNodeFailClosed:
     )
     @pytest.mark.asyncio
     @pytest.mark.covers(
-        "src.governed_financial_advisor.graph.nodes.safety_node:_route_trade#Gateway deferred action without a deferral ticket",
+        "src.governed_financial_advisor.graph.nodes.safety_node:_route_trade#return gateway_error(reason)",
+        "cage_client.core:CageClient.preview#Preview gateway call unavailable fail-closed",
     )
     async def test_defer_without_any_ticket_fails_closed(
         self, gateway, defer_token: Any
