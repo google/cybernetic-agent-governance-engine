@@ -112,8 +112,11 @@ def _map_constraint(constraint: dict[str, Any]) -> dict[str, Any]:
     if param:
         condition["param"] = param
     if value is not None:
+        # bool is a subclass of int; keep True/False as-is rather than 1.0/0.0.
         condition["threshold"] = (
-            float(value) if isinstance(value, (int, float)) else value
+            float(value)
+            if isinstance(value, (int, float)) and not isinstance(value, bool)
+            else value
         )
     if threshold_ref:
         condition["threshold_ref"] = threshold_ref

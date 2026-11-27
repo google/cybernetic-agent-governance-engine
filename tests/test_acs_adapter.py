@@ -231,3 +231,16 @@ def test_map_constraint_preserves_zero_threshold():
         {"type": "greater_than", "parameter": "amount", "value": 50000}
     )
     assert out2.get("threshold") == 50000.0
+    # a float zero is preserved
+    out3 = _map_constraint(
+        {"type": "greater_than", "parameter": "amount", "value": 0.0}
+    )
+    assert out3.get("threshold") == 0.0
+    # a zero on the `threshold` fallback key (no `value`) is preserved
+    out4 = _map_constraint(
+        {"type": "greater_than", "parameter": "amount", "threshold": 0}
+    )
+    assert out4.get("threshold") == 0.0
+    # bool is a subclass of int but must not be coerced to 0.0
+    out5 = _map_constraint({"type": "equals", "parameter": "approved", "value": False})
+    assert out5.get("threshold") is False
