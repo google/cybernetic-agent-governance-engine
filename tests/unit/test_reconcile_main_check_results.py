@@ -268,21 +268,29 @@ def test_evaluate_commit_flags_missing_and_missing_suite_and_ignores_wrong_app_i
             app_id=999999,
         )
     )
-    # Drop one of the two required `license-check` suites (POAM-2026-172).
-    license_runs = [r for r in runs if r["name"] == "license-check"]
-    assert len(license_runs) == 2
-    runs.remove(license_runs[1])
-
+    # Default 1:1 suite counts: dropping `AI 600-1 Unit Tests` flags `missing`.
     violations = reconciler.evaluate_commit_check_runs(
         sha=SHA_FAIL,
         committed_at="2026-11-23T12:00:00Z",
         check_runs=runs,
     )
-    by_check = {(v.check_name, v.reason): v for v in violations}
+    assert [(v.check_name, v.reason) for v in violations] == [
+        ("AI 600-1 Unit Tests", "missing")
+    ]
+
+    # When a check expects multiple suites, reporting only 1 flags `missing_suite`.
+    multi_suite_counts = {**reconciler.EXPECTED_MAIN_CHECK_SUITE_COUNTS, "Lint": 2}
+    multi_violations = reconciler.evaluate_commit_check_runs(
+        sha=SHA_FAIL,
+        committed_at="2026-11-23T12:00:00Z",
+        check_runs=runs,
+        expected_suite_counts=multi_suite_counts,
+    )
+    by_check = {(v.check_name, v.reason): v for v in multi_violations}
     assert ("AI 600-1 Unit Tests", "missing") in by_check
-    assert ("license-check", "missing_suite") in by_check
-    assert by_check[("license-check", "missing_suite")].observed_suites == 1
-    assert by_check[("license-check", "missing_suite")].expected_suites == 2
+    assert ("Lint", "missing_suite") in by_check
+    assert by_check[("Lint", "missing_suite")].observed_suites == 1
+    assert by_check[("Lint", "missing_suite")].expected_suites == 2
 
 
 def test_evaluate_commit_accepts_stale_status_with_success_conclusion_and_completed_at() -> (
@@ -416,7 +424,7 @@ def test_reconcile_commits_respects_grace_window_floor_sha_pagination_and_ledger
     assert report.newest_checked_sha == SHA_PASS
     assert report.oldest_checked_sha == SHA_PASS
     assert report.require_ledger_check is False
-    assert report.expected_check_count == 8
+    assert report.expected_check_count == 10
     assert report.stopped_at_floor_sha is True
     assert report.violations == ()
     assert not any(SHA_FLOOR in u or SHA_OLDER in u for u in requested_urls)
@@ -574,7 +582,7 @@ def test_green_run_ignores_spoofed_issues_creates_closed_issue_and_delivers_hear
     assert "status: PASS" in created["body"]
     assert f"head-sha: `{SHA_PASS}`" in created["body"]
     assert f"checked-sha-range: `{SHA_PASS}`..`{SHA_PASS}`" in created["body"]
-    assert "require-ledger-check: true (expected-checks: 9)" in created["body"]
+    assert "require-ledger-check: true (expected-checks: 11)" in created["body"]
 
     # Step B delivered exactly 1 heartbeat message and 1 Cloud Monitoring sample.
     assert len(harness.published_envelopes) == 1
@@ -587,7 +595,7 @@ def test_green_run_ignores_spoofed_issues_creates_closed_issue_and_delivers_hear
     assert hb["floor_sha"] is None
     assert hb["stopped_at_floor_sha"] is False
     assert hb["require_ledger_check"] is True
-    assert hb["expected_check_count"] == 9
+    assert hb["expected_check_count"] == 11
     assert hb["violation_count"] == 0
     assert hb["checked_commits"] == 1
     assert len(harness.monitoring_writes) == 1
@@ -660,7 +668,7 @@ def test_violation_run_reopens_closed_trusted_issue_and_publishes_critical_viola
     assert viol_env["newest_checked_sha"] == SHA_FAIL
     assert viol_env["oldest_checked_sha"] == SHA_FAIL
     assert viol_env["require_ledger_check"] is True
-    assert viol_env["expected_check_count"] == 9
+    assert viol_env["expected_check_count"] == 11
     assert viol_env["violation_count"] == 1
     assert viol_env["issue_url"] == f"https://github.com/{REPO}/issues/55"
     assert viol_env["violations"][0]["reason"] == "cancelled"
@@ -1006,7 +1014,7 @@ def test_multi_commit_sha_range_attested_across_issue_pubsub_and_stdout(
     assert stdout_json["oldest_checked_sha"] == SHA_OLDER
     assert stdout_json["floor_sha"] == SHA_FLOOR[:12]
     assert stdout_json["require_ledger_check"] is True
-    assert stdout_json["expected_check_count"] == 9
+    assert stdout_json["expected_check_count"] == 11
 
 
 def test_workflow_distinguishes_exit_codes_with_error_annotations() -> None:

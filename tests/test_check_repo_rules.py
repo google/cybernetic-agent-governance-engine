@@ -87,16 +87,14 @@ def test_recorded_configuration_reports_nothing() -> None:
 
 
 def test_main_push_check_pins_derive_from_required_checks() -> None:
-    assert len(rules_mod.EXPECTED_MAIN_PUSH_CHECKS) == 9
+    assert len(rules_mod.EXPECTED_MAIN_PUSH_CHECKS) == 11
     assert rules_mod.REVIEW_BYPASS_CHECK not in rules_mod.EXPECTED_MAIN_PUSH_CHECKS
     assert (
         rules_mod.EXPECTED_MAIN_PUSH_CHECKS[rules_mod.REVIEW_BYPASS_LEDGER_CHECK]
         == rules_mod.GITHUB_ACTIONS_APP_ID
     )
-    assert rules_mod.EXPECTED_MAIN_CHECK_SUITE_COUNTS["license-check"] == 2
-    for check_name, count in rules_mod.EXPECTED_MAIN_CHECK_SUITE_COUNTS.items():
-        if check_name != "license-check":
-            assert count == 1
+    for count in rules_mod.EXPECTED_MAIN_CHECK_SUITE_COUNTS.values():
+        assert count == 1
 
 
 def _drop_rule(rule_type: str) -> Callable[[list[dict[str, Any]]], None]:
@@ -129,9 +127,9 @@ def _add_required_check(rules: list[dict[str, Any]]) -> None:
     _checks(rules).append({"context": "Undocumented Check", "integration_id": 15368})
 
 
-def _make_strict(rules: list[dict[str, Any]]) -> None:
+def _make_non_strict(rules: list[dict[str, Any]]) -> None:
     params = _rule(rules, "required_status_checks")["parameters"]
-    params["strict_required_status_checks_policy"] = True
+    params["strict_required_status_checks_policy"] = False
 
 
 def _drop_review_count(rules: list[dict[str, Any]]) -> None:
@@ -166,9 +164,9 @@ MAIN_PLANTS: dict[str, tuple[Callable[[list[dict[str, Any]]], None], str]] = {
         _add_required_check,
         "`Undocumented Check` is required but not documented",
     ),
-    "branches must be up to date": (
-        _make_strict,
-        "strict_required_status_checks_policy is True",
+    "branches need not be up to date": (
+        _make_non_strict,
+        "strict_required_status_checks_policy is False",
     ),
     "no approving review required": (
         _drop_review_count,
@@ -284,8 +282,8 @@ WORKFLOW_PLANTS: dict[str, tuple[Callable[[Path], None], str]] = {
         lambda d: _edit_wf(
             d,
             "ci.yml",
-            "  license-check:\n    runs-on: ubuntu-latest",
-            "  license-check:\n    runs-on: ubuntu-latest\n    concurrency:\n      group: lic\n      cancel-in-progress: true",
+            '  license-check:\n    name: "Apache 2.0 License Headers"\n    runs-on: ubuntu-latest',
+            '  license-check:\n    name: "Apache 2.0 License Headers"\n    runs-on: ubuntu-latest\n    concurrency:\n      group: lic\n      cancel-in-progress: true',
         ),
         "ci.yml: job-level `cancel-in-progress` is 'true'",
     ),
