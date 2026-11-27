@@ -49,4 +49,4 @@ extend = "../../pyproject.toml"
 #     and tag conformance-v<version> must not yet exist.
 #   - "published": tag conformance-v<version> must exist and match
 #     packages/cage-conformance/src/cage_conformance/ byte-for-byte (zero post-tag drift).
-status = "unreleased"
+status = "published"
