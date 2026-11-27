@@ -165,3 +165,97 @@ def test_every_profile_sets_the_nist_flag_itself(profile: str) -> None:
         assert not re.search(r"^\s*enforce_in_dev\s*=", text, re.MULTILINE), (
             f"{profile} ({tier} tier) always enforces and must not set enforce_in_dev"
         )
+
+
+def _strip_comments(text: str) -> str:
+    return "\n".join(
+        re.sub(r"(#|//).*$", "", line)
+        for line in text.splitlines()
+        if not line.lstrip().startswith(("#", "//"))
+    )
+
+
+def _primary_cluster_block() -> str:
+    cluster_tf = (GKE_CLUSTER_MODULE_DIR / "main.tf").read_text(encoding="utf-8")
+    start = cluster_tf.find('resource "google_container_cluster" "primary"')
+    assert start != -1, "resource google_container_cluster.primary is missing"
+    end = cluster_tf.find("\n}\n", start)
+    return cluster_tf[start : end if end != -1 else len(cluster_tf)]
+
+
+def _variable_block(path: Path, name: str) -> str:
+    text = path.read_text(encoding="utf-8")
+    match = re.search(
+        rf'variable\s+"{re.escape(name)}"\s*\{{(.*?)\n\}}', text, re.DOTALL
+    )
+    assert match is not None, f'variable "{name}" missing in {path}'
+    return _strip_comments(match.group(1))
+
+
+def test_cluster_lifecycle_does_not_mask_control_plane_or_monitoring_drift() -> None:
+    """POAM-2026-174 step 3: forbid silent ignore_changes latches on security blocks."""
+    primary_block = _primary_cluster_block()
+    assert not re.search(
+        r"ignore_changes\s*=\s*all\b", _strip_comments(primary_block)
+    ), (
+        "google_container_cluster.primary must never set ignore_changes = all: "
+        "unlike invalid config literals that fail terraform plan loudly, ignoring "
+        "all attributes silently restores the POAM-2026-174 drift-masking latches."
+    )
+    ic_match = re.search(r"ignore_changes\s*=\s*\[(.*?)\]", primary_block, re.DOTALL)
+    assert ic_match is not None, (
+        "google_container_cluster.primary must define lifecycle.ignore_changes"
+    )
+    ignored_attrs = {
+        tok.strip()
+        for tok in _strip_comments(ic_match.group(1)).split(",")
+        if tok.strip()
+    }
+    assert "master_authorized_networks_config" not in ignored_attrs, (
+        "master_authorized_networks_config was re-added to "
+        "google_container_cluster.primary lifecycle.ignore_changes! Unlike an invalid "
+        "GKE component that fails a plan/apply loudly, ignoring "
+        "master_authorized_networks_config fails nothing and silently restores the "
+        "POAM-2026-174 drift-masking latch (leaving an existing cluster stuck at "
+        "0.0.0.0/0 or out-of-band control-plane CIDRs across applies)."
+    )
+    assert "monitoring_config" not in ignored_attrs, (
+        "monitoring_config was re-added to google_container_cluster.primary "
+        "lifecycle.ignore_changes! Unlike an invalid GKE component that fails a "
+        "plan/apply loudly, ignoring monitoring_config fails nothing and silently "
+        "restores the POAM-2026-174 drift-masking latch on AU-12 Managed Prometheus "
+        "and Dataplane V2 observability."
+    )
+
+
+def test_cluster_monitoring_and_min_master_version_match_gke_api_ef10() -> None:
+    """POAM-2026-164 EF10a/EF10b: no retired WORKLOADS monitoring or 1.28 version."""
+    primary_block = _primary_cluster_block()
+    mon_match = re.search(
+        r'dynamic\s+"monitoring_config"\s*\{(.*?)\n  \}',
+        primary_block,
+        re.DOTALL,
+    )
+    assert mon_match is not None, (
+        'google_container_cluster.primary must define dynamic "monitoring_config"'
+    )
+    mon_body = _strip_comments(mon_match.group(1))
+    assert "WORKLOADS" not in mon_body, (
+        "EF10a regression: monitoring_config.enable_components must not include "
+        "WORKLOADS (retired in GKE 1.24+; fails CreateCluster with 400 Bad Request)."
+    )
+    assert re.search(
+        r'enable_components\s*=\s*\[\s*"SYSTEM_COMPONENTS"\s*\]', mon_body
+    ), (
+        'EF10a regression: monitoring_config.enable_components must be ["SYSTEM_COMPONENTS"]'
+    )
+
+    for tf_vars in (
+        GKE_CLUSTER_MODULE_DIR / "variables.tf",
+        GKE_TARGET_DIR / "variables.tf",
+    ):
+        block = _variable_block(tf_vars, "min_master_version")
+        assert re.search(r"\bdefault\s*=\s*null\b", block), (
+            f"EF10b regression in {tf_vars}: min_master_version must default to null "
+            "(not retired '1.28' or any pinned minor version that breaks CreateCluster)."
+        )
