@@ -182,7 +182,7 @@ jobs:
         with:
           python-version-file: "pyproject.toml"
       - name: Install Dependencies
-        run: uv sync --all-groups --all-extras
+        run: uv sync --locked --all-groups --all-extras
       - name: Run Pytest (unit/local)
         env:
           CAGE_ENV: "test"
@@ -196,11 +196,11 @@ jobs:
           LANGFUSE_HOST: "http://localhost:3000"
           LANGFUSE_PUBLIC_KEY: "pk-dummy"
           LANGFUSE_SECRET_KEY: "sk-dummy"
-        run: uv run pytest -p no:langsmith -p no:langsmith_plugin tests/ packages/cage-client/tests/ -m "local or unit" -n auto --dist=loadscope -v --cov-branch --cov=src --cov=cage_client --cov=packages/cage-conformance/src/cage_conformance --cov-context=test --cov-fail-under=70
+        run: uv run --no-sync pytest -p no:langsmith -p no:langsmith_plugin tests/ packages/cage-client/tests/ -m "local or unit" -n auto --dist=loadscope -v --cov-branch --cov=src --cov=cage_client --cov=packages/cage-conformance/src/cage_conformance --cov-context=test --cov-fail-under=70
       - name: Verify fail-closed test reachability (@pytest.mark.covers)
-        run: uv run python scripts/check_fail_closed_coverage.py --verify-coverage .coverage --verbose
+        run: uv run --no-sync python scripts/check_fail_closed_coverage.py --verify-coverage .coverage --verbose
       - name: Run Bandit SAST (medium+ severity)
-        run: uv run bandit -r src/ scripts/ packages/cage-client/src/ packages/cage-conformance/src/ proof/ deployment/ -c pyproject.toml -ll -ii
+        run: uv run --no-sync bandit -r src/ scripts/ packages/cage-client/src/ packages/cage-conformance/src/ proof/ deployment/ -c pyproject.toml -ll -ii
 
   lint:
     name: "Lint"
