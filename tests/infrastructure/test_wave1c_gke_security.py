@@ -50,9 +50,11 @@ import importlib.util
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import types
+from collections import Counter
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -530,6 +532,76 @@ def test_ic07_deploy_all_sh_registers_tfplan_cleanup_trap() -> None:
     deploy_sh = (REPO_ROOT / "deploy_all.sh").read_text(encoding="utf-8")
     assert "trap _cleanup_tfplan_artifacts EXIT INT TERM" in deploy_sh
     assert 'rm -f "$_ACTIVE_TF_DIR"/tfplan "$_ACTIVE_TF_DIR"/tfplan.*' in deploy_sh
+
+
+def test_ef13a_load_env_sh_supports_bash_and_zsh_sourcing(tmp_path: Path) -> None:
+    """POAM-2026-164 EF13a: infra/load_env.sh resolves its parent dir in bash and zsh."""
+    load_env_text = (REPO_ROOT / "infra" / "load_env.sh").read_text(encoding="utf-8")
+    assert "${BASH_SOURCE[0]:-${(%):-%x}}" in load_env_text
+
+    zsh_bin = shutil.which("zsh")
+    if zsh_bin is None:
+        return
+
+    fake_infra = tmp_path / "infra"
+    fake_infra.mkdir(parents=True)
+    load_env_copy = fake_infra / "load_env.sh"
+    load_env_copy.write_text(load_env_text, encoding="utf-8")
+    (tmp_path / "test.env").write_text("ENVIRONMENT=staging\n", encoding="utf-8")
+    caller_dir = tmp_path / "elsewhere"
+    caller_dir.mkdir()
+
+    res = subprocess.run(
+        [
+            zsh_bin,
+            "-c",
+            f'source "{load_env_copy}" "test.env" >/dev/null && printf "%s" "$TF_VAR_environment"',
+        ],
+        cwd=caller_dir,
+        env={"PATH": os.environ.get("PATH", "/usr/bin:/bin")},
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    assert res.stdout == "staging"
+
+
+def test_ef2_env_example_has_unique_keys_and_gcp_deployment_vars() -> None:
+    """POAM-2026-164 EF2: .env.example defines each key at most once and includes GCP vars."""
+    env_example = REPO_ROOT / ".env.example"
+    active_keys: list[str] = []
+    values: dict[str, str] = {}
+    for raw in env_example.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, val = line.split("=", 1)
+        active_keys.append(key.strip())
+        values[key.strip()] = val.strip()
+
+    duplicates = {k: c for k, c in Counter(active_keys).items() if c > 1}
+    assert duplicates == {}, (
+        f".env.example has duplicate active keys (breaks deploy_all.sh head -1): {duplicates}"
+    )
+    assert values.get("GOVERNANCE_SALT"), (
+        ".env.example must define a single non-empty GOVERNANCE_SALT dev placeholder"
+    )
+    assert "GOOGLE_CLOUD_PROJECT" in values
+    assert "GOOGLE_CLOUD_LOCATION" in values
+
+
+def test_ef3_quick_start_matches_staging_profile_and_runtime_topology() -> None:
+    """POAM-2026-164 EF3: infra/QUICK_START.md aligns Steps 3-5 with staging & actual GKE stack."""
+    quick_start = (REPO_ROOT / "infra" / "QUICK_START.md").read_text(encoding="utf-8")
+    assert "--env=staging" in quick_start
+    assert "--env staging" in quick_start
+    assert "--var-file=infra/targets/gcp-gke/staging.tfvars" in quick_start
+    assert "TF_VAR_authorized_networks" in quick_start
+    assert 'inference_backend = "none"' in quick_start
+    assert "Spot VMs for GPU" not in quick_start
+    assert "`vllm-inference` namespace" not in quick_start
+    assert "kubectl get pods -n vllm-inference" not in quick_start
+    assert "MinIO storage" not in quick_start
 
 
 # ---------------------------------------------------------------------------
