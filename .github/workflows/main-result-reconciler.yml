@@ -16,9 +16,9 @@
 #
 # Verifies every 2 hours that every commit on `main` older than the grace
 # window has completed `success` check runs from GitHub Actions (`app.id == 15368`)
-# across all 9 post-merge checks (`EXPECTED_MAIN_PUSH_CHECKS` in
-# `scripts/check_repo_rules.py`, including both `license-check` suites per
-# `POAM-2026-172`).
+# across all 11 post-merge checks (`EXPECTED_MAIN_PUSH_CHECKS` in
+# `scripts/check_repo_rules.py`, after `POAM-2026-172` separated
+# `Apache 2.0 License Headers` from `license-check`).
 #
 # Dual-delivery & 2-layer watcher chain:
 #   - Step A (durable repository sink, executed first): updates the

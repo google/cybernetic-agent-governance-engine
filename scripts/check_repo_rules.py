@@ -103,9 +103,11 @@ EXPECTED_REQUIRED_CHECKS: Mapping[str, int] = {
     ),
     "Secret Scanning (Gitleaks)": GITHUB_ACTIONS_APP_ID,
     "license-check": GITHUB_ACTIONS_APP_ID,
+    "Apache 2.0 License Headers": GITHUB_ACTIONS_APP_ID,
     "Pytest Logic Tests": GITHUB_ACTIONS_APP_ID,
     "Terraform Tests (gcp-gke, mock providers)": GITHUB_ACTIONS_APP_ID,
     "Quickstart Bootstrap & First-DENY Smoke Gate": GITHUB_ACTIONS_APP_ID,
+    "Client SDK Built-Wheel Smoke (Bare + [langgraph])": GITHUB_ACTIONS_APP_ID,
     REVIEW_BYPASS_CHECK: GITHUB_ACTIONS_APP_ID,
 }
 
@@ -120,12 +122,12 @@ EXPECTED_MAIN_PUSH_CHECKS: Mapping[str, int] = {
 }
 
 # Expected distinct GitHub Actions check_suite counts per push check on `main`.
-# Both `ci.yml` (Apache 2.0 headers) and `license_guard.yml` (pip-licenses)
-# report `license-check` on `main` (POAM-2026-172), so `main` reconciliation
-# requires 2 passing suites for `license-check` and 1 for the other 8 checks.
-EXPECTED_MAIN_CHECK_SUITE_COUNTS: Mapping[str, int] = {
-    ctx: (2 if ctx == "license-check" else 1) for ctx in EXPECTED_MAIN_PUSH_CHECKS
-}
+# After `POAM-2026-172` separated `ci.yml` (`Apache 2.0 License Headers`) from
+# `license_guard.yml` (`license-check`), every check in
+# `EXPECTED_MAIN_PUSH_CHECKS` is reported by exactly 1 suite.
+EXPECTED_MAIN_CHECK_SUITE_COUNTS: Mapping[str, int] = dict.fromkeys(
+    EXPECTED_MAIN_PUSH_CHECKS, 1
+)
 
 # Workflows reporting required checks on both `pull_request` and `push` to `main`
 # that must cancel superseded runs on `pull_request` only and isolate `push`
@@ -144,8 +146,8 @@ EXPECTED_PR_ONLY_CONCURRENCY_GROUP = (
 MAIN_RESULT_RECONCILER_WORKFLOW = "main-result-reconciler.yml"
 MAIN_RESULT_RECONCILER_SCRIPT = "scripts/reconcile_main_check_results.py"
 
-# Branches need not be up to date before merging (§1).
-EXPECTED_STRICT_STATUS_CHECKS = False
+# Branches must be up to date before merging (§1, POAM-2026-171 Remediation 1).
+EXPECTED_STRICT_STATUS_CHECKS = True
 
 # The release-tag ruleset (§4).
 TAG_RULESET_ID = 25965917

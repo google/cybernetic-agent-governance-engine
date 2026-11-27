@@ -127,7 +127,7 @@ def test_makefile_lint_runs_mypy() -> None:
 
 
 def test_required_check_workflows_trigger_on_stacked_pr_branches() -> None:
-    """Workflows backing ruleset 25966171's 9 required checks must run unconditionally on every PR."""
+    """Workflows backing ruleset 25966171's 11 required checks must run unconditionally on every PR."""
     required_workflows = (
         "ci.yml",
         "security-scan.yml",

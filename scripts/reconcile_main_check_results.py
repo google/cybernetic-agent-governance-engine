@@ -23,8 +23,9 @@ For every commit on ``--ref`` (default ``main``) older than grace window ``N``
 (``--grace-minutes``, default ``45``), verifies that every expected post-merge
 status check in ``EXPECTED_MAIN_PUSH_CHECKS`` (pinned to GitHub Actions app ID
 ``15368`` in ``scripts/check_repo_rules.py``) completed with ``conclusion ==
-"success"`` across all expected check suites (``2`` suites for ``license-check``
-per ``POAM-2026-172``, ``1`` suite for the remaining ``8`` checks).
+"success"`` across every expected check suite (``1`` suite per check after
+``POAM-2026-172`` separated ``Apache 2.0 License Headers`` from
+``license-check``).
 
 ``--require-ledger-check`` is ON by default on ``main`` (requiring
 ``Record an unreviewed merge`` from ``review-bypass-ledger.yml``). Pass
