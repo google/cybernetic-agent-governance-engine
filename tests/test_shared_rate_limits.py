@@ -422,6 +422,9 @@ class TestGatewayClientPrincipalAndRetries:
             user_context.reset(token)
 
     @pytest.mark.asyncio
+    @pytest.mark.covers(
+        "cage_client.core:CageClient._build_execute_unavailable_error#Gateway /tools/execute unavailable",
+    )
     async def test_sdk_execute_tool_does_not_retry_429_and_raises_unavailable(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

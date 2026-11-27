@@ -22,12 +22,12 @@ component-definition:
   uuid: "8a9f5c3d-2b1e-4f7a-9c8d-5e6f7a8b9c0d"
   metadata:
     title: "CAGE Client SDK — Out-of-Process PEP Client Component Definition"
-    version: "1.5.0"
+    version: "1.6.0"
     oscal-version: "1.0.4"
-    last-modified: "2026-11-24T23:00:00Z"
+    last-modified: "2026-11-27T14:45:00Z"
     remarks: >
       This component definition maps the Python CAGE Client SDK
-      (packages/cage-client/, v0.5.0 unreleased) to NIST SP 800-53 Rev 5
+      (packages/cage-client/, v0.6.0 published) to NIST SP 800-53 Rev 5
       controls. packages/cage-client/ is the SDK's only source tree: in-repo
       consumers, including the reference advisor's GatewayClient
       (src/governed_financial_advisor/infrastructure/gateway_client.py),
@@ -45,8 +45,10 @@ component-definition:
       server-side v3 asymmetric KMS JWT routing seals, and atomic Redis SETNX
       single-use nonce consumption live on the gateway
       (src/gateway/governance/routing_seal.py, src/gateway/server/mcp_tool_server.py),
-      while the SDK committing client and replacement LangGraph node factory are
-      tracked under POAM-2026-251.
+      while the SDK committing client (CageClient.execute_tool()) and
+      Command-based LangGraph node factories (governed_node(),
+      governed_tool_node(), approval_park_node()) ship in the same published
+      wheel over POST /tools/execute (POAM-2026-251 closed).
 
   components:
     # -----------------------------------------------------------------------
@@ -58,18 +60,21 @@ component-definition:
       title: "CAGE Client SDK"
       type: software
       description: >
-        Python client library (packages/cage-client/, v0.5.0) providing
+        Python client library (packages/cage-client/, v0.6.0) providing
         out-of-process HTTP preview verification (POST /governance/validate-action)
         and fail-closed GovernanceEnvelope verification for Python and LangGraph
         applications communicating with the CAGE Governance Gateway PDP.
         Performs fail-closed HTTP status and verdict mediation across signed
         HTTP 200 and HTTP 403 GovernanceEnvelope responses (rejecting
-        non-envelope 403, legacy 202/409/422, and 5xx fail-closed as
-        CageGatewayError), out-of-band kid JWKS/PEM asymmetric signature
-        verification over RFC 8785 JCS canonical bytes, expires_at freshness
-        validation, subject.action and subject.action_hash request binding,
-        Pydantic strict-mode schema validation, optional mutual TLS transport
-        configuration, and W3C traceparent header propagation.
+        non-envelope 403, legacy 202/409/422, 429, and 5xx fail-closed as
+        CageGatewayError in validate_action(), decoding HTTP 429 and gateway
+        unavailability directly as GovernanceDecision.UNAVAILABLE in preview(),
+        and raising GatewayUnavailableError on HTTP 429/503 in execute_tool()),
+        out-of-band kid JWKS/PEM asymmetric signature verification over RFC 8785
+        JCS canonical bytes, expires_at freshness validation, subject.action and
+        subject.action_hash request binding, Pydantic strict-mode schema
+        validation, optional mutual TLS transport configuration, and W3C
+        traceparent header propagation.
       purpose: >
         Enables standalone Python and LangGraph applications to submit proposed
         actions for preview evaluation to the CAGE Governance Gateway over
@@ -88,7 +93,7 @@ component-definition:
               control-id: ac-3
               description: |
                 Preview and committing access mediation in packages/cage-client/
-                (`v0.5.0`) and the migrated reference advisor is implemented in
+                (`v0.6.0`) and the migrated reference advisor is implemented in
                 packages/cage-client/src/cage_client/core.py
                 (CageClient.validate_action(), CageClient.preview(),
                 CageClient.execute_tool(), enforce_verification_posture()),
@@ -107,8 +112,11 @@ component-definition:
                 mediates verdicts fail-closed by HTTP response status, cryptographic
                 envelope integrity, and verdict:
                 - Network / timeout error (httpx.RequestError): raises CageGatewayError
-                - HTTP 5xx, legacy 202 / 409 / 422, or unexpected status code: raises
-                  CageGatewayError (never mediated as DeferralPending or PolicyViolationException)
+                - HTTP 429/5xx, legacy 202 / 409 / 422, or unexpected status code: raises
+                  CageGatewayError in validate_action() and decodes as
+                  PreviewResult(decision=GovernanceDecision.UNAVAILABLE,
+                  reason_code="GATEWAY_UNAVAILABLE") in preview() without
+                  silent transport-level HTTP 429 retries
                 - HTTP 403 (DENY): runs the same fail-closed GovernanceEnvelope
                   verification pipeline as HTTP 200 (strict JSON, embedded-key
                   rejection, out-of-band kid signature (au-10), expires_at freshness
@@ -150,12 +158,18 @@ component-definition:
                 governed_trader_graph uses governed_tool_node(mode="execute") with
                 canonical idempotency_key, data_analyst_graph uses
                 governed_tool_node(mode="preview"), approval_node delegates to
-                approval_park_node(), and tool_guard.py is reduced strictly to
-                advisor-specific TOCTOU drift revalidation, REFUSAL_DESCRIPTIONS, and
-                trade-description allowlisting (retiring legacy gateway_tool_guard /
-                @cage_guard / local trade actuation). Full DEFER -> MemorySaver
-                checkpoint -> interrupt() -> premature resume re-park -> quorum
-                approve -> single-use redemption -> CONSUMED replay refusal is
+                approval_park_node(), safety_node._route_trade() and
+                tool_guard.preview_trade_with_drift_revalidation() call
+                GatewayClient().sdk_client() + CageClient.preview(...,
+                policy_version_id=...) directly over single-attempt
+                _GatewayHttpTransport (surfacing HTTP 429 directly as
+                GATEWAY_ERROR / GatewayUnavailableError without silent 429 retries),
+                and tool_guard.py is reduced strictly to advisor-specific TOCTOU drift
+                revalidation, REFUSAL_DESCRIPTIONS, and trade-description allowlisting
+                (retiring legacy gateway_tool_guard / @cage_guard / _AdvisorTransport /
+                GatewayClient.validate_action / local trade actuation). Full DEFER ->
+                MemorySaver checkpoint -> interrupt() -> premature resume re-park ->
+                quorum approve -> single-use redemption -> CONSUMED replay refusal is
                 verified end-to-end against real DeferQueue and execute_trade_action in
                 tests/unit/test_advisor_sdk_checkpointer_e2e.py.
 
@@ -172,7 +186,7 @@ component-definition:
                 - name: control-origination
                   value: system-specific
                 - name: implementation-date
-                  value: "2026-11-26"
+                  value: "2026-11-27"
               links:
                 - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=AC-3"
                   rel: reference
@@ -239,9 +253,10 @@ component-definition:
                 does not substitute for end-to-end GovernanceEnvelope.signature or
                 CommitOutcome.signature verification (verified in
                 verify_commit_outcome_payload() across HTTP 200/202/403 CommitOutcomes).
-                Published in tagged release cage-client v0.5.0 (tag client-v0.5.0,
-                2026-11-26; two-phase wheel smoke verified across bare and [langgraph]
-                installs; POAM-2026-241 closed). Server-side KMS envelope and
+                Published in tagged release cage-client v0.6.0 (tag client-v0.6.0,
+                2026-11-27; superseding client-v0.5.0, 2026-11-26, POAM-2026-241 closed;
+                two-phase wheel smoke verified across bare and [langgraph] installs).
+                Server-side KMS envelope and
                 CommitOutcome signing lives in
                 src/gateway/governance/governance_envelope.py,
                 src/gateway/governance/commit_outcome.py, and
