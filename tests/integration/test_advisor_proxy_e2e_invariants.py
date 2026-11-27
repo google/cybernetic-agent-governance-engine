@@ -301,6 +301,33 @@ def _make_webauthn_binding(
     return payload
 
 
+def _resolve_opa_or_docker_bins() -> tuple[str | None, str | None]:
+    """Return ``(opa_bin, docker_bin)``, probing Docker only when OPA is absent."""
+    opa_bin = shutil.which("opa")
+    if (
+        sys.platform == "darwin"
+        and os.environ.get("CAGE_ALLOW_MACOS_OPA", "").strip() != "1"
+    ):
+        opa_bin = None
+    if opa_bin is not None:
+        return opa_bin, None
+
+    docker_bin = shutil.which("docker")
+    if docker_bin is not None:
+        try:
+            daemon_probe = subprocess.run(
+                [docker_bin, "info"],
+                check=False,
+                capture_output=True,
+                timeout=5,
+            )
+            if daemon_probe.returncode != 0:
+                docker_bin = None
+        except (OSError, subprocess.TimeoutExpired):
+            docker_bin = None
+    return None, docker_bin
+
+
 @asynccontextmanager
 async def _real_opa_uds_sidecar() -> AsyncIterator[str]:
     """Start a real OPA engine bound exclusively to an AF_UNIX socket loading trade_governance.rego."""
@@ -313,22 +340,7 @@ async def _real_opa_uds_sidecar() -> AsyncIterator[str]:
     proc: subprocess.Popen[bytes] | None = None
     container_name: str | None = None
 
-    opa_bin = shutil.which("opa")
-    if (
-        sys.platform == "darwin"
-        and os.environ.get("CAGE_ALLOW_MACOS_OPA", "").strip() != "1"
-    ):
-        opa_bin = None
-    docker_bin = shutil.which("docker")
-    if docker_bin is not None:
-        daemon_probe = subprocess.run(
-            [docker_bin, "info"],
-            check=False,
-            capture_output=True,
-            timeout=5,
-        )
-        if daemon_probe.returncode != 0:
-            docker_bin = None
+    opa_bin, docker_bin = _resolve_opa_or_docker_bins()
     try:
         if opa_bin:
             proc = subprocess.Popen(
@@ -371,8 +383,8 @@ async def _real_opa_uds_sidecar() -> AsyncIterator[str]:
             )
         elif sys.platform == "darwin":
             pytest.skip(
-                "Local OPA UDS sidecar requires Linux/CI, a running Docker daemon, "
-                "or CAGE_ALLOW_MACOS_OPA=1 on macOS."
+                "Neither 'opa' binary (set CAGE_ALLOW_MACOS_OPA=1) nor a running "
+                "'docker' daemon is available for the local OPA UDS sidecar on macOS."
             )
         else:
             pytest.fail(
@@ -2016,3 +2028,46 @@ async def test_advisor_proxy_e2e_all_five_invariants_and_negative_controls(
     assert unknown_kid_check.verification is ReceiptVerification.INVALID
     assert unknown_kid_check.finding is not None
     assert unknown_kid_check.finding["code"] == "RECEIPT_UNKNOWN_KID"
+
+
+def test_resolve_opa_or_docker_bins_skips_docker_probe_when_opa_present(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Do not invoke ``docker info`` when the native ``opa`` binary is available."""
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(
+        shutil,
+        "which",
+        lambda name: "/usr/bin/opa" if name == "opa" else "/usr/bin/docker",
+    )
+
+    def _unexpected_run(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("subprocess.run must not be called when opa is present")
+
+    monkeypatch.setattr(subprocess, "run", _unexpected_run)
+    assert _resolve_opa_or_docker_bins() == ("/usr/bin/opa", None)
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        subprocess.TimeoutExpired(cmd=["/usr/bin/docker", "info"], timeout=5),
+        OSError("docker socket unreachable"),
+    ],
+    ids=["timeout-expired", "os-error"],
+)
+def test_resolve_opa_or_docker_bins_degrades_on_docker_probe_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    exc: BaseException,
+) -> None:
+    """Treat TimeoutExpired or OSError from ``docker info`` as no Docker daemon."""
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(
+        shutil, "which", lambda name: "/usr/bin/docker" if name == "docker" else None
+    )
+
+    def _failing_run(*args: Any, **kwargs: Any) -> Any:
+        raise exc
+
+    monkeypatch.setattr(subprocess, "run", _failing_run)
+    assert _resolve_opa_or_docker_bins() == (None, None)
