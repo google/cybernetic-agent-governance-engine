@@ -404,7 +404,19 @@ def evaluate_commit_check_runs(
             html_url = str(latest.get("html_url") or "")
             status = latest.get("status")
             conclusion = latest.get("conclusion")
-            if status != "completed":
+            completed_at = latest.get("completed_at")
+            # GitHub Check Runs API can leave `status="in_progress"` after the
+            # underlying job has already finished and recorded both `conclusion`
+            # and `completed_at` (observed in Issue #874). Require both fields to
+            # be non-empty strings before treating a non-"completed" status as
+            # terminal so genuine or half-written in-progress runs fail closed.
+            has_terminal_record = (
+                isinstance(conclusion, str)
+                and bool(conclusion.strip())
+                and isinstance(completed_at, str)
+                and bool(completed_at.strip())
+            )
+            if status != "completed" and not has_terminal_record:
                 violations.append(
                     CheckViolation(
                         sha=sha,

@@ -285,6 +285,75 @@ def test_evaluate_commit_flags_missing_and_missing_suite_and_ignores_wrong_app_i
     assert by_check[("license-check", "missing_suite")].expected_suites == 2
 
 
+def test_evaluate_commit_accepts_stale_status_with_success_conclusion_and_completed_at() -> (
+    None
+):
+    runs = _all_passing_check_runs()
+    for r in runs:
+        if r["name"] == (
+            "OPA Rego Policy Lint and Test (Universal — NIST CM-6/SI-7 reporting: US_FED only)"
+        ):
+            r["status"] = "in_progress"
+            r["conclusion"] = "success"
+            r["completed_at"] = "2026-11-24T21:02:56Z"
+    violations = reconciler.evaluate_commit_check_runs(
+        sha=SHA_PASS,
+        committed_at="2026-11-24T21:02:41Z",
+        check_runs=runs,
+    )
+    assert violations == []
+
+
+@pytest.mark.parametrize("bad_conclusion", ["failure", "cancelled", "timed_out"])
+def test_evaluate_commit_flags_stale_status_with_non_success_conclusion(
+    bad_conclusion: str,
+) -> None:
+    runs = _all_passing_check_runs()
+    for r in runs:
+        if r["name"] == "Lint":
+            r["status"] = "in_progress"
+            r["conclusion"] = bad_conclusion
+            r["completed_at"] = "2026-11-24T21:02:56Z"
+    violations = reconciler.evaluate_commit_check_runs(
+        sha=SHA_FAIL,
+        committed_at="2026-11-24T21:02:41Z",
+        check_runs=runs,
+    )
+    assert len(violations) == 1
+    assert violations[0].check_name == "Lint"
+    assert violations[0].reason == bad_conclusion
+
+
+@pytest.mark.parametrize(
+    ("conclusion", "completed_at"),
+    [
+        ("success", None),
+        ("success", ""),
+        ("success", "   "),
+        (None, "2026-11-24T21:02:56Z"),
+        ("", "2026-11-24T21:02:56Z"),
+    ],
+)
+def test_evaluate_commit_fails_closed_when_stale_status_lacks_terminal_pair(
+    conclusion: str | None,
+    completed_at: str | None,
+) -> None:
+    runs = _all_passing_check_runs()
+    for r in runs:
+        if r["name"] == "Lint":
+            r["status"] = "in_progress"
+            r["conclusion"] = conclusion
+            r["completed_at"] = completed_at
+    violations = reconciler.evaluate_commit_check_runs(
+        sha=SHA_FAIL,
+        committed_at="2026-11-24T21:02:41Z",
+        check_runs=runs,
+    )
+    assert len(violations) == 1
+    assert violations[0].check_name == "Lint"
+    assert violations[0].reason == "incomplete:in_progress"
+
+
 def test_reconcile_commits_respects_grace_window_floor_sha_pagination_and_ledger_flag() -> (
     None
 ):
