@@ -106,7 +106,7 @@ class ResolvedScenario:
     amount: float
     currency: str
     confidence: float
-    transaction_id: str
+    idempotency_key: str
     deferred_id: str | None = None
 
 
@@ -309,7 +309,7 @@ def resolve_scenario(messages: Sequence[Mapping[str, Any]]) -> ResolvedScenario:
             amount=amount,
             currency=str(preset["currency"]),
             confidence=confidence,
-            transaction_id=tx_id,
+            idempotency_key=tx_id,
             deferred_id=explicit_deferred_id,
         )
 
@@ -364,7 +364,7 @@ def resolve_scenario(messages: Sequence[Mapping[str, Any]]) -> ResolvedScenario:
         amount=amount,
         currency="USD",
         confidence=confidence,
-        transaction_id=tx_id,
+        idempotency_key=tx_id,
         deferred_id=explicit_deferred_id,
     )
 
@@ -503,7 +503,7 @@ def _render_guided_json(schema: Mapping[str, Any], scenario: ResolvedScenario) -
             "amount": scenario.amount,
             "currency": scenario.currency,
             "confidence": scenario.confidence,
-            "transaction_id": scenario.transaction_id,
+            "idempotency_key": scenario.idempotency_key,
         }
         if scenario.deferred_id is not None:
             action_params["deferred_id"] = scenario.deferred_id
@@ -657,7 +657,7 @@ def _build_tool_args(
             "amount": scenario.amount,
             "currency": scenario.currency,
             "confidence": scenario.confidence,
-            "transaction_id": scenario.transaction_id,
+            "idempotency_key": scenario.idempotency_key,
             "side": scenario.side,
         }
         if scenario.deferred_id is not None:
@@ -835,7 +835,7 @@ def resolve_chat_completion(body: Mapping[str, Any]) -> StubTurnDecision:
             args = _build_tool_args(chosen, declared[chosen], scenario)
             args_json = json.dumps(args, sort_keys=True, separators=(",", ":"))
             call_seed = (
-                f"call:{chosen}:{scenario.scenario_id}:{scenario.transaction_id}"
+                f"call:{chosen}:{scenario.scenario_id}:{scenario.idempotency_key}"
             )
             call_suffix = uuid.uuid5(_STUB_UUID_NS, call_seed).hex[:12]
             tool_call = {

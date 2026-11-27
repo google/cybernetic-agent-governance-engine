@@ -1066,14 +1066,14 @@ async def _clearance(
         "amount": amount,
         "currency": "USD",
         "confidence": 0.99,
-        "transaction_id": str(uuid.uuid4()),
+        "idempotency_key": str(uuid.uuid4()),
         "trader_id": "agent_001",
         "trader_role": "junior",
         "side": "buy",
     }
     seal = await generate_seal(ACTION, params, record_hash="e" * 64)
     return ExecutionClearance(
-        thread_id=params["transaction_id"],
+        thread_id=params["idempotency_key"],
         decision="ALLOW",
         decision_path="DIRECT",
         action=ACTION,
@@ -1081,7 +1081,7 @@ async def _clearance(
         operator_urn="agent_001",
         issued_at=int(time.time()),
         issued_at_provenance="CONSTRUCTION_TIME",
-        correlation_id=params["transaction_id"],
+        correlation_id=params["idempotency_key"],
         correlation_id_source="THREAD_DERIVED",
         governance_decision_digest=seal_digest(seal),
         opa_input_digest=hashlib.sha256(

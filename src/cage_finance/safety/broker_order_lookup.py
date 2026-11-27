@@ -42,7 +42,7 @@ class BrokerOrderStatus(str, Enum):
 
 
 class BrokerOrderLookupResult:
-    """Outcome of querying the broker for an unsettled ``transaction_id``."""
+    """Outcome of querying the broker for an unsettled ``idempotency_key``."""
 
     def __init__(
         self,
@@ -67,20 +67,20 @@ def _is_mock_broker() -> bool:
 
 
 async def lookup_broker_order_status(
-    transaction_id: str,
+    idempotency_key: str,
     *,
     http_client: httpx.AsyncClient | None = None,
 ) -> BrokerOrderLookupResult:
-    """Query the broker by ``client_order_id`` (``transaction_id``) to settle an UNKNOWN hold.
+    """Query the broker by ``client_order_id`` (``idempotency_key``) to settle an UNKNOWN hold.
 
     Fail-closed: only HTTP 404 (order absent) or a terminal zero-fill order state
     returns ``NOT_EXECUTED``; ambiguous, in-flight, error, or unconfigured states
     return ``INDETERMINATE`` so fiscal reservations are never prematurely released.
     """
-    if not is_valid_idempotency_key(transaction_id):
+    if not is_valid_idempotency_key(idempotency_key):
         return BrokerOrderLookupResult(
             BrokerOrderStatus.INDETERMINATE,
-            detail=f"invalid transaction_id {transaction_id!r}",
+            detail=f"invalid idempotency_key {idempotency_key!r}",
         )
 
     if _is_mock_broker():
@@ -110,7 +110,7 @@ async def lookup_broker_order_status(
     headers = {"APCA-API-KEY-ID": api_key, "APCA-API-SECRET-KEY": api_secret}
     lookup_url = (
         f"{base_url}/v2/orders:by_client_order_id"
-        f"?client_order_id={urllib.parse.quote(transaction_id.lower(), safe='')}"
+        f"?client_order_id={urllib.parse.quote(idempotency_key.lower(), safe='')}"
     )
     try:
         if http_client is not None:
@@ -121,7 +121,7 @@ async def lookup_broker_order_status(
     except Exception as exc:
         logger.warning(
             "Broker order lookup failed for %s (%s): %s",
-            transaction_id,
+            idempotency_key,
             type(exc).__name__,
             exc,
         )

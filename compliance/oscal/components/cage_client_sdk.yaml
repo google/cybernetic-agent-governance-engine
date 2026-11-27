@@ -147,8 +147,8 @@ component-definition:
                 refusal).
 
                 3. Reference advisor integration (src/governed_financial_advisor/):
-                governed_trader_graph uses governed_tool_node(mode="execute",
-                idempotency_param="transaction_id"), data_analyst_graph uses
+                governed_trader_graph uses governed_tool_node(mode="execute") with
+                canonical idempotency_key, data_analyst_graph uses
                 governed_tool_node(mode="preview"), approval_node delegates to
                 approval_park_node(), and tool_guard.py is reduced strictly to
                 advisor-specific TOCTOU drift revalidation, REFUSAL_DESCRIPTIONS, and

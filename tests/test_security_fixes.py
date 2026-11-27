@@ -82,7 +82,7 @@ class TestC01TradeSide:
             side="sell",
             type="market",
             confidence=0.95,
-            transaction_id=tx_id,
+            idempotency_key=tx_id,
         )
         seal = await self._mint_order_seal(monkeypatch, order)
 
@@ -139,7 +139,7 @@ class TestC01TradeSide:
             side="buy",
             type="market",
             confidence=0.90,
-            transaction_id=tx_id,
+            idempotency_key=tx_id,
         )
         seal = await self._mint_order_seal(monkeypatch, order)
 
@@ -194,7 +194,7 @@ class TestC01TradeSide:
             side="short",  # invalid — not in {"buy", "sell"}
             type="market",
             confidence=0.80,
-            transaction_id=tx_id,
+            idempotency_key=tx_id,
         )
         seal = await self._mint_order_seal(monkeypatch, order)
         broker_called = False
@@ -251,7 +251,7 @@ class TestC01TradeSide:
             side="sell",
             type="market",
             confidence=0.88,
-            transaction_id=tx_id,
+            idempotency_key=tx_id,
         )
         seal = await self._mint_order_seal(monkeypatch, order)
 

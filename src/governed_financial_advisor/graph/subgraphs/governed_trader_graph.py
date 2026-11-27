@@ -768,14 +768,13 @@ def route_post_revalidation(state: GovernedTraderState) -> str:
 # ---------------------------------------------------------------------------
 
 # Every tool call is previewed by the gateway (POST /governance/validate-action)
-# and executed via POST /tools/execute using the canonical ``transaction_id``
+# and executed via POST /tools/execute using the canonical ``idempotency_key``
 # idempotency parameter; REQUIRE_APPROVAL routes to ``approval``, while refusals
 # and INDETERMINATE halt directly to END.
 guarded_tool_executor_node = governed_tool_node(
     client=lambda: GatewayClient().sdk_client(),
     action=TRADE_ACTION,
     mode="execute",
-    idempotency_param="transaction_id",
     committing_tools=frozenset({TRADE_TOOL}),
     principal_extractor=advisor_principal_extractor,
     plan_extractor=lambda s: s.get("execution_plan"),

@@ -108,7 +108,7 @@ class Live:
     ) -> str:
         """Run ``execute_trade_action`` in the gateway; return its output string."""
         body = {
-            "transaction_id": str(uuid.uuid4()),
+            "idempotency_key": str(uuid.uuid4()),
             **params,
             **({"deferred_id": deferred_id} if deferred_id else {}),
         }

@@ -130,7 +130,7 @@ _FORBIDDEN_PROMPT_HANDLES = (
     "deferred_id",
     "defer_id",
     "deferred_ids",
-    "transaction_id",
+    "idempotency_key",
     "routing_seal",
     "governance_envelope",
 )

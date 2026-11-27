@@ -115,10 +115,10 @@ class BoundedTradeRequest:
             "description": "Maximum rollback window in seconds (B10 validation, default: 5 minutes)"
         },
     )
-    transaction_id: str | None = field(
+    idempotency_key: str | None = field(
         default=None,
         metadata={
-            "description": "Unique transaction UUID for idempotency and audit trail"
+            "description": "Unique UUIDv4/UUIDv5 idempotency key for idempotency and audit trail"
         },
     )
 
@@ -172,5 +172,5 @@ class BoundedTradeRequest:
             "trader_role": self.trader_role,
             "jurisdiction": self.jurisdiction,
             "rollback_window_seconds": self.rollback_window_seconds,
-            "transaction_id": self.transaction_id,
+            "idempotency_key": self.idempotency_key,
         }

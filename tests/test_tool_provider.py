@@ -46,7 +46,7 @@ def _deps() -> dict:
     """Composition-root dependencies injected into execute_trade_action()."""
     return {
         "governor": trade_governor(),
-        "transaction_id": str(uuid.uuid4()),
+        "idempotency_key": str(uuid.uuid4()),
     }
 
 

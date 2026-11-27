@@ -167,9 +167,9 @@ async def test_record_refusal_propagates_signing_failure() -> None:
         with pytest.raises(GovernanceInfrastructureError):
             await gm.record_refusal(
                 "execute_trade",
-                "duplicate transaction_id",
+                "duplicate idempotency_key",
                 oscal_control_ref="AC-3",
-                params={"transaction_id": "t-1"},
+                params={"idempotency_key": "t-1"},
             )
     assert _RECEIPT_LABEL not in _labels(commit)
 

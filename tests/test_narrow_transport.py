@@ -93,7 +93,7 @@ async def test_mcp_server_fetches_and_burns_receipt():
         "amount": 25.0,
         "currency": "USD",
         "confidence": 0.95,
-        "transaction_id": "tx123",
+        "idempotency_key": "tx123",
         "trader_id": "agent_001",
         "trader_role": "junior",
         "dry_run": True,
@@ -122,7 +122,7 @@ async def test_mcp_server_fetches_and_burns_receipt():
             ):
                 result = await execute_trade_action(
                     governor=trade_governor(),
-                    transaction_id=str(uuid.uuid4()),
+                    idempotency_key=str(uuid.uuid4()),
                     symbol="AAPL",  # Original params (the seal names the narrowed)
                     amount=100.0,
                     currency="USD",
@@ -169,7 +169,7 @@ async def test_expired_receipt_rejected():
 
             result = await execute_trade_action(
                 governor=trade_governor(),
-                transaction_id=str(uuid.uuid4()),
+                idempotency_key=str(uuid.uuid4()),
                 symbol="AAPL",
                 amount=50.0,
                 currency="USD",
@@ -197,7 +197,7 @@ async def test_forged_receipt_rejected():
             "amount": 25.0,
             "currency": "USD",
             "confidence": 0.95,
-            "transaction_id": "tx123",
+            "idempotency_key": "tx123",
             "trader_id": "agent_001",
             "trader_role": "junior",
             "dry_run": True,
@@ -218,7 +218,7 @@ async def test_forged_receipt_rejected():
         ):
             result = await execute_trade_action(
                 governor=trade_governor(),
-                transaction_id=str(uuid.uuid4()),
+                idempotency_key=str(uuid.uuid4()),
                 symbol="AAPL",
                 amount=100.0,
                 currency="USD",
@@ -244,7 +244,7 @@ async def test_narrowed_params_applied_to_trade():
         "amount": 10.0,  # Narrowed from 500.0
         "currency": "USD",
         "confidence": 0.95,
-        "transaction_id": "tx456",
+        "idempotency_key": "tx456",
         "trader_id": "agent_001",
         "trader_role": "junior",
         "dry_run": True,
@@ -272,7 +272,7 @@ async def test_narrowed_params_applied_to_trade():
             ):
                 result = await execute_trade_action(
                     governor=trade_governor(),
-                    transaction_id=str(uuid.uuid4()),
+                    idempotency_key=str(uuid.uuid4()),
                     symbol="AAPL",  # Original
                     amount=500.0,  # Original (the seal names the narrowed amount)
                     currency="USD",
@@ -306,7 +306,7 @@ async def test_seal_computed_over_narrowed_params():
         "amount": 5.0,
         "currency": "USD",
         "confidence": 0.95,
-        "transaction_id": "tx789",
+        "idempotency_key": "tx789",
         "trader_id": "agent_001",
         "trader_role": "junior",
         "dry_run": True,
@@ -337,7 +337,7 @@ async def test_seal_computed_over_narrowed_params():
             ):
                 await execute_trade_action(
                     governor=trade_governor(),
-                    transaction_id=str(uuid.uuid4()),
+                    idempotency_key=str(uuid.uuid4()),
                     symbol="AAPL",
                     amount=1000.0,
                     currency="USD",
@@ -367,7 +367,7 @@ async def test_narrow_disabled_uses_original_params():
     with patch("src.cage_finance.tools.tool_provider.enforce_governance", mock_enforce):
         result = await execute_trade_action(
             governor=trade_governor(),
-            transaction_id=str(uuid.uuid4()),
+            idempotency_key=str(uuid.uuid4()),
             symbol="AAPL",
             amount=100.0,
             currency="USD",
@@ -391,7 +391,7 @@ async def test_receipt_replay_blocked():
         "amount": 20.0,
         "currency": "USD",
         "confidence": 0.95,
-        "transaction_id": "tx999",
+        "idempotency_key": "tx999",
         "trader_id": "agent_001",
         "trader_role": "junior",
         "dry_run": True,
@@ -424,7 +424,7 @@ async def test_receipt_replay_blocked():
                 # First execution should succeed
                 result1 = await execute_trade_action(
                     governor=trade_governor(),
-                    transaction_id=str(uuid.uuid4()),
+                    idempotency_key=str(uuid.uuid4()),
                     symbol="AAPL",
                     amount=100.0,
                     currency="USD",
@@ -436,7 +436,7 @@ async def test_receipt_replay_blocked():
                 # (no receipt found = ALLOW path, not NARROW)
                 result2 = await execute_trade_action(
                     governor=trade_governor(),
-                    transaction_id=str(uuid.uuid4()),
+                    idempotency_key=str(uuid.uuid4()),
                     symbol="AAPL",
                     amount=100.0,
                     currency="USD",
@@ -472,7 +472,7 @@ async def test_receipt_naming_other_params_than_the_sealed_params_is_refused():
         "amount": 25.0,
         "currency": "USD",
         "confidence": 0.95,
-        "transaction_id": "tx-sealed",
+        "idempotency_key": "tx-sealed",
         "trader_id": "agent_001",
         "trader_role": "junior",
         "dry_run": False,
@@ -498,7 +498,7 @@ async def test_receipt_naming_other_params_than_the_sealed_params_is_refused():
     ):
         result = await execute_trade_action(
             governor=governor,
-            transaction_id=str(uuid.uuid4()),
+            idempotency_key=str(uuid.uuid4()),
             symbol="AAPL",
             amount=100.0,
             currency="USD",
@@ -538,7 +538,7 @@ async def test_matching_receipt_is_burned_and_the_sealed_params_are_actuated():
         "amount": 30.0,  # Narrowed from 100.0
         "currency": "USD",
         "confidence": 0.95,
-        "transaction_id": tx_id,
+        "idempotency_key": tx_id,
         "trader_id": "agent_001",
         "trader_role": "junior",
         "dry_run": False,
@@ -570,7 +570,7 @@ async def test_matching_receipt_is_burned_and_the_sealed_params_are_actuated():
     ):
         result = await execute_trade_action(
             governor=governor,
-            transaction_id=tx_id,
+            idempotency_key=tx_id,
             symbol="AAPL",
             amount=100.0,
             currency="USD",
@@ -598,7 +598,7 @@ async def test_missing_narrow_receipt_refuses_narrowed_trade():
         "amount": 30.0,  # Narrowed from 100.0
         "currency": "USD",
         "confidence": 0.95,
-        "transaction_id": tx_id,
+        "idempotency_key": tx_id,
         "trader_id": "agent_001",
         "trader_role": "junior",
         "dry_run": False,
@@ -624,7 +624,7 @@ async def test_missing_narrow_receipt_refuses_narrowed_trade():
     ):
         result = await execute_trade_action(
             governor=governor,
-            transaction_id=tx_id,
+            idempotency_key=tx_id,
             symbol="AAPL",
             amount=100.0,
             currency="USD",
@@ -654,7 +654,7 @@ async def test_corrupt_narrow_receipt_refuses_trade():
         "amount": 30.0,
         "currency": "USD",
         "confidence": 0.95,
-        "transaction_id": tx_id,
+        "idempotency_key": tx_id,
         "trader_id": "agent_001",
         "trader_role": "junior",
         "dry_run": False,
@@ -680,7 +680,7 @@ async def test_corrupt_narrow_receipt_refuses_trade():
     ):
         result = await execute_trade_action(
             governor=governor,
-            transaction_id=tx_id,
+            idempotency_key=tx_id,
             symbol="AAPL",
             amount=100.0,
             currency="USD",
@@ -711,7 +711,7 @@ async def test_narrow_receipt_store_outage_raises_infrastructure_block_no_refusa
         "amount": 30.0,
         "currency": "USD",
         "confidence": 0.95,
-        "transaction_id": tx_id,
+        "idempotency_key": tx_id,
         "trader_id": "agent_001",
         "trader_role": "junior",
         "dry_run": False,
@@ -742,7 +742,7 @@ async def test_narrow_receipt_store_outage_raises_infrastructure_block_no_refusa
         with pytest.raises(GovernanceInfrastructureError) as exc_info:
             await execute_trade_action(
                 governor=governor,
-                transaction_id=tx_id,
+                idempotency_key=tx_id,
                 symbol="AAPL",
                 amount=100.0,
                 currency="USD",
@@ -774,7 +774,7 @@ async def test_jcs_canonical_equivalence_accepts_int_float_narrow_receipt():
         "amount": 30.0,
         "currency": "USD",
         "confidence": 0.95,
-        "transaction_id": tx_id,
+        "idempotency_key": tx_id,
         "trader_id": "agent_001",
         "trader_role": "junior",
         "dry_run": False,
@@ -807,7 +807,7 @@ async def test_jcs_canonical_equivalence_accepts_int_float_narrow_receipt():
     ):
         result = await execute_trade_action(
             governor=governor,
-            transaction_id=tx_id,
+            idempotency_key=tx_id,
             symbol="AAPL",
             amount=100.0,
             currency="USD",

@@ -187,7 +187,7 @@ class _PreviewAndExecuteTransport(httpx.AsyncBaseTransport):
         signed_wire = await sign_commit_outcome_wire(
             result,
             tool_name=str(sent.get("tool_name") or ""),
-            idempotency_key=params.get("transaction_id"),
+            idempotency_key=params.get("idempotency_key"),
         )
         return httpx.Response(
             200,

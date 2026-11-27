@@ -30,7 +30,7 @@ Covers four HIGH runtime findings:
      on ``CBF_EPOCH_CONTENDED`` and ``REPLICATION_UNCONFIRMED`` while preserving
      ``ViolationKind.HARD`` on true barrier breaches and fence-epoch regressions,
      preserving post-HITL ``DeferQueue`` approvals unspent, and releasing
-     ``ExecutionLedger`` ``transaction_id`` claims via ``release_unexecuted()``.
+     ``ExecutionLedger`` ``idempotency_key`` claims via ``release_unexecuted()``.
 """
 
 from __future__ import annotations
@@ -1279,7 +1279,7 @@ class TestKG03CBFContentionAndReplicationClassification:
                 amount=500.0,
                 currency="USD",
                 confidence=0.99,
-                transaction_id=tx_id_auto,
+                idempotency_key=tx_id_auto,
                 dry_run=False,
                 governor=gov_auto,
             )
@@ -1305,7 +1305,7 @@ class TestKG03CBFContentionAndReplicationClassification:
                 amount=1_000.0,
                 currency="USD",
                 confidence=0.99,
-                transaction_id=tx_id_hitl,
+                idempotency_key=tx_id_hitl,
                 deferred_id=deferred_id,
                 dry_run=False,
                 governor=gov,

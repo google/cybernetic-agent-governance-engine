@@ -137,7 +137,7 @@ class BoundingContractTierPlugin(ReadOnlyTier):
                 trader_role=params.get("trader_role", "autonomous"),
                 jurisdiction=params.get("jurisdiction"),
                 rollback_window_seconds=raw_window,
-                transaction_id=params.get("transaction_id"),
+                idempotency_key=params.get("idempotency_key"),
             )
         except (ValueError, TypeError, KeyError) as e:
             logger.error("Failed to construct BoundedTradeRequest from params: %s", e)

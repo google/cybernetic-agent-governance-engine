@@ -46,7 +46,7 @@ class TestExecuteTradeRoutingSealEnforcement:
             side="buy",
             type="market",
             confidence=0.99,
-            transaction_id=str(uuid.uuid4()),
+            idempotency_key=str(uuid.uuid4()),
         )
 
         with pytest.raises(SymbolicGovernorViolation) as exc_info:
@@ -65,7 +65,7 @@ class TestExecuteTradeRoutingSealEnforcement:
             side="sell",
             type="market",
             confidence=0.95,
-            transaction_id=str(uuid.uuid4()),
+            idempotency_key=str(uuid.uuid4()),
         )
 
         with pytest.raises(SymbolicGovernorViolation) as exc_info:
@@ -84,7 +84,7 @@ class TestExecuteTradeRoutingSealEnforcement:
             side="buy",
             type="market",
             confidence=0.90,
-            transaction_id=str(uuid.uuid4()),
+            idempotency_key=str(uuid.uuid4()),
         )
 
         with pytest.raises(SymbolicGovernorViolation) as exc_info:
@@ -103,7 +103,7 @@ class TestExecuteTradeRoutingSealEnforcement:
             side="buy",
             type="market",
             confidence=0.88,
-            transaction_id=str(uuid.uuid4()),
+            idempotency_key=str(uuid.uuid4()),
         )
 
         with pytest.raises(SymbolicGovernorViolation) as exc_info:
@@ -122,7 +122,7 @@ class TestExecuteTradeRoutingSealEnforcement:
             side="sell",
             type="market",
             confidence=0.92,
-            transaction_id=str(uuid.uuid4()),
+            idempotency_key=str(uuid.uuid4()),
         )
 
         with pytest.raises(SymbolicGovernorViolation) as exc_info:
@@ -149,7 +149,7 @@ class TestExecuteTradeRoutingSealEnforcement:
             side="buy",
             type="market",
             confidence=0.98,
-            transaction_id=str(uuid.uuid4()),
+            idempotency_key=str(uuid.uuid4()),
         )
         valid_seal = await generate_seal(
             "execute_trade", order.model_dump(exclude_none=True), record_hash="e" * 64
@@ -194,7 +194,7 @@ class TestExecuteTradeOrderSizing:
             side="buy",
             type="market",
             confidence=0.99,
-            transaction_id=str(uuid.uuid4()),
+            idempotency_key=str(uuid.uuid4()),
         )
         valid_seal = await generate_seal(
             "execute_trade", order.model_dump(exclude_none=True), record_hash="e" * 64

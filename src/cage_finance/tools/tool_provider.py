@@ -81,7 +81,7 @@ TradeSide = Literal["buy", "sell"]
 #: MCP hints for tools that only read; GatewayMCPClient may resend them.
 _READ_ONLY_TOOL = ToolAnnotations(readOnlyHint=True, idempotentHint=True)
 #: A trade is an irreversible external commitment, but its mandatory
-#: transaction_id makes a resend with the same key a replay of the first outcome.
+#: idempotency_key makes a resend with the same key a replay of the first outcome.
 _TRADE_TOOL = ToolAnnotations(
     readOnlyHint=False, destructiveHint=True, idempotentHint=True
 )
@@ -107,7 +107,7 @@ async def execute_trade_action(
     amount: float,
     currency: str,
     confidence: float = 0.0,
-    transaction_id: str | None = None,
+    idempotency_key: str | None = None,
     dry_run: bool = False,
     deferred_id: str | None = None,
     side: TradeSide = "buy",
@@ -126,7 +126,7 @@ async def execute_trade_action(
     response.
     Satisfies: NoDirectBind == (phase = "EXECUTED") => (resolvedAllow = TRUE)
 
-    At most once per ``transaction_id``: the key is claimed in the governor's
+    At most once per ``idempotency_key``: the key is claimed in the governor's
     execution ledger before governance runs. A resubmitted key is neither
     governed nor actuated again: it gets back the first attempt's reply, or
     ``UnsettledDuplicate`` is raised while that attempt is still running or its
@@ -146,7 +146,7 @@ async def execute_trade_action(
             real value — the governance pipeline enforces a minimum threshold
             (US_FED: 0.95).  Omitting this parameter leaves the default 0.0
             which will always fail the confidence gate.
-        transaction_id: Required idempotency key for this trade, a UUIDv4 or
+        idempotency_key: Required idempotency key for this trade, a UUIDv4 or
             UUIDv5; the broker receives it as ``client_order_id``. A missing or
             invalid one is refused.
         dry_run: When True, governance checks run but no broker call is made.
@@ -189,7 +189,7 @@ async def execute_trade_action(
         "amount": amount,
         "currency": currency,
         "confidence": confidence,
-        "transaction_id": str(transaction_id or ""),
+        "idempotency_key": str(idempotency_key or ""),
         "dry_run": dry_run,
         "side": str(side),
     }
@@ -204,11 +204,10 @@ async def execute_trade_action(
     async with _idempotency.execution_claim_scope(
         governor,
         action="execute_trade",
-        idempotency_key=transaction_id,
+        idempotency_key=idempotency_key,
         params=raw_params,
         dry_run=dry_run,
         reclaim_blocked=bool(deferred_id),
-        key_field_name="transaction_id",
     ) as scope:
         if scope.invalid_key_reason is not None:
             return _refused(scope.invalid_key_reason)
@@ -217,17 +216,17 @@ async def execute_trade_action(
                 _REPLAYED_STATUS[scope.duplicate.status],
                 scope.duplicate.outcome or "",
             )
-        normalized_txn = scope.idempotency_key
-        if not normalized_txn:
+        normalized_key = scope.idempotency_key
+        if not normalized_key:
             return _refused(
-                "transaction_id is required (a UUIDv4 or UUIDv5 idempotency key)."
+                "idempotency_key is required (a UUIDv4 or UUIDv5 idempotency key)."
             )
         params: dict[str, Any] = {
             "symbol": symbol,
             "amount": amount,
             "currency": currency,
             "confidence": confidence,
-            "transaction_id": normalized_txn,
+            "idempotency_key": normalized_key,
             "dry_run": dry_run,
             "side": side,
         }
@@ -408,7 +407,7 @@ async def _govern_and_actuate(
 
         # Step 5: Construct ExecutionClearance (ADR-008 Phase 2 + v3.0 Routing)
         clearance = ExecutionClearance(
-            thread_id=str(action_params.get("transaction_id", str(uuid.uuid4()))),
+            thread_id=str(action_params.get("idempotency_key", str(uuid.uuid4()))),
             decision="ALLOW",
             decision_path="DIRECT",
             action="execute_trade",
@@ -416,7 +415,7 @@ async def _govern_and_actuate(
             operator_urn=str(action_params.get("trader_id", "agent_001")),
             issued_at=int(time.time()),
             issued_at_provenance="CONSTRUCTION_TIME",
-            correlation_id=str(action_params.get("transaction_id", str(uuid.uuid4()))),
+            correlation_id=str(action_params.get("idempotency_key", str(uuid.uuid4()))),
             correlation_id_source="THREAD_DERIVED",
             governance_decision_digest=seal_digest(seal),
             opa_input_digest=hashlib.sha256(
@@ -481,7 +480,7 @@ async def _govern_and_actuate(
         if attempt_status is ExecutionStatus.UNKNOWN:
             await _record_unknown_fiscal_hold(
                 governor,
-                transaction_id=str(action_params.get("transaction_id") or ""),
+                idempotency_key=str(action_params.get("idempotency_key") or ""),
                 symbol=str(action_params.get("symbol") or ""),
                 fiscal_token=fiscal_token,
             )
@@ -618,7 +617,7 @@ def _fiscal_guard_from(governor: "SymbolicGovernor") -> Any | None:
 async def _record_unknown_fiscal_hold(
     governor: "SymbolicGovernor",
     *,
-    transaction_id: str,
+    idempotency_key: str,
     symbol: str,
     fiscal_token: Any | None,
 ) -> None:
@@ -626,21 +625,21 @@ async def _record_unknown_fiscal_hold(
     metrics = getattr(getattr(governor, "components", None), "metrics", None)
     if metrics is not None and hasattr(metrics, "unknown_actuation_event"):
         metrics.unknown_actuation_event("recorded")
-    if fiscal_token is None or not transaction_id:
+    if fiscal_token is None or not idempotency_key:
         return
     guard = _fiscal_guard_from(governor)
     if guard is None or not hasattr(guard, "record_unverified_unknown"):
         return
     try:
         await guard.record_unverified_unknown(
-            transaction_id,
+            idempotency_key,
             fiscal_token,
             symbol=symbol,
         )
     except Exception as exc:
         logger.critical(
             "execute_trade: failed to record unverified UNKNOWN fiscal hold tx=%s: %s",
-            transaction_id,
+            idempotency_key,
             exc,
         )
 
@@ -673,7 +672,7 @@ class FinancialToolProvider(DomainToolProvider):
             amount: float,
             currency: str,
             confidence: float = 0.0,
-            transaction_id: str | None = None,
+            idempotency_key: str | None = None,
             dry_run: bool = False,
             deferred_id: str | None = None,
             side: TradeSide = "buy",
@@ -690,7 +689,7 @@ class FinancialToolProvider(DomainToolProvider):
                         amount,
                         currency,
                         confidence,
-                        transaction_id,
+                        idempotency_key,
                         dry_run,
                         deferred_id,
                         side,

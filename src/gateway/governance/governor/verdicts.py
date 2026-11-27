@@ -69,11 +69,13 @@ OBSERVATION_OUTPUT = "observation.output"
 
 
 def resolve_thread_id(params: dict[str, Any]) -> str:
-    """Resolve thread_id from params."""
-    if "thread_id" in params:
-        return str(params["thread_id"])
-    if "transaction_id" in params:
-        return str(params["transaction_id"])
+    """Resolve non-empty correlation thread_id from params (thread_id -> idempotency_key)."""
+    raw_thread = params.get("thread_id")
+    if raw_thread is not None and raw_thread != "":
+        return str(raw_thread)
+    raw_idem = params.get("idempotency_key")
+    if raw_idem is not None and raw_idem != "":
+        return str(raw_idem)
     return "unknown"
 
 

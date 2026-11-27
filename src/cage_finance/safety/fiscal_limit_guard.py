@@ -148,7 +148,7 @@ return reclaimed
 """
 
 # KEYS[1] = UNVERIFIED_UNKNOWN_KEY, KEYS[2] = UNVERIFIED_UNKNOWN_META_KEY
-# ARGV[1] = transaction_id, ARGV[2] = confirmed_at (string score), ARGV[3] = JSON meta
+# ARGV[1] = idempotency_key, ARGV[2] = confirmed_at (string score), ARGV[3] = JSON meta
 _LUA_RECORD_UNVERIFIED = """
 redis.call('ZADD', KEYS[1], tonumber(ARGV[2]), ARGV[1])
 redis.call('HSET', KEYS[2], ARGV[1], ARGV[3])
@@ -156,7 +156,7 @@ return 1
 """
 
 # KEYS[1] = UNVERIFIED_UNKNOWN_KEY, KEYS[2] = UNVERIFIED_UNKNOWN_META_KEY
-# ARGV[1] = transaction_id, ARGV[2] = '1' (executed) or '0' (reclaim)
+# ARGV[1] = idempotency_key, ARGV[2] = '1' (executed) or '0' (reclaim)
 # Returns 1 when settled, 0 when not found.
 _LUA_SETTLE_UNKNOWN = """
 local raw = redis.call('HGET', KEYS[2], ARGV[1])
@@ -184,7 +184,7 @@ return 1
 class UnverifiedUnknownReservation:
     """Confirmed fiscal reservation awaiting broker reconciliation after an UNKNOWN outcome."""
 
-    transaction_id: str
+    idempotency_key: str
     reservation_id: str
     agent_id: str
     amount_usd: float
@@ -487,19 +487,19 @@ class FiscalLimitGuard:
 
     async def record_unverified_unknown(
         self,
-        transaction_id: str,
+        idempotency_key: str,
         token: ReservationToken,
         *,
         symbol: str = "",
         confirmed_at: float | None = None,
     ) -> None:
         """Record a confirmed reservation resulting from an UNKNOWN actuation for reconciliation."""
-        if token.rejected or not transaction_id:
+        if token.rejected or not idempotency_key:
             return
         ts = time.time() if confirmed_at is None else float(confirmed_at)
         meta = json.dumps(
             {
-                "transaction_id": transaction_id,
+                "idempotency_key": idempotency_key,
                 "reservation_id": token.reservation_id,
                 "agent_id": token.agent_id,
                 "amount_usd": token.amount_usd,
@@ -513,11 +513,11 @@ class FiscalLimitGuard:
         await self._eval(
             _LUA_RECORD_UNVERIFIED,
             [UNVERIFIED_UNKNOWN_KEY, UNVERIFIED_UNKNOWN_META_KEY],
-            [transaction_id, repr(ts), meta],
+            [idempotency_key, repr(ts), meta],
         )
         logger.warning(
-            "FiscalLimitGuard: UNVERIFIED_UNKNOWN recorded tx=%s agent=%s amount=%.2f symbol=%s",
-            transaction_id,
+            "FiscalLimitGuard: UNVERIFIED_UNKNOWN recorded key=%s agent=%s amount=%.2f symbol=%s",
+            idempotency_key,
             token.agent_id,
             token.amount_usd,
             symbol,
@@ -539,10 +539,10 @@ class FiscalLimitGuard:
         )
         if not members:
             return []
-        tx_ids = [m.decode() if isinstance(m, bytes) else str(m) for m in members]
-        raw_metas = await self._call("hmget", UNVERIFIED_UNKNOWN_META_KEY, *tx_ids)
+        key_ids = [m.decode() if isinstance(m, bytes) else str(m) for m in members]
+        raw_metas = await self._call("hmget", UNVERIFIED_UNKNOWN_META_KEY, *key_ids)
         out: list[UnverifiedUnknownReservation] = []
-        for tx_id, raw in zip(tx_ids, raw_metas or (), strict=False):
+        for idem_key, raw in zip(key_ids, raw_metas or (), strict=False):
             if raw is None:
                 continue
             text = raw.decode() if isinstance(raw, bytes) else str(raw)
@@ -550,7 +550,7 @@ class FiscalLimitGuard:
                 data = json.loads(text)
                 out.append(
                     UnverifiedUnknownReservation(
-                        transaction_id=str(data.get("transaction_id") or tx_id),
+                        idempotency_key=str(data.get("idempotency_key") or idem_key),
                         reservation_id=str(data.get("reservation_id") or ""),
                         agent_id=str(data.get("agent_id") or ""),
                         amount_usd=float(data["amount_usd"]),
@@ -562,24 +562,24 @@ class FiscalLimitGuard:
                 )
             except (KeyError, TypeError, ValueError) as exc:
                 logger.warning(
-                    "FiscalLimitGuard: skipping malformed unverified UNKNOWN metadata tx=%s: %s",
-                    tx_id,
+                    "FiscalLimitGuard: skipping malformed unverified UNKNOWN metadata key=%s: %s",
+                    idem_key,
                     exc,
                 )
         return out
 
-    async def settle_unknown(self, transaction_id: str, *, executed: bool) -> bool:
+    async def settle_unknown(self, idempotency_key: str, *, executed: bool) -> bool:
         """Finalize (executed=True) or reclaim (executed=False) an UNKNOWN fiscal reservation."""
         res = await self._eval(
             _LUA_SETTLE_UNKNOWN,
             [UNVERIFIED_UNKNOWN_KEY, UNVERIFIED_UNKNOWN_META_KEY],
-            [transaction_id, "1" if executed else "0"],
+            [idempotency_key, "1" if executed else "0"],
         )
         settled = int(res) == 1
         if settled:
             logger.info(
-                "FiscalLimitGuard: SETTLED UNKNOWN tx=%s executed=%s",
-                transaction_id,
+                "FiscalLimitGuard: SETTLED UNKNOWN key=%s executed=%s",
+                idempotency_key,
                 executed,
             )
         return settled

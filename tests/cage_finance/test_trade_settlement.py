@@ -93,7 +93,7 @@ async def _run(
             currency="USD",
             confidence=0.99,
             governor=governor,
-            **{"transaction_id": str(uuid.uuid4()), **kwargs},
+            **{"idempotency_key": str(uuid.uuid4()), **kwargs},
         )
 
 
@@ -181,7 +181,7 @@ async def test_refused_governance_settles_nothing() -> None:
             symbol="AAPL",
             amount=10.0,
             currency="USD",
-            transaction_id=str(uuid.uuid4()),
+            idempotency_key=str(uuid.uuid4()),
             governor=governor,
         )
     assert result.status is CommitStatus.REFUSED

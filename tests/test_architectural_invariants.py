@@ -297,7 +297,7 @@ async def test_execute_trade_action_traverses_actuator():
                         amount=10.0,
                         currency="USD",
                         confidence=0.95,
-                        transaction_id=str(uuid.uuid4()),
+                        idempotency_key=str(uuid.uuid4()),
                         governor=trade_governor(),
                     )
 
@@ -424,7 +424,7 @@ async def test_validate_action_returns_canonical_envelope(monkeypatch):
             "amount": 10.0,
             "currency": "USD",
             "confidence": 0.95,
-            "transaction_id": str(uuid.uuid4()),
+            "idempotency_key": str(uuid.uuid4()),
             "trader_id": "test-agent",
             "trader_role": "junior",
             "dry_run": True,

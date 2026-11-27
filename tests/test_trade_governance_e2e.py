@@ -283,7 +283,7 @@ class Gateway:
             params["amount"],
             params["currency"],
             params["confidence"],
-            params.get("transaction_id") or str(uuid.uuid4()),
+            params.get("idempotency_key") or str(uuid.uuid4()),
             False,
             deferred_id,
             params.get("side", "buy"),

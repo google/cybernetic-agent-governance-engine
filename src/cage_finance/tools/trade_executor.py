@@ -254,7 +254,7 @@ async def _execute_trade(
 
     # --- MOCK BROKER FAST-PATH ---
     if _is_mock_broker():
-        mock_order_id = f"MOCK-{order.transaction_id[:8].upper()}"
+        mock_order_id = f"MOCK-{order.idempotency_key[:8].upper()}"
         logger.info(
             "🧪 Mock broker: EXECUTED %s x %s → %s",
             order.symbol,
@@ -294,7 +294,7 @@ async def _execute_trade(
         "side": trade_side,
         "type": "market",
         "time_in_force": "day",
-        "client_order_id": order.transaction_id,
+        "client_order_id": order.idempotency_key,
     }
 
     # --- LATE INTERRUPT CHECK (Strictly Pre-Wire) ---
@@ -302,7 +302,7 @@ async def _execute_trade(
 
     logger.info(
         "Executing Trade %s on %s (Confidence: %s)...",
-        order.transaction_id,
+        order.idempotency_key,
         base_url,
         order.confidence,
     )
@@ -370,7 +370,7 @@ async def _execute_trade(
     if status_code in _PRE_EXECUTION_REJECTION_STATUSES:
         logger.warning(
             "Broker deterministically rejected order %s with HTTP %d",
-            order.transaction_id,
+            order.idempotency_key,
             status_code,
         )
         raise PreWireRejectionError(
@@ -384,7 +384,7 @@ async def _execute_trade(
         logger.error(
             "Broker returned indeterminate status HTTP %d for order %s",
             status_code,
-            order.transaction_id,
+            order.idempotency_key,
         )
         raise IndeterminateExecutionError(
             f"Broker returned indeterminate HTTP status {status_code}",
@@ -398,7 +398,7 @@ async def _execute_trade(
         logger.error(
             "Broker returned non-JSON body on HTTP %d for order %s: %s",
             status_code,
-            order.transaction_id,
+            order.idempotency_key,
             exc,
         )
         raise IndeterminateExecutionError(

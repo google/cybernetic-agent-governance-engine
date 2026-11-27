@@ -182,7 +182,7 @@ async def test_each_trade_redeems_only_its_own_receipt(
         results = [
             await execute_trade_action(
                 governor=trade_governor(),
-                transaction_id=str(uuid.uuid4()),
+                idempotency_key=str(uuid.uuid4()),
                 symbol="AAPL",
                 amount=100.0,
                 currency="USD",

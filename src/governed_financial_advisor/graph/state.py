@@ -41,7 +41,7 @@ class LedgerEntry(TypedDict):
         idempotency_key: Derived key (hash of tx_id + action) to prevent double-refunds.
         status:          WAL transition state (PENDING → COMPLETED | ROLLED_BACK | PARTIAL_FAILURE).
         context_data:    Payload the compensating node needs to issue the reversal
-                         (e.g. {'transaction_id': '...', 'amount': 500, 'account': 'A'}).
+                         (e.g. {'idempotency_key': '...', 'amount': 500, 'account': 'A'}).
     """
 
     sequence_id: int

@@ -692,7 +692,7 @@ async def test_mcp_execute_tool_attaches_proof_hash_on_refusal(
                 "amount": 100.0,
                 "currency": "USD",
                 "side": "INVALID_SIDE",
-                "transaction_id": "tx-invalid-side",
+                "idempotency_key": "tx-invalid-side",
             },
         ),
         req,

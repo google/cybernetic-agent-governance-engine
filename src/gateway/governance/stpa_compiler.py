@@ -334,13 +334,13 @@ class ParameterMappingModel(BaseModel):
 
     Example YAML::
 
-        forward.transaction_id: compensating.target_tx_id
+        forward.idempotency_key: compensating.target_tx_id
         forward.amount: compensating.refund_amount
 
     Both keys must follow the pattern ``forward.<key>`` or ``compensating.<key>``.
     """
 
-    forward_key: str  # e.g. "transaction_id" from the forward action's context_data
+    forward_key: str  # e.g. "idempotency_key" from the forward action's context_data
     compensating_key: str  # e.g. "target_tx_id" expected by the compensating API call
 
     @field_validator("forward_key", "compensating_key")
@@ -350,7 +350,7 @@ class ParameterMappingModel(BaseModel):
 
     @classmethod
     def from_yaml_dict(cls, raw: dict[str, str]) -> list[ParameterMappingModel]:
-        """Parse {'forward.transaction_id': 'compensating.target_tx_id', ...}."""
+        """Parse {'forward.idempotency_key': 'compensating.target_tx_id', ...}."""
         mappings = []
         for fwd, comp in raw.items():
             fwd_key = fwd.removeprefix("forward.")
@@ -375,10 +375,10 @@ class SagaModel(BaseModel):
           execution_type: mcp_tool          # 'mcp_tool' | 'local'
           mcp_tool_name: execute_action_tool  # required when execution_type=mcp_tool
           # State keys sent as the tool's arguments; required when
-          # execution_type=mcp_tool and must include transaction_id.
-          mcp_arguments: [transaction_id, amount]
+          # execution_type=mcp_tool and must include idempotency_key.
+          mcp_arguments: [idempotency_key, amount]
           parameter_mapping:
-            forward.transaction_id: compensating.target_tx_id
+            forward.idempotency_key: compensating.target_tx_id
             forward.amount: compensating.refund_amount
     """
 
@@ -432,10 +432,10 @@ class SagaModel(BaseModel):
             raise ValueError(
                 "SagaModel: mcp_tool_name is required when execution_type='mcp_tool'."
             )
-        if "transaction_id" not in self.mcp_arguments:
+        if "idempotency_key" not in self.mcp_arguments:
             raise ValueError(
                 "SagaModel: mcp_arguments must list the state keys sent to the MCP "
-                "tool, including transaction_id, when execution_type='mcp_tool'."
+                "tool, including idempotency_key, when execution_type='mcp_tool'."
             )
         return self
 
@@ -1807,9 +1807,9 @@ def generate_langgraph(cs: ControlStructureModel) -> str:
         "# Helpers",
         "# ---------------------------------------------------------------------------",
         "",
-        "def _derive_idempotency_key(transaction_id: str, action: str) -> str:",
+        "def _derive_idempotency_key(idempotency_key: str, action: str) -> str:",
         '    """Deterministically derive an idempotency key for a compensating action."""',
-        '    raw = f"{transaction_id}:{action}"',
+        '    raw = f"{idempotency_key}:{action}"',
         "    return hashlib.sha256(raw.encode()).hexdigest()[:32]",
         "",
         "",
@@ -1874,7 +1874,7 @@ def generate_langgraph(cs: ControlStructureModel) -> str:
                 "    arguments: dict[str, Any] = {",
                 f"        k: v for k, v in state.items() if k in {keys_tuple_src}",
                 "    }",
-                '    tx_id: str = str(arguments.get("transaction_id") or "")',
+                '    tx_id: str = str(arguments.get("idempotency_key") or "")',
             ]
             intent_context_src = "dict(arguments)"
             step2_lines = [
@@ -1923,7 +1923,7 @@ def generate_langgraph(cs: ControlStructureModel) -> str:
                 "    # mcp_arguments in the YAML and regenerate with:",
                 "    #   python -m src.gateway.governance.stpa_compiler compile",
                 "    result: dict[str, Any] = {}  # STUB: replace before production",
-                '    tx_id: str = result.get("transaction_id", "")',
+                '    tx_id: str = result.get("idempotency_key", "")',
             ]
             unknown_outcome_doc = []
 

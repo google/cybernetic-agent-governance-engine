@@ -332,7 +332,7 @@ async def test_signed_commit_tool_result_and_mcp_client_jwks_verification(
     with patch.object(client, "_traced_call", AsyncMock(return_value=result)):
         verified = await client.call_commit_tool(
             "execute_trade_action",
-            {"transaction_id": _KEY_1},
+            {"idempotency_key": _KEY_1},
         )
     assert verified.status is CommitStatus.EXECUTED
     assert verified.tool_name == "execute_trade_action"
@@ -343,7 +343,7 @@ async def test_signed_commit_tool_result_and_mcp_client_jwks_verification(
         with pytest.raises(MCPCommitOutcomeUnrecognizedError, match="idempotency_key"):
             await client.call_commit_tool(
                 "execute_trade_action",
-                {"transaction_id": _KEY_2},
+                {"idempotency_key": _KEY_2},
             )
 
 
@@ -410,7 +410,7 @@ async def test_tools_execute_signs_200_202_and_403_outcomes(
     )
     body = mts.ToolExecutionRequest(
         tool_name="execute_trade_action",
-        params={"transaction_id": _KEY_1, "amount": 100.0},
+        params={"idempotency_key": _KEY_1, "amount": 100.0},
     )
 
     with ExitStack() as stack:
@@ -569,10 +569,11 @@ def test_extract_request_idempotency_key_preference_order() -> None:
         )
         == "k1"
     )
-    assert extract_request_idempotency_key({"transaction_id": "t1"}) == "t1"
+    assert extract_request_idempotency_key({"transaction_id": "t1"}) is None
     assert (
         extract_request_idempotency_key(
-            {}, attempt=SimpleNamespace(_claimed_idempotency_key="claimed-1")
+            {"transaction_id": "t1"},
+            attempt=SimpleNamespace(_claimed_idempotency_key="claimed-1"),
         )
         == "claimed-1"
     )
@@ -628,7 +629,7 @@ async def test_sig_m1_idempotency_key_comparison_enforced() -> None:
         with pytest.raises(MCPCommitOutcomeUnrecognizedError, match="idempotency_key"):
             await client.call_commit_tool(
                 "execute_trade_action",
-                {"transaction_id": _KEY_2},
+                {"idempotency_key": _KEY_2},
             )
 
 
@@ -667,7 +668,7 @@ async def test_sig_m2_tool_name_comparison_enforced() -> None:
         with pytest.raises(MCPCommitOutcomeUnrecognizedError, match="tool_name"):
             await client.call_commit_tool(
                 "administer_dose",
-                {"transaction_id": _KEY_1},
+                {"idempotency_key": _KEY_1},
             )
 
 
@@ -705,7 +706,7 @@ async def test_sig_m3_unknown_kid_rejected(monkeypatch: pytest.MonkeyPatch) -> N
         with pytest.raises(MCPCommitOutcomeUnrecognizedError, match="unknown kid"):
             await client.call_commit_tool(
                 "execute_trade_action",
-                {"transaction_id": _KEY_1},
+                {"idempotency_key": _KEY_1},
             )
 
 
@@ -759,7 +760,7 @@ async def test_sig_m4_signature_verified_when_present(
         ):
             await client.call_commit_tool(
                 "execute_trade_action",
-                {"transaction_id": _KEY_1},
+                {"idempotency_key": _KEY_1},
             )
 
 
@@ -804,7 +805,7 @@ async def test_sig_m5_unsigned_outcome_rejected_in_enforcing_posture(
         ):
             await client.call_commit_tool(
                 "execute_trade_action",
-                {"transaction_id": _KEY_1},
+                {"idempotency_key": _KEY_1},
             )
 
 

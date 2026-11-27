@@ -105,7 +105,7 @@ class _TraderGatewayTransport(httpx.AsyncBaseTransport):
         signed = await sign_commit_outcome_wire(
             outcome,
             tool_name=str(sent.get("tool_name") or ""),
-            idempotency_key=params.get("transaction_id"),
+            idempotency_key=params.get("idempotency_key"),
         )
         http_status = (
             200
@@ -311,8 +311,8 @@ async def test_advisor_trader_graph_checkpointer_defer_interrupt_redeem_replay_e
     assert r3["deferred_id"] is None
     assert len(transport.execute_calls) == 2
     assert (
-        transport.execute_calls[1]["transaction_id"]
-        == transport.execute_calls[0]["transaction_id"]
+        transport.execute_calls[1]["idempotency_key"]
+        == transport.execute_calls[0]["idempotency_key"]
     )
     gateway.actuate.assert_awaited_once()
 

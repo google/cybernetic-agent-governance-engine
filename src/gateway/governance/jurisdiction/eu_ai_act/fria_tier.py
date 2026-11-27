@@ -50,7 +50,7 @@ verified workload identity of the caller as ``actor_id`` / ``operator_urn``
 (raising :class:`ValueError` when no recording OpenTelemetry span is active,
 so ``evaluate()`` fails closed locally with ``FRIA_PROVIDER_UNAVAILABLE``
 without calling the provider), and a ``thread_id`` falling back from the
-request's ``thread_id`` to its ``transaction_id`` to that trace id.
+request's ``thread_id`` to its ``idempotency_key`` to that trace id.
 
 Model confidence plays no part: a confident model is not an impact
 assessment, so the old confidence fast path that skipped the provider is
@@ -307,7 +307,7 @@ class FriaTier(ReadOnlyTier):
                 "(no active OpenTelemetry trace span)"
             )
         thread_id = (
-            params.get("thread_id") or params.get("transaction_id") or correlation_id
+            params.get("thread_id") or params.get("idempotency_key") or correlation_id
         )
         caller = self._caller()
         return {
