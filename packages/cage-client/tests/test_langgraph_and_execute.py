@@ -1387,3 +1387,112 @@ def test_governed_tool_node_preview_mode_and_idempotency_param() -> None:
             assert "idempotency_key" not in executed_params[0]
 
     asyncio.run(_run())
+
+
+def test_preview_policy_version_id_headers_and_429_unmasked() -> None:
+    """preview() forwards policy_version_id & headers and surfaces HTTP 429 directly as UNAVAILABLE."""
+    import json as _json
+    import uuid
+
+    from cage_client import idempotency as idem_mod
+    from cage_client import langgraph as lg_mod
+
+    priv, jwk = _make_ed25519_keypair(kid="ed-pvid-preview")
+    params = {"symbol": "AAPL", "amount": 100.0}
+    seen: list[tuple[dict[str, Any], dict[str, str]]] = []
+    mode = ["ok"]
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path == "/governance/.well-known/jwks.json":
+            return httpx.Response(200, json={"keys": [jwk]})
+        body = _json.loads(req.content)
+        seen.append((body, dict(req.headers)))
+        if mode[0] == "429":
+            return httpx.Response(429, json={"error": "rate_limit_exceeded"})
+        return httpx.Response(
+            200,
+            json=_signed_preview_envelope(
+                action="execute_trade",
+                parameters=params,
+                payload={"verdict": "ALLOW"},
+                priv=priv,
+                kid=jwk["kid"],
+                correlation_id=body.get("correlation_id"),
+            ),
+        )
+
+    assert "transaction_id" not in idem_mod._VOLATILE_ARG_KEYS
+    assert "transaction_id" not in lg_mod._IDEMPOTENCY_PARAM_KEYS
+    assert idem_mod.DEFAULT_IDEMPOTENCY_NAMESPACE == uuid.uuid5(
+        uuid.NAMESPACE_URL, "urn:cage:advisor:execute_trade_action:transaction_id"
+    )
+
+    async def _run() -> None:
+        async with CageClient(
+            "https://gateway.example.test",
+            http_transport=httpx.MockTransport(handler),
+        ) as client:
+            res = await client.preview(
+                "execute_trade",
+                params,
+                "trader-01",
+                policy_version_id="sha256:v2",
+                headers={"x-cage-principal": "advisor-user"},
+                timeout_s=3.0,
+            )
+            assert res.decision is GovernanceDecision.ALLOWED
+            assert seen[0][0]["policy_version_id"] == "sha256:v2"
+            assert seen[0][1].get("x-cage-principal") == "advisor-user"
+
+            res_no_pin = await client.preview("execute_trade", params, "trader-01")
+            assert res_no_pin.decision is GovernanceDecision.ALLOWED
+            assert "policy_version_id" not in seen[1][0]
+
+            mode[0] = "429"
+            before = len(seen)
+            res_429 = await client.preview("execute_trade", params, "trader-01")
+            assert len(seen) == before + 1
+            assert res_429.decision is GovernanceDecision.UNAVAILABLE
+            assert res_429.reason_code == "GATEWAY_UNAVAILABLE"
+
+    asyncio.run(_run())
+
+
+def test_execute_tool_drops_hardcoded_transaction_id_fallback() -> None:
+    """Default execute_tool(idempotency_param='idempotency_key') ignores an unconfigured transaction_id field."""
+    import json as _json
+
+    priv, jwk = _make_ed25519_keypair(kid="ed-idem-060")
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path == "/governance/.well-known/jwks.json":
+            return httpx.Response(200, json={"keys": [jwk]})
+        data = _json.loads(req.content)
+        return httpx.Response(
+            200,
+            json={
+                "status": "SUCCESS",
+                "output": "OK",
+                "outcome": _signed_outcome(
+                    status=CommitStatus.EXECUTED,
+                    message="OK",
+                    tool_name=data["tool_name"],
+                    idempotency_key="server-derived-key",
+                    priv=priv,
+                    kid=jwk["kid"],
+                ),
+            },
+        )
+
+    async def _run() -> None:
+        async with CageClient(
+            "https://gateway.example.test",
+            http_transport=httpx.MockTransport(handler),
+        ) as client:
+            outcome = await client.execute_tool(
+                "custom_tool",
+                {"symbol": "AAPL", "transaction_id": "legacy-ignored-field"},
+            )
+            assert outcome.status is CommitStatus.EXECUTED
+
+    asyncio.run(_run())

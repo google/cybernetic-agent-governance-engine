@@ -97,7 +97,7 @@ from .outcomes import (
 # Check for optional HTTP/2 support (h2 package)
 _HTTP2_AVAILABLE = importlib.util.find_spec("h2") is not None
 
-_USER_AGENT = "CageClient/0.5.0"
+_USER_AGENT = "CageClient/0.6.0"
 _DEFAULT_DEFER_TTL_S = 14400
 _BRACKETED_CODE_RE = re.compile(r"^\[([A-Za-z0-9_.:-]+)\]\s+")
 _DEV_POSTURES: frozenset[str] = frozenset({"dev", "development", "test", "testing"})
@@ -343,11 +343,16 @@ class CageClient:
         parameters: dict[str, Any],
         agent_id: str,
         context: dict[str, Any] | None = None,
+        policy_version_id: str | None = None,
+        *,
+        timeout_s: float | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> GovernanceEnvelope:
         """
         Submit an action to the CAGE Gateway for HTTP PEP governance mediation.
 
-        Sends ``POST /governance/validate-action`` and verifies + mediates the
+        Sends ``POST /governance/validate-action`` (including ``policy_version_id``
+        when supplied for drift-pinned evaluation) and verifies + mediates the
         gateway response fail-closed:
           - 200 OK (verified ``ALLOW``) → Return verified ``GovernanceEnvelope``
           - 200 OK (verified ``NARROW`` / ``DENY`` / ``DENIED``) or 403 Forbidden (verified ``DENY`` / ``DENIED``) → Raise ``PolicyViolationException``
@@ -366,6 +371,16 @@ class CageClient:
                transport channel and does NOT substitute for end-to-end envelope
                signature verification.**
         """
+        cleaned_policy_version_id: str | None = None
+        if policy_version_id is not None:
+            if not isinstance(policy_version_id, str) or not policy_version_id.strip():
+                raise ValueError(
+                    "policy_version_id must be a non-empty string when provided"
+                )
+            cleaned_policy_version_id = policy_version_id.strip()
+        if timeout_s is not None and (not math.isfinite(timeout_s) or timeout_s <= 0):
+            raise ValueError("timeout_s must be a finite number > 0")
+
         canonical_params = self._canonicalize_params(parameters)
         param_hash = hashlib.sha256(canonical_params.encode("utf-8")).hexdigest()
 
@@ -381,15 +396,21 @@ class CageClient:
             "context": context or {},
             "correlation_id": correlation_id,
         }
+        if cleaned_policy_version_id is not None:
+            payload["policy_version_id"] = cleaned_policy_version_id
 
-        headers = {
+        req_headers = {
             "Content-Type": "application/json",
             "traceparent": traceparent,
             "X-Correlation-ID": correlation_id,
             "User-Agent": _USER_AGENT,
         }
+        if headers:
+            for k, v in headers.items():
+                req_headers[k] = v
 
         endpoint = f"{self.gateway_url}/governance/validate-action"
+        effective_timeout = self.timeout_s if timeout_s is None else float(timeout_s)
 
         logger.debug(
             "Submitting action for validation: action=%s, agent_id=%s, correlation_id=%s",
@@ -399,7 +420,12 @@ class CageClient:
         )
 
         try:
-            response = await self._client.post(endpoint, json=payload, headers=headers)
+            response = await self._client.post(
+                endpoint,
+                json=payload,
+                headers=req_headers,
+                timeout=effective_timeout,
+            )
         except httpx.RequestError as exc:
             logger.error(
                 "Network error communicating with gateway: %s", exc, exc_info=True
@@ -849,6 +875,10 @@ class CageClient:
         parameters: Mapping[str, Any],
         agent_id: str,
         context: Mapping[str, Any] | None = None,
+        policy_version_id: str | None = None,
+        *,
+        timeout_s: float | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> PreviewResult:
         """Evaluate a proposed action in dry-run preview mode and return a 5-outcome ``PreviewResult``.
 
@@ -869,6 +899,9 @@ class CageClient:
                 parameters=dict(parameters),
                 agent_id=agent_id,
                 context=dict(context) if context is not None else None,
+                policy_version_id=policy_version_id,
+                timeout_s=timeout_s,
+                headers=headers,
             )
             return PreviewResult(
                 decision=GovernanceDecision.ALLOWED,
@@ -1020,8 +1053,8 @@ class CageClient:
                 under ``idempotency_param`` and verified against the signed outcome's
                 ``idempotency_key`` binding.
             idempotency_param: Wire parameter name inside ``params`` receiving
-                ``idempotency_key`` (default ``"idempotency_key"``; domain tools
-                like finance's ``execute_trade_action`` pass ``"transaction_id"``).
+                ``idempotency_key`` (default ``"idempotency_key"``; custom
+                third-party tools may override this field name if needed).
             approval_token: Optional human-approved ``deferred_id`` forwarded as
                 ``params["deferred_id"]`` on resume.
             verify_signature: Optional per-call override (defaults to client's
@@ -1077,7 +1110,6 @@ class CageClient:
             _non_blank_str(idempotency_key)
             or _non_blank_str(wire_params.get(param_name))
             or _non_blank_str(wire_params.get("idempotency_key"))
-            or _non_blank_str(wire_params.get("transaction_id"))
         )
 
         traceparent = generate_w3c_traceparent()
