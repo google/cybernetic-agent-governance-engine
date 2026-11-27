@@ -204,6 +204,14 @@ def _narrow_include(ruleset: dict[str, Any]) -> None:
     ruleset["conditions"]["ref_name"]["include"] = ["refs/tags/v*"]
 
 
+def _drop_conformance_include(ruleset: dict[str, Any]) -> None:
+    # The live state before conformance-v* was added: only v* and client-v*.
+    ruleset["conditions"]["ref_name"]["include"] = [
+        "refs/tags/v*",
+        "refs/tags/client-v*",
+    ]
+
+
 def _retarget_to_branches(ruleset: dict[str, Any]) -> None:
     # The mistake POAM-2026-116 recorded: a "tag" ruleset that targeted branches.
     ruleset["target"] = "branch"
@@ -218,6 +226,10 @@ TAG_PLANTS: dict[str, tuple[Callable[[dict[str, Any]], None], str]] = {
     "ruleset in evaluate mode": (_evaluate_only, "enforcement is 'evaluate'"),
     "tags may move": (_drop_update, "rule `update` is missing"),
     "client tags unprotected": (_narrow_include, "includes ['refs/tags/v*']"),
+    "conformance tags unprotected": (
+        _drop_conformance_include,
+        "includes ['refs/tags/client-v*', 'refs/tags/v*']",
+    ),
     "targets branches": (_retarget_to_branches, "target is 'branch'"),
     "a release tag excluded": (_exclude_a_tag, "excludes ['refs/tags/v4.0.0']"),
 }

@@ -204,7 +204,7 @@ Tag ruleset 25965917, "Protect release tags":
 
 | Setting | Value | Rationale |
 |---|---|---|
-| Target | Tags matching `refs/tags/v*` and `refs/tags/client-v*` | Every release tag, including the `client-v*` SDK releases |
+| Target | Tags matching `refs/tags/v*`, `refs/tags/client-v*` and `refs/tags/conformance-v*` | Every release tag, including the `client-v*` SDK releases and the `conformance-v*` verifier releases (`conformance-v*` added 2026-11-27) |
 | Restrict deletions | ✅ (`deletion`) | A published release tag must not disappear |
 | Restrict updates | ✅ (`update`) | A published release tag must not move, not even by fast-forward |
 | Block force pushes | ✅ (`non_fast_forward`) | |
