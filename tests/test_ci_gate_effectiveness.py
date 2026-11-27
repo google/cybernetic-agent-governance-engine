@@ -46,6 +46,7 @@ import yaml
 
 from scripts import (
     check_ai600_lula_manifests,
+    check_command_payload_hygiene,
     check_doc_references,
     check_domain_literals,
     check_import_boundaries,
@@ -2344,7 +2345,22 @@ def test_poam_2026_214_resolved_payload_hygiene_and_zero_commit_push_guard(
     flag_builder: Any,
 ) -> None:
     """POAM-2026-214: a clean payload at a path matching a denylist token must not be refused,
-    while leaks inside referenced payloads/heredocs/inline args and 0-commit pushes fail closed."""
+    while leaks inside referenced payloads/heredocs/inline args and 0-commit pushes fail closed.
+
+    Contract counterpart: external pre-execution guard referenced-payload reader
+    (``leak_guard.py:672-687``) covering ``--body-file``, ``--input``, ``-F @file``
+    (plus ``--field`` / ``--raw-field``), and their ``=`` forms. Keep this option set
+    synchronized with the external reader so neither drift reopens false positives nor
+    leaves a bypass across uninspected file flags.
+    """
+    assert set(check_command_payload_hygiene.SUPPORTED_FILE_PAYLOAD_OPTIONS) == {
+        "--body-file",
+        "--input",
+        "-F @",
+        "--field @",
+        "--raw-field @",
+    }
+
     token = "example-denied-token"
     path_with_token = tmp_path / token / "scratch" / "payload.md"
     path_with_token.parent.mkdir(parents=True, exist_ok=True)
@@ -2355,7 +2371,7 @@ def test_poam_2026_214_resolved_payload_hygiene_and_zero_commit_push_guard(
     # Property 1: clean payload referenced by a path containing a matched substring passes.
     cmd_clean_payload = flag_builder(path_with_token)
     assert (
-        check_project_id_hygiene.audit_command_payloads(
+        check_command_payload_hygiene.audit_command_payloads(
             cmd_clean_payload, prohibited_identifiers=[token]
         )
         == []
@@ -2365,34 +2381,34 @@ def test_poam_2026_214_resolved_payload_hygiene_and_zero_commit_push_guard(
     benign_dirty = tmp_path / "benign" / "dirty.md"
     benign_dirty.parent.mkdir(parents=True, exist_ok=True)
     benign_dirty.write_text(f"Leaked {token} in body.\n", encoding="utf-8")
-    assert check_project_id_hygiene.audit_command_payloads(
+    assert check_command_payload_hygiene.audit_command_payloads(
         flag_builder(benign_dirty), prohibited_identifiers=[token]
     )
 
     # Property 3: missing referenced file fails closed.
     missing_path = tmp_path / "missing" / "absent.md"
-    assert check_project_id_hygiene.audit_command_payloads(
+    assert check_command_payload_hygiene.audit_command_payloads(
         flag_builder(missing_path), prohibited_identifiers=[token]
     )
 
     # Property 4: inline --body / heredoc body containing the token is still refused.
-    assert check_project_id_hygiene.audit_command_payloads(
+    assert check_command_payload_hygiene.audit_command_payloads(
         f"gh pr create --title test --body 'leaked {token}'",
         prohibited_identifiers=[token],
     )
-    assert check_project_id_hygiene.audit_command_payloads(
+    assert check_command_payload_hygiene.audit_command_payloads(
         f"gh pr create --body-file - <<'EOF'\nleaked {token}\nEOF",
         prohibited_identifiers=[token],
     )
 
     # Property 5: chained git commit && git push with 0 unpushed commits fails closed.
-    assert check_project_id_hygiene.audit_command_payloads(
+    assert check_command_payload_hygiene.audit_command_payloads(
         "git add README.md && git commit -m 'docs: update' && git push origin feat/x",
         prohibited_identifiers=[token],
         unpushed_commit_count=0,
     )
     assert (
-        check_project_id_hygiene.audit_command_payloads(
+        check_command_payload_hygiene.audit_command_payloads(
             "git push origin feat/x",
             prohibited_identifiers=[token],
             unpushed_commit_count=1,
