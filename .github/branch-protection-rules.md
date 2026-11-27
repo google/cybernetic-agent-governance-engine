@@ -257,8 +257,7 @@ After any ruleset change:
 - [ ] Open a pull request and confirm the eleven required checks in §3 are listed and must pass
 - [ ] Confirm the review requirement appears on a pull request by the maintainer
 - [ ] Confirm a direct push of a new commit to `main` is refused with `remote: error: GH013`
-- [ ] Before a document states what a rule refuses or allows, probe it on a disposable ref
-      ([`RULESET_PROBES.md`](../docs/operations/RULESET_PROBES.md))
+- [ ] Before applying a ruleset change to `main` (via throwaway dry-run copy first) and before a document states what a rule refuses or allows, probe on a disposable ref with zero Actions runs ([`RULESET_PROBES.md`](../docs/operations/RULESET_PROBES.md))
 
 ---
 

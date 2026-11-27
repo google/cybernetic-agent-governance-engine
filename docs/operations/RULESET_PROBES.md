@@ -17,8 +17,17 @@
 - Before an evidence document ([`POAM.md`](../POAM.md), `compliance/oscal/`,
   [`.github/branch-protection-rules.md`](../../.github/branch-protection-rules.md)) states what
   a rule refuses or allows.
-- Before a new or changed ruleset is applied to a real ref. Create it against a disposable ref
-  first, observe it, then retarget it.
+- Before a new or changed ruleset is applied to a real ref:
+  - **Pre-edit dry-run for live ruleset updates:** When modifying an existing live ruleset
+    (e.g., adding/renaming required checks or toggling `strict_required_status_checks_policy`),
+    apply the proposed `rules` / `parameters` edit first to a **throwaway copy** targeting a
+    disposable `spike/probe-*` branch (`bypass_actors: []`), verify a negative `HTTP 422`
+    refusal and a positive `HTTP 200` control with **zero GitHub Actions runs**
+    (`actions/runs?branch=$P` `.total_count == 0`), delete both the throwaway ruleset and
+    disposable branch, and only then apply the verified payload to the live ruleset via
+    `PUT /repos/{owner}/{repo}/rulesets/{id}` (as with throwaway ruleset `28211373` on
+    `spike/probe-ruleset-172` before updating live ruleset `25966171` in `POAM-2026-172`).
+  - **New rulesets:** Create against a disposable ref first, observe it, then retarget it.
 - When a document marks a rule's effect as inferred, and the effect can be tested without
   touching a protected ref.
 
@@ -32,9 +41,11 @@
 3. **Start no workflows.** Give the probe commit `[skip ci]`, and give it the tree of the commit
    the positive control moves to. Moving the ref back to that commit then changes no files, so
    path-filtered push workflows have nothing to match.
-4. **Copy the rule verbatim.** Copy the `rules` of the ruleset under test with `jq` from the
-   live ruleset, not by hand. Target only the disposable ref and add no bypass actors, so an
-   admin token is held by the copy like any other.
+4. **Copy the rule verbatim (or derive the exact candidate payload).** Copy the `rules` of the
+   ruleset under test with `jq` from the live ruleset — or pipe the exact `jq` transform you
+   plan to `PUT` to the live ruleset into the throwaway copy — not by hand. Target only the
+   disposable ref and add no bypass actors, so an admin token is held by the copy like any
+   other.
 5. **Pair every negative case with a positive control.** The control must be an action that
    differs from the negative case only in the property under test. A refusal without an
    accepted control does not show what caused it.
@@ -75,7 +86,7 @@ C0=$(gh api -X POST "$R/git/commits" -f message="[skip ci] probe: $TOPIC" \
 gh api -X POST "$R/git/refs" -f ref="refs/heads/$P" -f sha="$C0"
 ```
 
-### Step 3: Copy the rule verbatim
+### Step 3: Copy the rule verbatim (or post the proposed update as a throwaway copy)
 
 ```bash
 PROBE=$(gh api "$R/rulesets/$RULESET" \
@@ -87,7 +98,10 @@ gh api "$R/rules/branches/$P" --jq '[.[] | "\(.type)@\(.ruleset_id)"]'   # expec
 ```
 
 To probe a new ruleset instead of an existing one, create it here with the probe ref as its
-only target.
+only target. To dry-run a proposed update to `$RULESET`, transform `.rules` in that `jq`
+pipeline before `POST /rulesets`, run Steps 4–7 to confirm `HTTP 422` refusal + `HTTP 200`
+acceptance with zero Actions runs and delete `$PROBE`, and then apply the verified `.rules`
+payload to `$RULESET` with `PUT /repos/{owner}/{repo}/rulesets/$RULESET`.
 
 ### Step 4: Negative case
 
