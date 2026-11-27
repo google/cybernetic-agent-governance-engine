@@ -212,6 +212,13 @@ Tag ruleset 25965917, "Protect release tags":
 
 Tag creation is not restricted by a rule.
 
+What has been observed for `conformance-v*` (added 2026-11-27): when `conformance-v0.4.2` was
+created, rule suite `5416775387` evaluated this ruleset's `deletion`, `update` and
+`non_fast_forward` rules on `refs/tags/conformance-v0.4.2` with enforcement `active`, so the
+ruleset applies to that pattern. A refused deletion or move of a `conformance-v*` tag has not
+been probed; that effect is inferred from the 2026-10-27 probe on a `v*` tag
+([`RULESET_PROBES.md`](../docs/operations/RULESET_PROBES.md) §6).
+
 ---
 
 ## 5. Security and analysis (verified 2026-11-02)
