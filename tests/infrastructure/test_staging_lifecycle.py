@@ -1455,6 +1455,74 @@ def test_staging_lifecycle_allow_legacy_lien_survivor_accepts_known_langfuse_eve
     assert "PF9 explicit known survivor" in proc.stdout
 
 
+def test_staging_lifecycle_orphaned_storage_lien_fails_closed_with_exact_delete_hint(
+    tmp_path: Path,
+) -> None:
+    """POAM-2026-164 EF12: orphaned storage.googleapis.com lien fails closed and prints exact delete cmd."""
+    repo, bin_dir, _ = _setup_fake_repo(
+        tmp_path,
+        surviving_lien="liens/p123-orphan\tstorage.googleapis.com\tresourcemanager.projects.delete",
+    )
+    env = _base_env(bin_dir)
+    proc = subprocess.run(
+        [
+            "bash",
+            str(repo / "scripts" / "staging_lifecycle.sh"),
+            "--fresh-project=ephemeral-proj-99",
+            "--skip-lula",
+            "--skip-posture",
+            "--skip-live-sweep",
+            "--skip-telemetry",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode != 0
+    assert "Surviving project deletion lien(s) after destroy" in proc.stderr
+    assert (
+        "EF12 orphaned storage.googleapis.com lien 'liens/p123-orphan'" in proc.stdout
+    )
+    assert (
+        "gcloud alpha resource-manager liens delete liens/p123-orphan --project=ephemeral-proj-99"
+        in proc.stdout
+    )
+
+
+def test_staging_lifecycle_allow_legacy_lien_survivor_requires_legacy_bucket(
+    tmp_path: Path,
+) -> None:
+    """--allow-legacy-lien-survivor must not excuse an orphaned lien without a surviving langfuse-events-* bucket."""
+    repo, bin_dir, _ = _setup_fake_repo(
+        tmp_path,
+        surviving_lien="liens/p123-orphan\tstorage.googleapis.com\tresourcemanager.projects.delete",
+    )
+    env = _base_env(bin_dir)
+    proc = subprocess.run(
+        [
+            "bash",
+            str(repo / "scripts" / "staging_lifecycle.sh"),
+            "--fresh-project=ephemeral-proj-99",
+            "--allow-legacy-lien-survivor",
+            "--skip-lula",
+            "--skip-posture",
+            "--skip-live-sweep",
+            "--skip-telemetry",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode != 0
+    assert "Surviving project deletion lien(s) after destroy" in proc.stderr
+    assert (
+        "gcloud alpha resource-manager liens delete liens/p123-orphan --project=ephemeral-proj-99"
+        in proc.stdout
+    )
+
+
 @pytest.mark.parametrize(
     ("post_rebuild_payload", "expected_fragment"),
     [
