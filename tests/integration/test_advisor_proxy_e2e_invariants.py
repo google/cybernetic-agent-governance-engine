@@ -70,6 +70,7 @@ from starlette.routing import Mount, Route
 
 import src.gateway.governance.routing_seal as rs
 from config.settings import Config
+from src.cage_finance.actuators.broker_actuator import BrokerActuator
 from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
 from src.cage_finance.models.trade_order import TradeOrder
 from src.cage_finance.narrowers import AmountNarrower
@@ -112,6 +113,7 @@ from src.gateway.governance.evidence.cold_store import (
     ColdStoreReceipt,
 )
 from src.gateway.governance.evidence.stream import EvidenceStreamSink
+from src.gateway.governance.execution_actuator import ActuatorRegistry
 from src.gateway.governance.execution_idempotency import ExecutionLedger
 from src.gateway.governance.governance_envelope import (
     GovernanceEnvelopeBuilder,
@@ -1089,8 +1091,14 @@ async def e2e_stack(
                 verification=receipt_check.verification,
             )
 
+        broker_actuator = BrokerActuator()
+        monkeypatch.setattr(broker_actuator, "actuate", _recording_actuate)
+        actuator_registry = ActuatorRegistry()
+        actuator_registry.register(broker_actuator, claims={"execute_trade"})
         monkeypatch.setattr(
-            finance_tool_provider._broker_actuator, "actuate", _recording_actuate
+            finance_tool_provider,
+            "get_actuator_registry",
+            lambda: actuator_registry,
         )
 
         stub_app = create_stub_app(environ={"CAGE_ENV": "staging"})

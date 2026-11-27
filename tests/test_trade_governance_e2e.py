@@ -55,6 +55,7 @@ import pytest
 from starlette.applications import Starlette
 from starlette.routing import Mount
 
+from src.cage_finance.actuators.broker_actuator import BrokerActuator
 from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
 from src.cage_finance.narrowers import AmountNarrower
 from src.cage_finance.safety.fiscal_limit_guard import FiscalLimitGuard
@@ -66,6 +67,8 @@ from src.cage_finance.stpa import UCA_RULES
 from src.cage_finance.tiers.causal_tier import CausalTierPlugin
 from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
 from src.cage_finance.tiers.fiscal_tier import FiscalTierPlugin
+from src.cage_finance.tools import tool_provider as trade_tool_provider
+from src.cage_finance.tools import trade_executor as trade_executor_mod
 from src.cage_finance.tools.tool_provider import execute_trade_action
 from src.cage_finance.tools.trade_inputs import (
     TRADE_SERVER_INPUT_KEYS,
@@ -89,6 +92,7 @@ from src.gateway.governance.contracts import NarrowingResult
 from src.gateway.governance.decisions import GovernanceDecision
 from src.gateway.governance.defer_queue import ApprovalRecord, DeferQueue
 from src.gateway.governance.evidence import stream as evidence_stream
+from src.gateway.governance.execution_actuator import ActuatorRegistry
 from src.gateway.governance.governance_envelope import (
     envelope_action_hash,
     unwrap_governance_envelope,
@@ -366,6 +370,7 @@ async def gw(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Gateway]:
     monkeypatch.setattr(
         "src.gateway.infrastructure.redis_client.redis_client", seal_redis
     )
+    monkeypatch.setattr(trade_executor_mod, "redis_client", seal_redis)
 
     @asynccontextmanager
     async def _queue() -> AsyncIterator[DeferQueue]:
@@ -417,6 +422,17 @@ async def gw(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Gateway]:
             outcome=ActuationOutcome.ACCEPTED,
         )
     )
+    # Per-test ActuatorRegistry + BrokerActuator instance so class-level or prior
+    # instance-attribute patches on the global _broker_actuator cannot leak here (#946).
+    broker_actuator = BrokerActuator()
+    monkeypatch.setattr(broker_actuator, "actuate", actuate)
+    actuator_registry = ActuatorRegistry()
+    actuator_registry.register(broker_actuator, claims={"execute_trade"})
+    monkeypatch.setattr(
+        trade_tool_provider,
+        "get_actuator_registry",
+        lambda: actuator_registry,
+    )
     monkeypatch.setattr(
         "src.cage_finance.actuators.broker_actuator.BrokerActuator.actuate", actuate
     )
@@ -429,27 +445,29 @@ async def gw(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Gateway]:
         Starlette(routes=[Mount("/governance", app=governance_app)]),
         IdentityPolicy(trusted=frozenset({ADVISOR, JUNIOR_DESK})),
     )
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=root, client=("10.112.0.43", 50000)),
-        base_url="http://10.112.0.43:8080",
-    ) as http:
-        yield Gateway(
-            governor=governor,
-            policy=policy,
-            fiscal=fiscal,
-            fiscal_tier=fiscal_tier,
-            cbf=cbf,
-            cbf_redis=cbf_redis,
-            defer_redis=defer_redis,
-            seal_redis=seal_redis,
-            actuate=actuate,
-            refusals=refusals,
-            http=http,
-            market_feed=market_feed,
-            nav_source=nav_source,
-        )
-    governance_app.state.governor = None
-    await sink.stop()
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=root, client=("10.112.0.43", 50000)),
+            base_url="http://10.112.0.43:8080",
+        ) as http:
+            yield Gateway(
+                governor=governor,
+                policy=policy,
+                fiscal=fiscal,
+                fiscal_tier=fiscal_tier,
+                cbf=cbf,
+                cbf_redis=cbf_redis,
+                defer_redis=defer_redis,
+                seal_redis=seal_redis,
+                actuate=actuate,
+                refusals=refusals,
+                http=http,
+                market_feed=market_feed,
+                nav_source=nav_source,
+            )
+    finally:
+        governance_app.state.governor = None
+        await sink.stop()
 
 
 def _body(resp: httpx.Response) -> dict[str, Any]:
@@ -1328,3 +1346,29 @@ async def test_mutation_skipping_the_pending_approval_preview_hides_the_breach(
     monkeypatch.setattr(pipeline_mod, "_preview_mutating", _no_preview)
     with pytest.raises(AssertionError):
         await test_s5_fiscal_breach_surfaces_before_human_review(gw)
+
+
+async def test_gw_isolates_actuator_and_trade_executor_redis_across_instance_shadowing(
+    gw: Gateway,
+) -> None:
+    """Issue #946 regression guard: prior instance-level patches on
+    ``tool_provider._broker_actuator`` and module-level ``trade_executor.redis_client``
+    must not leak into ``gw`` tests.
+    """
+    assert trade_executor_mod.redis_client is gw.seal_redis
+
+    had_own = "actuate" in trade_tool_provider._broker_actuator.__dict__
+    previous = trade_tool_provider._broker_actuator.__dict__.get("actuate")
+    trade_tool_provider._broker_actuator.__dict__["actuate"] = AsyncMock(
+        side_effect=AssertionError("global _broker_actuator leaked into gw")
+    )
+    try:
+        result = await gw.execute(trade(500.0))
+    finally:
+        if had_own:
+            trade_tool_provider._broker_actuator.__dict__["actuate"] = previous
+        else:
+            trade_tool_provider._broker_actuator.__dict__.pop("actuate", None)
+
+    assert result.status is CommitStatus.EXECUTED, result
+    gw.actuate.assert_awaited_once()
