@@ -212,12 +212,20 @@ Tag ruleset 25965917, "Protect release tags":
 
 Tag creation is not restricted by a rule.
 
-What has been observed for `conformance-v*` (added 2026-11-27): when `conformance-v0.4.2` was
-created, rule suite `5416775387` evaluated this ruleset's `deletion`, `update` and
-`non_fast_forward` rules on `refs/tags/conformance-v0.4.2` with enforcement `active`, so the
-ruleset applies to that pattern. A refused deletion or move of a `conformance-v*` tag has not
-been probed; that effect is inferred from the 2026-10-27 probe on a `v*` tag
-([`RULESET_PROBES.md`](../docs/operations/RULESET_PROBES.md) §6).
+What has been observed for `conformance-v*` (added 2026-11-27):
+
+- **Coverage.** When `conformance-v0.4.2` was created, rule suite `5416775387` evaluated this
+  ruleset's `deletion`, `update` and `non_fast_forward` rules on `refs/tags/conformance-v0.4.2`
+  with enforcement `active`, so the ruleset applies to that pattern.
+- **Refusal.** Probed on 2026-11-27 with a verbatim copy of this ruleset's rules (ruleset
+  `28261959`, targeting `refs/tags/probe-conformance-v*`, deleted afterwards). On
+  `probe-conformance-v0.0.1`, deletion was refused (`Cannot delete this tag`), a fast-forward
+  move was refused (`Cannot update this protected ref.`) and a forced move was refused (the same
+  message plus `Cannot force-push to this tag`). Creating the tag was accepted, and deleting it
+  was accepted once the copy was removed
+  ([`RULESET_PROBES.md`](../docs/operations/RULESET_PROBES.md) §6).
+- **Not tried.** A deletion or move of a `conformance-v*` tag itself. The probe used a distinct
+  pattern because a `conformance-v*` tag push starts `publish-client-sdk.yml`.
 
 ---
 
