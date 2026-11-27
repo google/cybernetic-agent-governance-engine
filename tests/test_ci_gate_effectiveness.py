@@ -2048,13 +2048,39 @@ def test_publish_client_sdk_tag_version_guard_and_per_tag_scoping(
     )
     assert ver_proc.stdout.strip() == conf_ver
 
-    build_conf_run = str(
-        by_name["Build CAGE Conformance Verifier Wheel & Sdist"]["run"]
+    # The tag-time build runs the same two-phase smoke script as the PR job, so a
+    # conformance-v* tag cannot publish a wheel or sdist the smoke did not exercise.
+    build_conf = by_name[
+        "Build CAGE Conformance Verifier Wheel & Sdist (Two-Phase Smoke)"
+    ]
+    build_conf_if = str(build_conf["if"])
+    assert "workflow_dispatch" in build_conf_if
+    assert "refs/tags/conformance-v" in build_conf_if
+    assert "refs/tags/client-v" not in build_conf_if
+    assert (
+        str(build_conf["run"]).strip() == "bash scripts/smoke_test_conformance_wheel.sh"
     )
-    assert 'dist/cage_conformance-"${CONF_VERSION}".tar.gz' in build_conf_run
-    assert 'grep -Fx "${CONF_VERSION}"' in build_conf_run
-    assert "verify" in build_conf_run
-    assert "${{" not in build_conf_run
+    assert build_conf["env"] == {"COMMIT_SHA": "${{ github.sha }}"}
+    conf_smoke_text = (
+        REPO_ROOT / "scripts" / "smoke_test_conformance_wheel.sh"
+    ).read_text(encoding="utf-8")
+    for needle in (
+        "set -euo pipefail",
+        "uv build",
+        'WHEEL_PATH="dist/cage_conformance-${CONF_VERSION}-py3-none-any.whl"',
+        'SDIST_PATH="dist/cage_conformance-${CONF_VERSION}.tar.gz"',
+        'grep -Fx "${CONF_VERSION}"',
+        "=== Phase 1a: bare wheel smoke",
+        "=== Phase 1b: sdist smoke",
+        "=== Phase 2: [attest] extra smoke",
+        "--trace src/cage_conformance/vectors/trace_v1.json",
+    ):
+        assert needle in conf_smoke_text, needle
+
+    conf_sync_run = str(by_name["Verify cage-conformance proof sync"]["run"])
+    assert "refs/tags/conformance-v*" in conf_sync_run
+    assert '--cutting-release-tag "$REF_NAME"' in conf_sync_run
+    assert "${{" not in conf_sync_run
 
     ghcr_conf = by_name["Publish CAGE Conformance Verifier to GitHub Packages (GHCR)"]
     ghcr_conf_if = str(ghcr_conf["if"])

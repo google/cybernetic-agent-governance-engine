@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -37,6 +38,7 @@ def _fake_git(
     tags: Sequence[str] = ("conformance-v0.4.2",),
     tag_sha: str = "a" * 40,
     log_lines: Sequence[str] = (),
+    diff_paths: Sequence[str] = ("proof/model.py",),
 ) -> rec.GitRunner:
     def _run(args: Sequence[str]) -> str:
         if args[:2] == ["tag", "-l"]:
@@ -45,6 +47,8 @@ def _fake_git(
             return f"{tag_sha}\n"
         if args[0] == "log":
             return "\n".join(log_lines) + ("\n" if log_lines else "")
+        if args[0] == "diff":
+            return "".join(f"{path}\0" for path in diff_paths)
         raise AssertionError(f"Unexpected git args: {args}")
 
     return _run
@@ -267,17 +271,109 @@ def test_sync_github_issue_ignores_untrusted_issues_and_closes_when_clean() -> N
     assert patches[0][2]["state"] == "closed"
 
 
-def test_real_repo_local_git_detects_post_041_commits() -> None:
-    findings, report = rec.reconcile_conformance_release(
-        repo_root=REPO_ROOT,
+_PYPROJECT_REL = "packages/cage-conformance/pyproject.toml"
+
+
+def _git(repo: Path, *args: str) -> None:
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=reconciler-test",
+            "-c",
+            "user.email=reconciler-test@example.test",
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "tag.gpgsign=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+            *args,
+        ],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+
+
+def _write_pyproject(repo: Path, *, version: str, status: str) -> None:
+    (repo / _PYPROJECT_REL).write_text(
+        f'[project]\nname = "cage-conformance"\nversion = "{version}"\n\n'
+        f'[tool.cage.release]\nstatus = "{status}"\n',
+        encoding="utf-8",
+    )
+
+
+def _tagged_release_repo(tmp_path: Path) -> Path:
+    """A git repo tagged ``conformance-v0.4.2`` while still ``status = "unreleased"``."""
+    repo = tmp_path / "repo"
+    (repo / "packages" / "cage-conformance").mkdir(parents=True)
+    (repo / "proof").mkdir()
+    (repo / "proof" / "model.py").write_text("X = 1\n", encoding="utf-8")
+    _write_pyproject(repo, version="0.4.2", status="unreleased")
+    _git(repo, "init", "-q")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "chore: release 0.4.2")
+    _git(repo, "tag", "conformance-v0.4.2")
+    return repo
+
+
+def _reconcile_local(repo: Path) -> tuple[list[rec.DriftFinding], dict[str, Any]]:
+    return rec.reconcile_conformance_release(
+        repo_root=repo,
         ref="HEAD",
         grace_hours=0.0,
         check_release=False,
         check_ghcr=False,
     )
-    assert report["latest_tag"] == "conformance-v0.4.1"
-    assert report["behind_commit_count"] >= 7
+
+
+def test_status_only_flip_after_tag_is_not_release_drift(tmp_path: Path) -> None:
+    repo = _tagged_release_repo(tmp_path)
+    _write_pyproject(repo, version="0.4.2", status="published")
+    _git(repo, "commit", "-q", "-am", "chore: mark 0.4.2 published")
+
+    findings, report = _reconcile_local(repo)
+    assert findings == []
+    assert report["latest_tag"] == "conformance-v0.4.2"
+    assert report["behind_commit_count"] == 1
+    assert report["material_changed_paths"] == []
+
+
+def test_real_git_detects_material_changes_after_tag(tmp_path: Path) -> None:
+    repo = _tagged_release_repo(tmp_path)
+    _write_pyproject(repo, version="0.4.2", status="published")
+    _git(repo, "commit", "-q", "-am", "chore: mark 0.4.2 published")
+    (repo / "proof" / "model.py").write_text("X = 2\n", encoding="utf-8")
+    _git(repo, "commit", "-q", "-am", "fix: change the model")
+
+    findings, report = _reconcile_local(repo)
     assert [f.code for f in findings] == ["STALE_CONFORMANCE_RELEASE"]
+    assert report["behind_commit_count"] == 2
+    assert report["material_changed_paths"] == ["proof/model.py"]
+
+
+def test_pyproject_change_beyond_status_is_release_drift(tmp_path: Path) -> None:
+    repo = _tagged_release_repo(tmp_path)
+    _write_pyproject(repo, version="0.4.3", status="published")
+    _git(repo, "commit", "-q", "-am", "chore: bump without releasing")
+
+    findings, report = _reconcile_local(repo)
+    assert [f.code for f in findings] == ["STALE_CONFORMANCE_RELEASE"]
+    assert report["material_changed_paths"] == [_PYPROJECT_REL]
+
+
+def test_unparseable_pyproject_counts_as_changed() -> None:
+    def _run(args: Sequence[str]) -> str:
+        if args[0] == "diff":
+            return f"{_PYPROJECT_REL}\0"
+        if args[0] == "show":
+            return "not = [valid toml"
+        raise AssertionError(f"Unexpected git args: {args}")
+
+    assert rec.list_material_changed_paths(
+        _run, tag="conformance-v0.4.2", ref="main"
+    ) == [_PYPROJECT_REL]
 
 
 def test_conformance_workflows_follow_security_and_step_gating_invariants() -> None:

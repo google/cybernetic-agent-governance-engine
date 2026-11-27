@@ -567,7 +567,7 @@ cybernetic-agent-governance-engine/
 │   └── governed_financial_advisor/   # Reference application (a client of the gateway)
 ├── packages/
 │   ├── cage-client/                  # Client SDK (0.5.0 in-tree; client-v0.3.0 tagged)
-│   └── cage-conformance/             # Standalone verifier (0.4.1), standard library only
+│   └── cage-conformance/             # Standalone verifier (0.4.2 in-tree; conformance-v0.4.1 tagged), standard library only
 ├── proof/                            # Formal model, stream invariants, TLA+ specifications
 ├── config/
 │   ├── governance_thresholds.json    #   Kernel threshold defaults
