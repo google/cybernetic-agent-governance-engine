@@ -185,13 +185,12 @@ async def preview_trade_with_drift_revalidation(
     active_pin = str(pin) if isinstance(pin, str) and pin.strip() else None
 
     for attempt in range(2):
-        token, _ = GatewayClient._set_preview_pin(active_pin)
-        try:
-            result = await client.preview(
-                action=action, parameters=dict(params), agent_id=principal
-            )
-        finally:
-            GatewayClient._reset_preview_pin(token)
+        result = await client.preview(
+            action=action,
+            parameters=dict(params),
+            agent_id=principal,
+            policy_version_id=active_pin,
+        )
 
         if (
             attempt == 0

@@ -54,4 +54,4 @@ cage_client = ["py.typed"]
 #     and tag client-v<version> must not yet exist.
 #   - "published": tag client-v<version> must exist and match packages/cage-client/src/cage_client/
 #     byte-for-byte (zero post-tag drift).
-status = "unreleased"
+status = "published"

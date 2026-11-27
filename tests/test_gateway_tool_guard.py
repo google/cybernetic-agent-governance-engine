@@ -707,18 +707,28 @@ class TestLinkerdEmpty403FailsClosed:
         return httpx.Response(403, content=b"", headers={"content-type": "text/plain"})
 
     @pytest.mark.asyncio
-    async def test_validate_action_raises_http_status_error_on_empty_mesh_403(
+    async def test_sdk_preview_returns_unavailable_on_empty_mesh_403(
         self, gateway
     ) -> None:
+        from cage_client import CageGatewayError, GovernanceDecision
+
         gateway(self._linkerd_empty_403)
 
-        with pytest.raises(httpx.HTTPStatusError) as exc_info:
-            await GatewayClient().validate_action(
+        sdk = await GatewayClient().sdk_client()
+        res = await sdk.preview(
+            action="execute_trade",
+            parameters={"symbol": "AAPL", "amount": 100.0},
+            agent_id="governed-financial-advisor",
+        )
+        assert res.decision is GovernanceDecision.UNAVAILABLE
+        assert res.reason_code == "GATEWAY_UNAVAILABLE"
+
+        with pytest.raises(CageGatewayError):
+            await sdk.validate_action(
                 action="execute_trade",
-                params={"symbol": "AAPL", "amount": 100.0},
+                parameters={"symbol": "AAPL", "amount": 100.0},
+                agent_id="governed-financial-advisor",
             )
-        assert exc_info.value.response.status_code == 403
-        assert not isinstance(exc_info.value, PermissionError)
 
     @pytest.mark.asyncio
     async def test_governed_tool_node_refuses_batch_on_empty_mesh_403(
