@@ -150,6 +150,10 @@ but not the refused move.
 - **A live rule whose conditions already cover a disposable ref.** The 2026-10-27 probe of tag
   ruleset 25965917 worked this way: its probe tag matched `refs/tags/v*`. Such a ref keeps the
   rule after the probe, so a `deletion` rule then refuses its removal. Prefer the verbatim copy.
+- **A tag pattern that starts a workflow.** A tag matching `client-v*` or `conformance-v*` starts
+  [`publish-client-sdk.yml`](../../.github/workflows/publish-client-sdk.yml), so a probe tag
+  inside those patterns cannot be zero-Actions. Copy the rules onto a distinct pattern such as
+  `refs/tags/probe-conformance-v*` and probe a tag there, as on 2026-11-27.
 
 ## 5. What to record, and what a probe does not show
 
@@ -173,3 +177,4 @@ missing check result, but not a failed check or a pull request head.
 | 2026-11-02 | Ruleset 26377312 (`non_fast_forward`, `deletion`), created against a probe branch and then retargeted to `main` | Force push and deletion: refused | Force push before the ruleset existed: accepted. Fast-forward under it: accepted | POAM-2026-170, Remediation |
 | 2026-11-02 | Verbatim copy of 25966171's `required_status_checks` rule (ruleset 26398326, deleted afterwards) | Force push to `93d4bf67`, which has no Terraform result: refused (`Required status check "Terraform Tests (gcp-gke, mock providers)" is expected.`) | Force push to `f43efeba`, which has all eight: accepted | POAM-2026-170, Description |
 | 2026-11-27 | Copy of updated 25966171 `required_status_checks` rule (`strict_required_status_checks_policy: true`, 11 checks, ruleset 28211373 on `spike/probe-ruleset-172`, deleted afterwards) | Force push to `89e52040`, which lacks `Apache 2.0 License Headers`: refused (HTTP 422: `Required status check "Apache 2.0 License Headers" is expected.`) | Force push to `07ca2b88`, which passes all 11 checks: accepted | POAM-2026-172, POAM-2026-171 |
+| 2026-11-27 | Verbatim copy of 25965917's `deletion`, `update` and `non_fast_forward` rules (ruleset 28261959 on `refs/tags/probe-conformance-v*`, deleted afterwards), on tag `probe-conformance-v0.0.1` at a `[skip ci]` commit | Deleting the tag: refused (HTTP 422: `Cannot delete this tag`). Fast-forward move: refused (`Cannot update this protected ref.`). Forced move: refused (`Cannot update this protected ref.` and `Cannot force-push to this tag`) | Creating the tag under the rules: accepted. Deleting it after the copy was removed: accepted. Zero Actions runs and zero check runs on the probe commits | [`branch-protection-rules.md`](../../.github/branch-protection-rules.md) §4 |
