@@ -1521,4 +1521,14 @@ Converges finance's domain/wire parameter name (`transaction_id`) onto CAGE's ca
 
 ---
 
-**Last updated:** November 26, 2026
+## Unreleased — `cage-client` `0.6.0`: `policy_version_id` Pinning & `"transaction_id"` Fallback Removal (`#924`)
+
+[`packages/cage-client/`](../packages/cage-client/) `0.6.0` adds first-class `policy_version_id`, `headers`, and `timeout_s` arguments to [`CageClient.validate_action()`](../packages/cage-client/src/cage_client/core.py) and [`CageClient.preview()`](../packages/cage-client/src/cage_client/core.py) and drops the remaining hardcoded `"transaction_id"` fallbacks in [`core.py`](../packages/cage-client/src/cage_client/core.py), [`langgraph.py`](../packages/cage-client/src/cage_client/langgraph.py), and [`idempotency.py`](../packages/cage-client/src/cage_client/idempotency.py).
+
+| Item | Area | Clean Break Description | Architectural Rationale | Failure Mode on Stale Caller |
+|---|---|---|---|---|
+| **SDK-04** | `cage-client` `0.6.0` `"transaction_id"` fallback removal & first-class `policy_version_id` ([`core.py`](../packages/cage-client/src/cage_client/core.py), [`langgraph.py`](../packages/cage-client/src/cage_client/langgraph.py), [`idempotency.py`](../packages/cage-client/src/cage_client/idempotency.py)) | [`CageClient.validate_action()`](../packages/cage-client/src/cage_client/core.py) and [`CageClient.preview()`](../packages/cage-client/src/cage_client/core.py) accept `policy_version_id: str \| None = None` (plus `timeout_s` and `headers`), emitting `"policy_version_id"` in `POST /governance/validate-action` when provided and rejecting blank/non-string pins with `ValueError`. Removes `"transaction_id"` from [`CageClient.execute_tool()`](../packages/cage-client/src/cage_client/core.py) `expected_key` fallback, `_IDEMPOTENCY_PARAM_KEYS` in [`langgraph.py`](../packages/cage-client/src/cage_client/langgraph.py), and `_VOLATILE_ARG_KEYS` in [`idempotency.py`](../packages/cage-client/src/cage_client/idempotency.py) (while still excluding explicit custom `idempotency_param` in [`governed_tool_node()`](../packages/cage-client/src/cage_client/langgraph.py) and keeping `DEFAULT_IDEMPOTENCY_NAMESPACE` frozen per **FI-01**). | Completes **FI-01** cleanup inside the standalone SDK and exposes `policy_version_id` natively so drift-pinned previews no longer need an out-of-band transport wrapper (`#924`). | Callers relying on implicit `"transaction_id"` extraction without passing `idempotency_param="transaction_id"` no longer bind `expected_key` or strip `"transaction_id"` from volatile idempotency hashing / previews; pass `"idempotency_key"` or configure `idempotency_param` explicitly. |
+
+---
+
+**Last updated:** November 27, 2026

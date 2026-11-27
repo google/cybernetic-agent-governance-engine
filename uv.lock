@@ -462,7 +462,7 @@ wheels = [
 
 [[package]]
 name = "cage-client"
-version = "0.5.0"
+version = "0.6.0"
 source = { directory = "packages/cage-client" }
 dependencies = [
     { name = "cryptography" },

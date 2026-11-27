@@ -58,7 +58,7 @@ from .outcomes import (
 )
 from .transport import create_mtls_transport
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 __all__ = [
     "COMMIT_OUTCOME_SCHEMA",

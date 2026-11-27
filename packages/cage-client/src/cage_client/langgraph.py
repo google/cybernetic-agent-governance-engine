@@ -82,9 +82,7 @@ from .outcomes import (
 logger = logging.getLogger("CageClient.langgraph")
 
 _UNTRUSTED_APPROVAL_KEYS: frozenset[str] = frozenset({"deferred_id", "approval_token"})
-_IDEMPOTENCY_PARAM_KEYS: frozenset[str] = frozenset(
-    {"idempotency_key", "transaction_id"}
-)
+_IDEMPOTENCY_PARAM_KEYS: frozenset[str] = frozenset({"idempotency_key"})
 
 
 def _non_blank_str(value: Any) -> str | None:
@@ -1257,7 +1255,7 @@ def governed_tool_node(
                 preview_params = {
                     k: v
                     for k, v in clean_args.items()
-                    if k not in _IDEMPOTENCY_PARAM_KEYS
+                    if k not in _IDEMPOTENCY_PARAM_KEYS and k != idem_param_name
                 }
                 preview_params["tool_name"] = tname
                 preview_params.setdefault("action", gov_action)
