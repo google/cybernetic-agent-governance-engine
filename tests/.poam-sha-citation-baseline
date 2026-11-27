@@ -1,5 +1,5 @@
 {
-  "baseline": 171,
+  "baseline": 170,
   "class_counts": {
     "ambiguous_abbreviation": 0,
     "chronology_undatable": 19,
@@ -10,7 +10,7 @@
     "paired_main_not_ancestor": 3,
     "paired_missing_pr": 1,
     "unlabelled_kind": 0,
-    "unlabelled_unresolved": 74
+    "unlabelled_unresolved": 73
   },
   "detector_sha256": "aace09e1be5826bdee4651d85607568b18aae8b616cbd6d072d1e33593af9aaa",
   "history": [
@@ -98,6 +98,38 @@
       "detector_sha256": "aace09e1be5826bdee4651d85607568b18aae8b616cbd6d072d1e33593af9aaa",
       "event": "recompute",
       "reason": "POAM-2026-250: require pipe delimiters in _TABLE_SEP_RE and remove intra-table blank lines in Closed Findings on post-#880 main."
+    },
+    {
+      "after_baseline": 170,
+      "after_class_counts": {
+        "ambiguous_abbreviation": 0,
+        "chronology_undatable": 19,
+        "chronology_violation": 20,
+        "closure_date_unparseable": 9,
+        "dead_commit_claim": 45,
+        "label_type_mismatch": 0,
+        "paired_main_not_ancestor": 3,
+        "paired_missing_pr": 1,
+        "unlabelled_kind": 0,
+        "unlabelled_unresolved": 73
+      },
+      "before_baseline": 171,
+      "before_class_counts": {
+        "ambiguous_abbreviation": 0,
+        "chronology_undatable": 19,
+        "chronology_violation": 20,
+        "closure_date_unparseable": 9,
+        "dead_commit_claim": 45,
+        "label_type_mismatch": 0,
+        "paired_main_not_ancestor": 3,
+        "paired_missing_pr": 1,
+        "unlabelled_kind": 0,
+        "unlabelled_unresolved": 74
+      },
+      "before_detector_sha256": "aace09e1be5826bdee4651d85607568b18aae8b616cbd6d072d1e33593af9aaa",
+      "detector_sha256": "aace09e1be5826bdee4651d85607568b18aae8b616cbd6d072d1e33593af9aaa",
+      "event": "update",
+      "reason": "Lower the ratchet after citation fixes."
     }
   ],
   "schema_version": 1,
@@ -284,13 +316,6 @@
       "count": 1,
       "file": "docs/POAM.md",
       "subject": "f566e9e"
-    },
-    "27978b9633d2233657e9f81e": {
-      "class": "unlabelled_unresolved",
-      "context": "123570375167 from ci.yml and <> from license guard.yml ,",
-      "count": 1,
-      "file": "docs/POAM.md",
-      "subject": "123570378192"
     },
     "281d7aba5989e20afe11d590": {
       "class": "unlabelled_unresolved",
