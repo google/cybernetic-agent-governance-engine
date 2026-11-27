@@ -51,7 +51,7 @@ from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 
 SCOPE_DIMENSIONS: tuple[str, ...] = ("actions", "actors", "systems", "jurisdictions")
 REQUIRED_CONTEXT_KEYS: tuple[str, ...] = ("action", "jurisdiction", "governing_version")
-WARRANT_SCHEMA_VERSION_V02: str = "veip-warrant/0.2"
+WARRANT_SCHEMA_VERSION_V02: str = "cage-warrant/0.2"
 
 
 class WarrantStatus(str, Enum):

@@ -41,7 +41,7 @@ class LedgerEntry(TypedDict):
         idempotency_key: Derived key (hash of tx_id + action) to prevent double-refunds.
         status:          WAL transition state (PENDING → COMPLETED | ROLLED_BACK | PARTIAL_FAILURE).
         context_data:    Payload the compensating node needs to issue the reversal
-                         (e.g. {'transaction_id': '...', 'amount': 500, 'account': 'A'}).
+                         (e.g. {'idempotency_key': '...', 'amount': 500, 'account': 'A'}).
     """
 
     sequence_id: int
@@ -135,6 +135,9 @@ class AgentState(TypedDict):
     # }
     approval_decision: dict[str, Any] | None
     hitl_expires_at: str | None  # TTL expiration timestamp for pending state
+    hitl_reference_quote: (
+        dict[str, Any] | None
+    )  # Check-time market quote {ticker, price, source, captured_at_utc} for post-HITL drift gate
 
     # NeMo Guardrail Gate (ADR 2026-03-09 — mandatory first-node enforcement)
     # Set by nemo_guardrail_node before any agent processes the input.
@@ -185,13 +188,17 @@ class AgentState(TypedDict):
     deferral_ticket_id: str | None  # default None
     deferral_reason: str | None  # default None
     deferred_id: str | None  # default None
+    deferred_step_ids: list[str | None] | None  # default None
+    # ApprovalRedemptionRefusal value naming why the gateway could not redeem
+    # the approved deferred_id (POAM-2026-245); None otherwise.
+    redemption_refusal: str | None  # default None
 
-    # CAGE Client SDK Governance Integration (@cage_guard decorator contract)
-    # These fields are populated by @cage_guard decorator on all governed nodes.
+    # Governance state fields populated by safety_node and gateway_tool_guard
+    # (never by the retired @cage_guard decorator; SDK migration tracked in POAM-2026-251):
     # agent_id:            Identifier for audit trail (default: "financial-advisor-v3")
-    # proposed_action:     Parameters extracted by upstream nodes for governance validation
-    # governance_envelope: Signed ALLOW decision from Gateway PDP (None until first guard)
-    # governance_status:   Tri-state: "ALLOWED" | "DENIED" | "DEFERRED" | None
+    # proposed_action:     Candidate action parameters extracted by upstream nodes
+    # governance_envelope: Signed preview decision envelope from Gateway PDP
+    # governance_status:   "ALLOWED" | "DENIED" | "REQUIRE_APPROVAL" | "UNAVAILABLE" | "INDETERMINATE" | None
     agent_id: str  # default "financial-advisor-v3"
     proposed_action: dict[str, Any] | None  # default None
     governance_envelope: dict[str, Any] | None  # default None

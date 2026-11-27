@@ -210,7 +210,64 @@ class TestTranslatePolicy:
         bundle = translate_policy(spec)
         assert not bundle.success
         assert any("Unenforceable condition" in e for e in bundle.errors)
+        assert not bundle.warnings
         assert bundle.python_content == ""
+        assert bundle.opa_content == ""
+
+    def test_invalid_control_structure_validation_error_fails_the_bundle(self):
+        spec = {
+            "system": {
+                "name": "T",
+                "version": "1",
+                "description": "d",
+                "controller": "c",
+                "controlled_process": "p",
+            },
+            "hazards": [{"id": "H-1", "description": "h", "severity": "high"}],
+            "unsafe_control_actions": [
+                {
+                    "id": "UCA-1",
+                    "action": "do_thing",
+                    "uca_type": "invalid_uca_type",
+                    "hazard_refs": ["H-1"],
+                    "description": "x",
+                    "enforcement": ["python"],
+                }
+            ],
+        }
+        bundle = translate_policy(spec)
+        assert not bundle.success
+        assert any(
+            "ControlStructureModel validation failed" in e for e in bundle.errors
+        )
+        assert not bundle.warnings
+        assert bundle.python_content == ""
+
+    def test_control_structure_model_exception_fails_the_bundle(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        import src.gateway.governance.stpa_compiler as stpa_compiler
+
+        def _boom(**_kwargs):
+            raise RuntimeError("unexpected compiler schema failure")
+
+        monkeypatch.setattr(stpa_compiler, "ControlStructureModel", _boom)
+        spec = {
+            "system": {
+                "name": "T",
+                "version": "1",
+                "description": "d",
+                "controller": "c",
+                "controlled_process": "p",
+            },
+            "unsafe_control_actions": [],
+        }
+        bundle = translate_policy(spec)
+        assert not bundle.success
+        assert any(
+            "ControlStructureModel validation failed" in e for e in bundle.errors
+        )
+        assert not bundle.warnings
 
     def test_cage_yaml_with_no_system_key_produces_warning(self):
         spec = {"unsafe_control_actions": []}

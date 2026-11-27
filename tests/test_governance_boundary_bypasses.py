@@ -117,7 +117,7 @@ class TestPoam208DualFieldMagnitudeValidation:
                 amount_minor=100,
                 currency="USD",
                 confidence=0.99,
-                transaction_id="550e8400-e29b-41d4-a716-446655440000",
+                idempotency_key="550e8400-e29b-41d4-a716-446655440000",
             )
 
         consistent = TradeOrder(
@@ -352,6 +352,8 @@ class TestPoam209InferenceProxyBoundaries:
         )
         mock_tracer.start_as_current_span.return_value.__exit__ = lambda *a: None
 
+        from src.gateway.governance.quarantine_actuator import QuarantineProbeResult
+
         with (
             patch(
                 "src.gateway.governance.semantic_rail_factory.semantic_rails_refusal",
@@ -376,9 +378,9 @@ class TestPoam209InferenceProxyBoundaries:
                 return_value="spiffe://cluster.local/ns/default/sa/inference-test-agent",
             ),
             patch(
-                "src.gateway.governance.quarantine_actuator.is_workload_quarantined",
+                "src.gateway.server.quarantine_guard.probe_workload_quarantine",
                 new_callable=AsyncMock,
-                return_value=False,
+                return_value=QuarantineProbeResult(quarantined=False),
             ),
             patch(
                 "src.gateway.server.inference_proxy._get_token_quota_proxy",
@@ -637,12 +639,14 @@ class TestPoam210DeferEndpointsAndWebAuthn:
             ("   ", "dGVzdC1hdXRoLWRhdGE"),
             ("dGVzdC1zaWduYXR1cmU", ""),
             ("dGVzdC1zaWduYXR1cmU", "   "),
+            ("dGVzdC1zaWduYXR1cmU", "dGVzdC1hdXRoLWRhdGE"),
         ):
             forged = ApprovalRecord(
                 approver_urn="alice@example.com",
                 approved_at_utc="2026-11-13T00:00:00Z",
                 auth_method="WEBAUTHN",
                 auth_principal_hash="a" * 64,
+                credential_id="Y3JlZC1hbGljZS0x",
                 client_data_json=client_json_b64,
                 challenge_binding=challenge_bytes.hex(),
                 signature=bad_sig,
@@ -651,22 +655,81 @@ class TestPoam210DeferEndpointsAndWebAuthn:
             assert forged.verify_webauthn_challenge() is False
 
             queue = DeferQueue(AsyncMock())
-            with pytest.raises(
-                ValueError, match="WebAuthn challenge binding verification failed"
-            ):
+            with pytest.raises(ValueError, match="WebAuthn|CAGE_WEBAUTHN"):
                 await queue.approve("defer-webauthn-210", forged)
 
-        valid = ApprovalRecord(
-            approver_urn="alice@example.com",
-            approved_at_utc="2026-11-13T00:00:00Z",
-            auth_method="WEBAUTHN",
-            auth_principal_hash="a" * 64,
-            client_data_json=client_json_b64,
-            challenge_binding=challenge_bytes.hex(),
-            signature="dGVzdC1zaWduYXR1cmU",
-            authenticator_data="dGVzdC1hdXRoLWRhdGE",
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import ec
+
+        priv = ec.generate_private_key(ec.SECP256R1())
+        pub_pem = (
+            priv.public_key()
+            .public_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PublicFormat.SubjectPublicKeyInfo,
+            )
+            .decode("utf-8")
         )
-        assert valid.verify_webauthn_challenge() is True
+        rp_id = "console.cage.example"
+        origin = "https://console.cage.example"
+        cred_id = "Y3JlZC1hbGljZS0yMTA"
+        signed_cdj_bytes = json.dumps(
+            {
+                "type": "webauthn.get",
+                "challenge": challenge_b64,
+                "origin": origin,
+                "crossOrigin": False,
+            },
+            separators=(",", ":"),
+        ).encode("utf-8")
+        signed_cdj_b64 = (
+            base64.urlsafe_b64encode(signed_cdj_bytes).rstrip(b"=").decode("ascii")
+        )
+        auth_data_bytes = (
+            hashlib.sha256(rp_id.encode("utf-8")).digest()
+            + b"\x05"
+            + (1).to_bytes(4, "big")
+        )
+        sig_bytes = priv.sign(
+            auth_data_bytes + hashlib.sha256(signed_cdj_bytes).digest(),
+            ec.ECDSA(hashes.SHA256()),
+        )
+        with patch.dict(
+            os.environ,
+            {
+                "CAGE_WEBAUTHN_RP_ID": rp_id,
+                "CAGE_WEBAUTHN_ALLOWED_ORIGINS": origin,
+                "CAGE_WEBAUTHN_CREDENTIALS_JSON": json.dumps(
+                    {
+                        "credentials": [
+                            {
+                                "credential_id": cred_id,
+                                "operator_urn": "alice@example.com",
+                                "alg": "ES256",
+                                "public_key_pem": pub_pem,
+                            }
+                        ]
+                    }
+                ),
+            },
+            clear=False,
+        ):
+            valid = ApprovalRecord(
+                approver_urn="alice@example.com",
+                approved_at_utc="2026-11-13T00:00:00Z",
+                auth_method="OIDC",
+                auth_principal_hash="a" * 64,
+                credential_id=cred_id,
+                client_data_json=signed_cdj_b64,
+                challenge_binding=challenge_bytes.hex(),
+                authenticator_data=base64.urlsafe_b64encode(auth_data_bytes)
+                .rstrip(b"=")
+                .decode("ascii"),
+                signature=base64.urlsafe_b64encode(sig_bytes)
+                .rstrip(b"=")
+                .decode("ascii"),
+            )
+            assert valid.verify_webauthn_challenge() is True
 
 
 # ===========================================================================

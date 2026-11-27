@@ -37,7 +37,7 @@ import os
 import sys
 import time
 import uuid
-from collections.abc import MutableMapping
+from collections.abc import Mapping, MutableMapping
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -45,7 +45,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
-from mcp.types import ToolAnnotations
+from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from pydantic import BaseModel, field_validator
 
 from src.gateway.observability.attributes import (
@@ -517,8 +517,7 @@ async def _evaluate_policy_internal(
             span.record_exception(exc)
             span.set_status(trace.Status(trace.StatusCode.ERROR, str(exc)))
             span.set_attribute("opa.allowed", False)
-            mark_request_refused()
-            return "DENIED: policy evaluation error"
+            return "UNAVAILABLE: policy evaluation unavailable"
 
 
 _SAFETY_INTERVENTION_TTL_SECONDS: int = int(
@@ -577,11 +576,9 @@ async def verify_content_safety(text: str) -> str:
 
     refusal = semantic_rails_refusal()
     if refusal is not None:
-        mark_request_refused()
         return blocked_verdict(refusal_reason(*refusal))
     rails = getattr(app.state, "nemo_rails", None)
     if rails is None:
-        mark_request_refused()
         return blocked_verdict(
             refusal_reason(
                 CONTENT_SAFETY_RAILS_UNAVAILABLE,
@@ -592,7 +589,6 @@ async def verify_content_safety(text: str) -> str:
         is_safe, response, _deterministic = await validate_with_nemo(text, rails)
     except Exception as exc:
         logger.error("verify_content_safety: rail check raised — blocking: %s", exc)
-        mark_request_refused()
         return blocked_verdict(
             refusal_reason(CONTENT_SAFETY_ERROR, "the rail check raised an error.")
         )
@@ -662,11 +658,22 @@ class McpRateLimitMiddleware:
         await self.app(scope, receive, send)
 
 
+from src.gateway.server.quarantine_guard import (
+    McpQuarantineMiddleware,
+    refuse_if_quarantined,
+)
+
 patch_mcp_tools(mcp)
 logger.info(
-    "Mounting Stateless MCP Streamable HTTP App at /mcp (with distributed tracing and GCRA rate limiting)..."
+    "Mounting Stateless MCP Streamable HTTP App at /mcp (with distributed tracing, quarantine, and GCRA rate limiting)..."
 )
-app.mount("/mcp", McpRateLimitMiddleware(mcp.streamable_http_app()))
+app.mount(
+    "/mcp",
+    McpQuarantineMiddleware(
+        McpRateLimitMiddleware(mcp.streamable_http_app()),
+        state_owner=app,
+    ),
+)
 
 
 # ---------------------------------------------------------------------------
@@ -705,6 +712,12 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
     The caller is authenticated by mesh workload identity before this handler
     runs (WorkloadIdentityMiddleware on the gateway root app, POAM-2026-080,
     and enforced directly here as defense-in-depth for GHSA-4x3x-w2m3-8mfh).
+
+    Each request opens a kernel attempt record (POAM-2026-252). Once
+    ``dispatch_actuation()`` has marked it, any error that escapes is answered
+    HTTP 200 with ``may_have_executed: true`` and an ``INDETERMINATE`` or
+    ``EXECUTED`` outcome, as the record says, whatever the error's type;
+    before dispatch, or after a ``REJECTED`` receipt, errors are mapped by type.
     """
     from src.gateway.server.workload_identity import (
         extract_client_identity,
@@ -732,6 +745,40 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
             status_code=403,
             detail="trusted workload identity required",
         )
+
+    if q_resp := await refuse_if_quarantined(
+        request,
+        action_id=request_body.tool_name,
+        surface="mcp_tool_server",
+        body_params=request_body.params,
+        fallback_app_obj=app,
+    ):
+        if q_resp.status_code == 403:
+            import json as _json
+
+            from src.gateway.governance.commit_outcome import (
+                CommitOutcome,
+                CommitStatus,
+                extract_request_idempotency_key,
+                sign_commit_outcome_wire,
+            )
+
+            q_body = _json.loads(bytes(q_resp.body).decode("utf-8"))
+            if isinstance(q_body, dict):
+                q_msg = str(
+                    q_body.get("message")
+                    or q_body.get("error")
+                    or "workload_quarantined"
+                )
+                q_body["outcome"] = await sign_commit_outcome_wire(
+                    CommitOutcome(CommitStatus.REFUSED, q_msg),
+                    tool_name=request_body.tool_name,
+                    idempotency_key=extract_request_idempotency_key(
+                        request_body.params
+                    ),
+                )
+                return _SubscriptableJSONResponse(status_code=403, content=q_body)
+        return q_resp
 
     # A4 / M-20: Shared dual-bucket GCRA rate limiting (identity + principal)
     if _check_rate_limit is not _default_check_rate_limit:
@@ -784,16 +831,41 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
             status_code=404, detail=f"Tool '{request_body.tool_name}' not found."
         )
 
+    from src.gateway.governance.commit_outcome import (
+        NON_REFUSAL_STATUSES,
+        NOT_EXECUTED_STATUSES,
+        CommitOutcome,
+        CommitStatus,
+        extract_request_idempotency_key,
+        sign_commit_outcome_wire,
+    )
     from src.gateway.governance.evidence.stream import EvidenceChainUnavailableError
-    from src.gateway.governance.execution_idempotency import UnsettledDuplicate
+    from src.gateway.governance.execution_idempotency import (
+        ExecutionStatus,
+        UnsettledDuplicate,
+        close_actuation_attempt,
+        commit_outcome_from_governance_error,
+        current_actuation_attempt,
+        enforce_post_dispatch_outcome,
+        exceptions_after_dispatch,
+        open_actuation_attempt,
+        outcome_after_dispatch,
+    )
     from src.gateway.governance.governor.errors import GovernanceInfrastructureError
+    from src.gateway.governance.post_execution_sanitizer import (
+        evaluate_post_execution_output,
+    )
     from src.gateway.governance.routing_seal import SymbolicGovernorViolation
+    from src.gateway.governance.seams.actuation import (
+        ActuationIndeterminateError,
+        ActuationOutcome,
+        ActuationRejectedError,
+    )
     from src.gateway.infrastructure.privacy import scrub_pii
     from src.gateway.server.governance_middleware import (
         ActionDeferred,
         get_last_refusal_proof_hash,
         reset_last_refusal_proof_hash,
-        sanitize_mcp_tool_response,
         set_last_refusal_proof_hash,
     )
 
@@ -816,20 +888,60 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
         GovernanceInfrastructureError,
         exclude=(BaseException, Exception, RuntimeError),
     )
+    actuation_rejected_types = _valid_exc_types(
+        ActuationRejectedError,
+        exclude=(BaseException, Exception, RuntimeError),
+    )
+    actuation_indeterminate_types = _valid_exc_types(
+        ActuationIndeterminateError,
+        exclude=(BaseException, Exception, RuntimeError),
+    )
+    unsettled_duplicate_types = _valid_exc_types(
+        UnsettledDuplicate,
+        exclude=(BaseException, Exception, RuntimeError),
+    )
     governed_error_types = _valid_exc_types(
         SymbolicGovernorViolation,
-        UnsettledDuplicate,
         exclude=(BaseException, Exception, RuntimeError),
     )
 
     func = tool_map[request_body.tool_name]
     refusal_token = set_last_refusal_proof_hash(None)
+    # One kernel attempt record per request; dispatch_actuation() marks it
+    # before anything is sent (POAM-2026-252). A sync tool run by
+    # asyncio.to_thread sees the same record through the copied context.
+    attempt_token = open_actuation_attempt()
+
+    async def _sign_outcome(
+        outcome_or_wire: CommitOutcome | Mapping[str, Any],
+    ) -> dict[str, Any]:
+        req_idem_key = extract_request_idempotency_key(
+            request_body.params, attempt=current_actuation_attempt()
+        )
+        return await sign_commit_outcome_wire(
+            outcome_or_wire,
+            tool_name=request_body.tool_name,
+            idempotency_key=req_idem_key,
+        )
+
     try:
         if inspect.iscoroutinefunction(func):
             output = await func(**request_body.params)
         else:
             output = await asyncio.to_thread(func, **request_body.params)
-        output_str = str(output)
+        # A committing tool answers with an MCP CallToolResult: its prose is
+        # the output text and its typed outcome (structuredContent) is
+        # forwarded as ``outcome`` (POAM-2026-245).
+        structured_outcome: dict[str, Any] | None = None
+        tool_error = False
+        if isinstance(output, CallToolResult):
+            output_str = "\n".join(
+                block.text for block in output.content if isinstance(block, TextContent)
+            )
+            structured_outcome = output.structuredContent
+            tool_error = bool(output.isError)
+        else:
+            output_str = str(output)
         current_span = trace.get_current_span()
         is_rec = getattr(current_span, "is_recording", None)
         active_span = (
@@ -837,20 +949,28 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
             if current_span is not None and (not callable(is_rec) or is_rec())
             else None
         )
-        san_res = sanitize_mcp_tool_response(
+        san_outcome = await evaluate_post_execution_output(
             request_body.tool_name,
-            output_str,
+            output,
             span=active_span,
+            attempt=current_actuation_attempt(),
+            transport="tools_execute",
         )
-        violation = await san_res if inspect.isawaitable(san_res) else san_res
-        if isinstance(violation, str) and violation:
+        if san_outcome.blocked:
             mark_request_refused()
+            blocked_msg = (
+                "Tool response blocked by indirect prompt-injection guard "
+                f"({san_outcome.violation})"
+            )
             blocked_output_payload: dict[str, Any] = {
                 "status": "ERROR",
                 "error_type": "IndirectPromptInjectionError",
                 "stage": "post_execution_output_sanitizer",
-                "violation": violation,
-                "error": f"Tool response blocked by indirect prompt-injection guard ({violation})",
+                "violation": san_outcome.violation,
+                "error": blocked_msg,
+                "outcome": await _sign_outcome(
+                    CommitOutcome(CommitStatus.REFUSED, blocked_msg)
+                ),
             }
             proof_hash = get_last_refusal_proof_hash()
             if proof_hash:
@@ -859,12 +979,97 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
                 status_code=403,
                 content=blocked_output_payload,
             )
-        response: dict[str, Any] = {"status": "SUCCESS", "output": output_str}
+        output_redacted = False
+        sanitizer_violation: str | None = None
+        if san_outcome.redacted and san_outcome.redacted_outcome is not None:
+            output_redacted = True
+            sanitizer_violation = san_outcome.violation
+            output_str = (
+                san_outcome.redacted_message or san_outcome.redacted_outcome.message
+            )
+            structured_outcome = san_outcome.redacted_outcome.to_wire()
+            tool_error = san_outcome.redacted_outcome.status in NOT_EXECUTED_STATUSES
+        active_attempt = current_actuation_attempt()
+        enforced_outcome = enforce_post_dispatch_outcome(
+            output,
+            message=output_str,
+            attempt=active_attempt,
+            structured_outcome=structured_outcome,
+            is_error=tool_error,
+        )
+        if enforced_outcome is not None:
+            output_str = enforced_outcome.message
+            structured_outcome = enforced_outcome.to_wire()
+            tool_error = enforced_outcome.status in NOT_EXECUTED_STATUSES
+        response: dict[str, Any] = {
+            "status": "ERROR" if tool_error else "SUCCESS",
+            "output": output_str,
+        }
+        if output_redacted:
+            response["output_redacted"] = True
+            response["sanitizer_violation"] = sanitizer_violation
+        if tool_error:
+            response["error"] = scrub_pii(output_str)
+        non_refusal_outcome = False
+        if structured_outcome is not None:
+            signed_outcome = await _sign_outcome(structured_outcome)
+            response["outcome"] = signed_outcome
+            raw_status = signed_outcome.get("status")
+            non_refusal_outcome = isinstance(raw_status, str) and raw_status in {
+                s.value for s in NON_REFUSAL_STATUSES
+            }
+            if raw_status in {
+                CommitStatus.INDETERMINATE.value,
+                CommitStatus.UNSETTLED_DUPLICATE.value,
+            }:
+                response["actuation_outcome"] = "UNKNOWN"
+                response["may_have_executed"] = True
+            elif raw_status == CommitStatus.EXECUTED.value:
+                response["may_have_executed"] = True
+                if enforced_outcome is not None or (
+                    active_attempt is not None
+                    and active_attempt.status is ExecutionStatus.EXECUTED
+                ):
+                    response["actuation_outcome"] = ActuationOutcome.ACCEPTED.value
         proof_hash = get_last_refusal_proof_hash()
-        if proof_hash:
+        if not (active_attempt is not None and active_attempt.may_have_executed) and (
+            (tool_error and not non_refusal_outcome) or proof_hash
+        ):
             mark_request_refused()
+        if proof_hash:
             response["proof_hash"] = proof_hash
         return response
+    except exceptions_after_dispatch() as exc:
+        # Matches every error once the attempt record may have executed, and
+        # none before: the record, not the error's type, decides the answer,
+        # so a dispatched action is never reported as an outage or a refusal
+        # (POAM-2026-252). Not a policy refusal: no mark_request_refused().
+        msg = scrub_pii(str(exc) or type(exc).__name__)
+        after_dispatch = outcome_after_dispatch(msg) or CommitOutcome(
+            CommitStatus.INDETERMINATE, msg
+        )
+        accepted = after_dispatch.status is CommitStatus.EXECUTED
+        logger.warning(
+            "Governed tool error after dispatch answered as %s (%s): %s",
+            after_dispatch.status.value,
+            type(exc).__name__,
+            exc,
+        )
+        return _SubscriptableJSONResponse(
+            status_code=200,
+            content={
+                "status": "ERROR",
+                "error_type": type(exc).__name__,
+                "actuation_outcome": (
+                    ActuationOutcome.ACCEPTED.value
+                    if accepted
+                    else ActuationOutcome.UNKNOWN.value
+                ),
+                "may_have_executed": True,
+                "outcome": await _sign_outcome(after_dispatch),
+                "error": msg,
+            },
+        )
     except EvidenceChainUnavailableError as exc:
         logger.error("Evidence chain unavailable during /tools/execute: %s", exc)
         return _SubscriptableJSONResponse(
@@ -896,28 +1101,109 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
         )
     except action_deferred_types as exc:
         # ActionDeferred subclasses PermissionError — catch it before PermissionError so 202 DEFERRED is reachable.
+        deferred_id = getattr(exc, "deferred_id", "") or ""
+        defer_reason = getattr(exc, "defer_reason", "") or ""
+        approval_retained = bool(getattr(exc, "approval_retained", False))
+        defer_msg = scrub_pii(str(exc) or defer_reason or "DEFERRED")
+        defer_outcome = CommitOutcome(
+            CommitStatus.DEFERRED,
+            defer_msg,
+            deferred_id=deferred_id or None,
+            approval_retained=approval_retained,
+        )
         return _SubscriptableJSONResponse(
             status_code=202,
             content={
                 "status": "DEFERRED",
-                "deferred_id": getattr(exc, "deferred_id", ""),
-                "defer_reason": getattr(exc, "defer_reason", ""),
-                "approval_retained": bool(getattr(exc, "approval_retained", False)),
+                "deferred_id": deferred_id,
+                "defer_reason": defer_reason,
+                "approval_retained": approval_retained,
+                "outcome": await _sign_outcome(defer_outcome),
             },
         )
+    except actuation_indeterminate_types as exc:
+        # Indeterminate outcomes are NOT policy refusals; keep reservations confirmed
+        # and do not call mark_request_refused() (POAM-2026-232 Stage 3).
+        msg = scrub_pii(str(exc))
+        logger.warning(
+            "Governed tool execution indeterminate (%s): %s",
+            type(exc).__name__,
+            exc,
+        )
+        return _SubscriptableJSONResponse(
+            status_code=200,
+            content={
+                "status": "ERROR",
+                "error_type": type(exc).__name__,
+                "actuation_outcome": "UNKNOWN",
+                "may_have_executed": True,
+                "outcome": await _sign_outcome(
+                    CommitOutcome(CommitStatus.INDETERMINATE, msg)
+                ),
+                "error": msg,
+            },
+        )
+    except unsettled_duplicate_types as exc:
+        # Duplicate of an IN_FLIGHT/UNKNOWN attempt is blocked for safety, not a policy refusal.
+        msg = scrub_pii(str(exc))
+        logger.warning(
+            "Governed tool execution unsettled duplicate (%s): %s",
+            type(exc).__name__,
+            exc,
+        )
+        return _SubscriptableJSONResponse(
+            status_code=200,
+            content={
+                "status": "ERROR",
+                "error_type": type(exc).__name__,
+                "actuation_outcome": "UNKNOWN",
+                "may_have_executed": True,
+                "outcome": await _sign_outcome(
+                    CommitOutcome(CommitStatus.UNSETTLED_DUPLICATE, msg)
+                ),
+                "error": msg,
+            },
+        )
+    except actuation_rejected_types as exc:
+        # Definitive pre-execution actuator refusal (no side effect occurred).
+        mark_request_refused()
+        msg = scrub_pii(str(exc))
+        logger.warning(
+            "Governed tool execution rejected by actuator (%s): %s",
+            type(exc).__name__,
+            exc,
+        )
+        rej_payload: dict[str, Any] = {
+            "status": "ERROR",
+            "error_type": type(exc).__name__,
+            "actuation_outcome": "REJECTED",
+            "may_have_executed": False,
+            "outcome": await _sign_outcome(CommitOutcome(CommitStatus.REFUSED, msg)),
+            "error": msg,
+        }
+        proof_hash = get_last_refusal_proof_hash()
+        if proof_hash:
+            rej_payload["proof_hash"] = proof_hash
+        return _SubscriptableJSONResponse(status_code=200, content=rej_payload)
     except governed_error_types as exc:
-        # Structured governed rejections (SymbolicGovernorViolation, UnsettledDuplicate)
-        # preserve the /tools/execute HTTP 200 protocol envelope while marking the request refused.
+        # Structured governor rejections preserve the /tools/execute HTTP 200 protocol envelope.
         mark_request_refused()
         logger.warning(
             "Governed tool execution rejected (%s): %s",
             type(exc).__name__,
             exc,
         )
+        gov_msg = scrub_pii(str(exc))
+        gov_outcome = (
+            commit_outcome_from_governance_error(exc)
+            if isinstance(exc, PermissionError)
+            else CommitOutcome(CommitStatus.REFUSED, gov_msg)
+        )
         gov_payload: dict[str, Any] = {
             "status": "ERROR",
             "error_type": type(exc).__name__,
-            "error": scrub_pii(str(exc)),
+            "error": gov_msg,
+            "outcome": await _sign_outcome(gov_outcome),
         }
         proof_hash = get_last_refusal_proof_hash()
         if proof_hash:
@@ -930,6 +1216,7 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
             "status": "ERROR",
             "error_type": type(exc).__name__,
             "error": "Governance blocked tool execution",
+            "outcome": await _sign_outcome(commit_outcome_from_governance_error(exc)),
         }
         violated_tier = getattr(exc, "violated_tier", "")
         if violated_tier:
@@ -957,6 +1244,7 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
         return _SubscriptableJSONResponse(status_code=500, content=err_response)
     finally:
         reset_last_refusal_proof_hash(refusal_token)
+        close_actuation_attempt(attempt_token)
 
 
 @app.get("/health")

@@ -114,6 +114,13 @@ from src.gateway.governance.execution_actuator import (
     ExecutionClearance,
     dispatch_actuation,
 )
+from src.gateway.governance.execution_idempotency import (
+    SHARED_CALLER,
+    Claim,
+    ExecutionLedger,
+    ExecutionStatus,
+    actuation_attempt_scope,
+)
 from src.gateway.governance.governor.approval import PostHitlApproval
 from src.gateway.governance.governor.assembly import (
     GovernorComponents,
@@ -726,9 +733,20 @@ async def main() -> None:
             executor_id="rogue_external_actuator",
             target_route="local://default",
         )
-        receipt_exec_drift = await dispatch_actuation(
-            broker_actuator, clearance_executor_drift
-        )
+        case4_ledger = ExecutionLedger(fake_redis)
+        with actuation_attempt_scope():
+            claim_4b = await case4_ledger.claim(
+                clearance_executor_drift.action,
+                SHARED_CALLER,
+                clearance_executor_drift.thread_id,
+            )
+            assert isinstance(claim_4b, Claim)
+            receipt_exec_drift = await dispatch_actuation(
+                broker_actuator, clearance_executor_drift
+            )
+            await case4_ledger.record_outcome(
+                claim_4b, ExecutionStatus.BLOCKED, "EXECUTOR_ID_MISMATCH"
+            )
         assert receipt_exec_drift.outcome is not None
         exec_drift_codes = [f.get("code") for f in receipt_exec_drift.findings]
         print(
@@ -761,9 +779,20 @@ async def main() -> None:
             executor_id=broker_actuator.actuator_id,
             target_route="https://untrusted-egress.example.com/settle",
         )
-        receipt_route_drift = await dispatch_actuation(
-            broker_actuator, clearance_route_drift
-        )
+        with actuation_attempt_scope():
+            claim_4c = await case4_ledger.claim(
+                clearance_route_drift.action,
+                SHARED_CALLER,
+                clearance_route_drift.thread_id,
+                reclaim_blocked=True,
+            )
+            assert isinstance(claim_4c, Claim)
+            receipt_route_drift = await dispatch_actuation(
+                broker_actuator, clearance_route_drift
+            )
+            await case4_ledger.record_outcome(
+                claim_4c, ExecutionStatus.BLOCKED, "TARGET_ROUTE_MISMATCH"
+            )
         assert receipt_route_drift.outcome is not None
         route_drift_codes = [f.get("code") for f in receipt_route_drift.findings]
         print(
@@ -923,7 +952,7 @@ async def main() -> None:
         )
         spent_flags: list[bool] = []
 
-        async def _spend_once() -> bool:
+        async def _spend_once(_evaluated: Any) -> bool:
             if spent_flags:
                 return False
             spent_flags.append(True)
@@ -933,6 +962,7 @@ async def main() -> None:
             approval_id="appr-step1-drift-001",
             barrier_preview="PASS",
             spend=_spend_once,
+            covers=lambda _evaluated: True,
             thread_id=allow_payload["thread_id"],
         )
         drift_blocked = False

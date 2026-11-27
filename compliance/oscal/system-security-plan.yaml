@@ -3,7 +3,7 @@ system-security-plan:
   metadata:
     title: CAGE System Security Plan (US_FED — NIST SP 800-53 Rev 5 HIGH)
     published: '2026-03-06T00:00:00Z'
-    last-modified: '2026-11-18T13:11:25Z'
+    last-modified: '2026-11-25T00:19:58Z'
     version: 1.0.1-draft+stpa
     oscal-version: 1.0.4
     remarks: 'This System Security Plan (SSP) documents the security controls implemented
@@ -418,15 +418,15 @@ system-security-plan:
         at the gateway boundary.
 
         Internal processing pipeline: the governed agent''s input rail redacts identity
-        PII from each user message in-process (Presidio; it fails open if the engines
-        cannot initialise, POAM-2026-147) and runs the Stage 1 keyword scan before
-        any agent or model sees the text → Gateway inference proxy (Stage 1 keyword
-        scan over every message; regex PII scrub of every model response) → OPA Policy
-        Engine (HTTP, intra-cluster; fiscal limits and RBAC enforcement) → LLM inference
-        layer. NeMo Guardrails joins this path only when CAGE_NEMO_ENABLED=true. All
-        services emit OTel spans to the Langfuse collector endpoint. AgentSight eBPF
-        monitor observes kernel-level syscalls for anomaly detection without data
-        exfiltration.
+        PII from each user message in-process (Presidio; failing closed in enforcing
+        postures if the engines cannot initialise, POAM-2026-147 closed 2026-11-24)
+        and runs the Stage 1 keyword scan before any agent or model sees the text
+        → Gateway inference proxy (Stage 1 keyword scan over every message; regex
+        PII scrub of every model response) → OPA Policy Engine (HTTP, intra-cluster;
+        fiscal limits and RBAC enforcement) → LLM inference layer. NeMo Guardrails
+        joins this path only when CAGE_NEMO_ENABLED=true. All services emit OTel spans
+        to the Langfuse collector endpoint. AgentSight eBPF monitor observes kernel-level
+        syscalls for anomaly detection without data exfiltration.
 
         Outbound: model inference does not leave the cluster. On GKE the inference
         backend is in-cluster vLLM (inference_backend = "vllm") or none, and the "external"
@@ -594,28 +594,27 @@ system-security-plan:
         SSN, credit card, email and phone patterns with regular expressions. The governed
         agent''s input rail node (src/gateway/governance/langgraph_harness/nemo_node_factory.py)
         replaces each user message with its redacted text before any agent or model
-        sees it. It fails closed in enforcing postures when redaction raises, but
-        not when the Presidio engines failed to initialise: redaction then returns
-        the text unchanged and the message passes unredacted (POAM-2026-147). The
-        output rail node applies both passes to every agent answer and returns the
-        blocked sentinel on any error. The gateway''s inference proxy applies scrub_pii
-        to every model response and to the prompt text it records in telemetry.
+        sees it, failing closed in enforcing postures when redaction or Presidio engine
+        initialisation fails (PresidioUnavailableError, POAM-2026-147 closed 2026-11-24).
+        The output rail node applies both passes to every agent answer and returns
+        the blocked sentinel on any error. The gateway''s inference proxy applies
+        scrub_pii to every model response and to the prompt text it records in telemetry.
 
         '
       purpose: 'Keeps identity PII in user input from reaching the inference layer
-        while the Presidio engines are initialised (POAM-2026-147), and PII in model
+        in enforcing postures (POAM-2026-147 closed 2026-11-24), and PII in model
         output from reaching users or telemetry. Implements ISO 42001 A.9.2 data transfer
-        controls and supports NIST SP 800-53 PT-2/PT-3 PII processing controls. A.9.2''s
-        automated evidence has no producer yet (POAM-2026-146).
+        controls and supports NIST SP 800-53 PT-2/PT-3 PII processing controls, with
+        custody-chain A.9.2 metrics evaluated at /v1/metrics/A.9.2 (INFERENCE_PROXY_PII_SCRUB_PASS,
+        POAM-2026-146 closed 2026-11-12).
 
         '
       status:
         state: operational
-        remarks: 'Operational with a documented fail-open: if the Presidio engines
-          fail to initialise, input redaction passes text through unredacted, in enforcing
-          postures too (POAM-2026-147, reproduced 2026-10-29). The shipped advisor
-          image installs Presidio and its spaCy models, so the defect is latent there.
-          Output keeps its regex scrub_pii pass.
+        remarks: 'Operational: ensure_presidio_engines() raises PresidioUnavailableError
+          in every enforcing posture when Presidio analyzer or anonymizer engines
+          fail to initialise (POAM-2026-147 closed 2026-11-24), and output retains
+          both Presidio and regex scrub_pii passes.
 
           '
       responsible-roles:
@@ -627,12 +626,6 @@ system-security-plan:
         value: In-process library (governed agent rail nodes, gateway inference proxy)
       - name: namespace
         value: governance-stack
-      - name: poam-gap
-        value: POAM-2026-147
-        remarks: Input redaction fails open when the Presidio engines fail to initialise
-      - name: poam-gap-evidence
-        value: POAM-2026-146
-        remarks: A.9.2's automated Lula evidence has no producer
     - uuid: e5000003-0000-4000-8000-000000000003
       type: software
       title: OPA Policy Engine
@@ -662,11 +655,11 @@ system-security-plan:
       type: software
       title: Compliance Bridge Service
       description: 'Python service aggregating OTel spans into time-windowed safety_rate
-        metrics, parsing OSCAL assessment results, and triggering Slack/PagerDuty
-        alerts for compliance violations. Runs automated_auditor.py for continuous
-        AU-12 audit record generation and review. Correction (2026-11-16, POAM-2026-230):
-        every committed profile pins alert_channel = "console", so these alerts are
-        log lines.
+        metrics, parsing OSCAL assessment results, and publishing compliance alerts.
+        Runs automated_auditor.py for continuous AU-12 audit record generation and
+        review. Note (POAM-2026-230): enforcing postures refuse console fallback and
+        publish to GCP Cloud Pub/Sub (PubSubNotifier, reference-architecture terminal
+        sink), while Slack/PagerDuty human fan-out is adopter-operated.
 
         '
       purpose: 'Implements AU-12 audit record generation, IR-6 incident reporting
@@ -1050,35 +1043,44 @@ system-security-plan:
         \ for audit record persistence. This mode prioritizes\n   availability — audit\
         \ persistence is decoupled from seal issuance.\n\n2. EVIDENCE-OF-EXECUTION\
         \ AUDIT (blocking mode, EVIDENCE_CHAIN_BLOCKING=true):\n   Implemented via\
-        \ the provenance chain in src/gateway/governance/provenance_chain.py.\n  \
-        \ When the EVIDENCE_CHAIN_BLOCKING environment variable is set to true, the\n\
-        \   provenance chain MUST successfully persist the evidence record to the\
-        \ backing\n   store BEFORE the routing seal is computed and returned. This\
-        \ creates a\n   cryptographic dependency: no seal can exist without a corresponding\
-        \ committed\n   evidence record. The evidence chain includes hash-linked records\
-        \ providing\n   time-correlation across audit entries.\n\nKEY DISTINCTION:\n\
-        - Decision-time audit records WHAT was decided (the governance outcome)\n\
-        - Evidence-of-execution audit proves THAT the decision was recorded BEFORE\n\
-        \  action (seal issuance), providing stronger non-repudiation guarantees\n\
-        \nThe blocking mode satisfies AU-12(1) system-wide/time-correlated audit trail\n\
-        requirements through the hash-linked evidence chain. Each evidence record\n\
-        includes a previous_hash field linking to the prior entry, enabling forensic\n\
-        reconstruction of the complete audit trail sequence.\n\nBoth modes are compliant\
-        \ AU-12 implementations — the choice depends on whether\nthe deployment prioritizes\
-        \ availability (decision-time) or non-repudiation\n(evidence-of-execution).\n\
-        \nAudit records are exported to GCS buckets for long-term retention per SEC\n\
-        Rule 17a-4. The Compliance Bridge Service triggers Slack/PagerDuty alerts\n\
-        when safety_rate thresholds are breached. Correction (2026-11-16, POAM-2026-230):\
-        \ no committed profile configures Slack or PagerDuty (alert_channel is console),\
-        \ so these alerts are log lines. Correction (2026-11-18, POAM-2026-236): on\
-        \ gcp-gke, module.langfuse does not seed the dedicated gateway telemetry key\
-        \ pair from gateway-secrets, so in-cluster Langfuse rejects every gateway\
-        \ OTLP span batch with HTTP 401 Unauthorized and drops 100% of gateway decision-time\
-        \ OTel spans silently.\n\nRefusal and deferral parity (0cdb5aaa, #427): a\
-        \ DENY writes a GOVERNANCE_REFUSAL record and a DEFER or REQUIRE_APPROVAL\
-        \ writes a hash-chained GOVERNANCE_DEFERRAL record (src/gateway/governance/governor/verdicts.py).\
-        \ The writes are non-blocking because neither outcome executes anything, but\
-        \ a failed write logs at ERROR and increments cage_governance_evidence_publish_failures_total{kind}\
+        \ the evidence stream (EvidenceStreamSink in\n   src/gateway/governance/evidence/stream.py)\
+        \ and generate_seal_with_evidence() in\n   src/gateway/governance/routing_seal.py.\
+        \ When the EVIDENCE_CHAIN_BLOCKING\n   environment variable is set to true,\
+        \ the evidence stream MUST successfully\n   persist the evidence record to\
+        \ the backing store BEFORE the routing seal is\n   computed and returned.\
+        \ Correction (2026-11-23, POAM-2026-246): earlier text\n   attributed this\
+        \ mode to src/gateway/governance/provenance_chain.py, an unwired\n   library\
+        \ with no production caller that neither persists nor signs records;\n   it\
+        \ is not part of this control. This creates a\n   cryptographic dependency:\
+        \ no seal can exist without a corresponding committed\n   evidence record.\
+        \ The evidence chain includes hash-linked records providing\n   time-correlation\
+        \ across audit entries.\n\nKEY DISTINCTION:\n- Decision-time audit records\
+        \ WHAT was decided (the governance outcome)\n- Evidence-of-execution audit\
+        \ proves THAT the decision was recorded BEFORE\n  action (seal issuance),\
+        \ providing stronger non-repudiation guarantees\n\nThe blocking mode satisfies\
+        \ AU-12(1) system-wide/time-correlated audit trail\nrequirements through the\
+        \ hash-linked evidence chain. Each evidence record\nincludes a prev_hash field\
+        \ linking to the prior entry, enabling forensic\nreconstruction of the complete\
+        \ audit trail sequence.\n\nBoth modes are compliant AU-12 implementations\
+        \ — the choice depends on whether\nthe deployment prioritizes availability\
+        \ (decision-time) or non-repudiation\n(evidence-of-execution).\n\nAudit records\
+        \ are exported to GCS buckets for long-term retention per SEC\nRule 17a-4.\
+        \ The Compliance Bridge Service publishes alerts\nwhen safety_rate thresholds\
+        \ are breached. Note (POAM-2026-230): enforcing postures refuse console fallback\
+        \ and deliver to GCP Cloud Pub/Sub (PubSubNotifier, reference-architecture\
+        \ terminal sink), with Slack/PagerDuty human fan-out adopter-operated. Correction\
+        \ (2026-11-18, POAM-2026-236): on gcp-gke, module.langfuse does not seed the\
+        \ dedicated gateway telemetry key pair from gateway-secrets, so in-cluster\
+        \ Langfuse rejects every gateway OTLP span batch with HTTP 401 Unauthorized\
+        \ and drops 100% of gateway decision-time OTel spans silently.\n\nRefusal\
+        \ and deferral parity (0cdb5aaa, #427; FA-1..FA-3, POAM-2026-233): a policy\
+        \ DENY writes a GOVERNANCE_REFUSAL record, dependency unavailability writes\
+        \ an unsigned GOVERNANCE_INFRASTRUCTURE_BLOCK record without KMS refusal signing,\
+        \ and a DEFER or REQUIRE_APPROVAL writes a hash-chained GOVERNANCE_DEFERRAL\
+        \ record (src/gateway/governance/governor/verdicts.py). Refusal and deferral\
+        \ writes are blocking under is_evidence_chain_blocking() (raising GovernanceInfrastructureError\
+        \ with REFUSAL_EVIDENCE_UNPERSISTED / DEFERRAL_EVIDENCE_UNPERSISTED on sink\
+        \ failure), logging at ERROR and incrementing cage_governance_evidence_publish_failures_total{kind}\
         \ (src/gateway/governance/governor/metrics.py). For a warranted norm the RelianceRecord\
         \ is bound into the routing seal's evidence record under record_hash (src/gateway/governance/warrant/reliance.py).\n"
       props:
@@ -1107,7 +1109,10 @@ system-security-plan:
           rejected with HTTP 401 Unauthorized on gcp-gke because module.langfuse does
           not seed the gateway telemetry key pair, POAM-2026-236).
 
-          Evidence-of-execution audit: provenance_chain.py ensures commit before seal.
+          Evidence-of-execution audit: the gateway EvidenceStreamSink (src/gateway/governance/evidence/stream.py)
+          commits the decision record before generate_seal_with_evidence() issues
+          a seal. Correction (2026-11-23, POAM-2026-246): earlier text credited provenance_chain.py,
+          an unwired library with no production caller; it plays no part in this control.
 
 
           Lula validation: compliance/lula/lula-validation-au12.yaml validates both
@@ -1122,9 +1127,15 @@ system-security-plan:
           text: Lula automated validation for AU-12 (dual auditing modes)
       - component-uuid: e5000001-0000-4000-8000-000000000001
         uuid: h8000004-0000-4000-8000-000000000006
-        description: 'CAGE Gateway implements the provenance chain (src/gateway/governance/provenance_chain.py)
+        description: 'CAGE Gateway provides evidence-of-execution audit through the
+          evidence stream (EvidenceStreamSink in src/gateway/governance/evidence/stream.py).
 
-          providing evidence-of-execution audit capability. When EVIDENCE_CHAIN_BLOCKING=true,
+          Correction (2026-11-23, POAM-2026-246): earlier text credited src/gateway/governance/provenance_chain.py,
+          an unwired library with no production
+
+          caller that neither persists nor signs records; it is not part of this control.
+
+          When EVIDENCE_CHAIN_BLOCKING=true,
 
           the routing seal (src/gateway/governance/routing_seal.py) is not issued
           until
@@ -1169,9 +1180,9 @@ system-security-plan:
         implementation-status:
           state: partially-implemented
         links:
-        - href: ../../src/gateway/governance/provenance_chain.py
+        - href: ../../src/gateway/governance/evidence/stream.py
           rel: reference
-          text: Provenance chain implementation (evidence-of-execution)
+          text: Evidence stream (EvidenceStreamSink), the evidence-of-execution record
         - href: ../../src/gateway/governance/routing_seal.py
           rel: reference
           text: Routing seal tied to evidence chain
@@ -1219,29 +1230,31 @@ system-security-plan:
         every caller value for latency_ms, drawdown, its aliases and portfolio_total
         before resolving them, in SymbolicGovernor.validate_action() (POST /governance/validate-action),
         SymbolicGovernor.verify() (the MCP simulate_governance_check dry run) and
-        the trade tool before its committing run. No STPA input is defaulted on a
-        dry run. UCA-6 (US_FED order-volume fraction 0.01) is evaluated on every trade
-        and refuses one lacking either input (POAM-2026-106 closed): order_size is
-        the caller''s notional amount divided by the verified quote price, and daily_vol
-        is the symbol''s average daily volume from the market-data feed (verified
-        source, traded symbol, finite and positive, at most four days old), both bound
-        server-side by TradeInputResolver. The same resolver is registered for execute_trade_bounded,
-        and bounding contract B2 compares the drawdown the gateway measured (never
-        a caller value) with drawdown.limit (US_FED 5%); an unmeasured drawdown is
-        a HARD refusal (POAM-2026-108 closed). Startup posture enforcement (CM-6 /
-        SC-24 / SA-8) is centralized in assert_production_posture() (src/gateway/governance/governor/posture.py),
-        invoked by bootstrap_governor() (src/gateway/governance/governor/bootstrap.py):
-        in enforcing postures (production, staging via is_enforcing()), it validates
-        all seven startup invariant groups (CAGE_DOMAIN=finance, OPA_STRICT_MODE=true,
-        kms_signing_mode=strict passed from KMSGovernanceSigner, EVIDENCE_CHAIN_BLOCKING=true,
-        CBF_ALLOW_STALE_STATE=false, thresholds_meta.fallback_used=False, and GOVERNANCE_SALT
-        set and non-default) and exits 1 with a consolidated violation list if any
-        check fails. assemble_governor() (src/gateway/governance/governor/assembly.py)
-        enforces load-time integrity checks on PluginContribution (non-empty plugin_name,
-        tiers, and claimed_actions; every claimed action registered in FTRA; non-negative
-        tier order; and thresholds_region == jurisdiction.region). Kubernetes ConfigMaps
-        and Cloud Secret Manager provide the configuration injection mechanism. IaC
-        (Terraform) manages infrastructure configuration in version-controlled HCL.
+        once inside each committing run (SymbolicGovernor.govern() / revalidate_post_hitl(),
+        returning a SealedAction over the bound params). No STPA input is defaulted
+        on a dry run. UCA-6 (US_FED order-volume fraction 0.01) is evaluated on every
+        trade and refuses one lacking either input (POAM-2026-106 closed): order_size
+        is the caller''s notional amount divided by the verified quote price, and
+        daily_vol is the symbol''s average daily volume from the market-data feed
+        (verified source, traded symbol, finite and positive, at most four days old),
+        both bound server-side by TradeInputResolver. The same resolver is registered
+        for execute_trade_bounded, and bounding contract B2 compares the drawdown
+        the gateway measured (never a caller value) with drawdown.limit (US_FED 5%);
+        an unmeasured drawdown is a HARD refusal (POAM-2026-108 closed). Startup posture
+        enforcement (CM-6 / SC-24 / SA-8) is centralized in assert_production_posture()
+        (src/gateway/governance/governor/posture.py), invoked by bootstrap_governor()
+        (src/gateway/governance/governor/bootstrap.py): in enforcing postures (production,
+        staging via is_enforcing()), it validates all seven startup invariant groups
+        (CAGE_DOMAIN=finance, OPA_STRICT_MODE=true, kms_signing_mode=strict passed
+        from KMSGovernanceSigner, EVIDENCE_CHAIN_BLOCKING=true, CBF_ALLOW_STALE_STATE=false,
+        thresholds_meta.fallback_used=False, and GOVERNANCE_SALT set and non-default)
+        and exits 1 with a consolidated violation list if any check fails. assemble_governor()
+        (src/gateway/governance/governor/assembly.py) enforces load-time integrity
+        checks on PluginContribution (non-empty plugin_name, tiers, and claimed_actions;
+        every claimed action registered in FTRA; non-negative tier order; and thresholds_region
+        == jurisdiction.region). Kubernetes ConfigMaps and Cloud Secret Manager provide
+        the configuration injection mechanism. IaC (Terraform) manages infrastructure
+        configuration in version-controlled HCL.
 
         '
       props:
@@ -1255,10 +1268,12 @@ system-security-plan:
         description: 'governance_thresholds.json and the regional baseline overlay
           are validated before any governor is assembled; tests/governor/test_regional_overlay.py
           observes each fail-closed path. Changes require PR review and CI validation.
-          Lula validation: compliance/lula/lula-validation-cm6.yaml asserts that a
-          threshold ConfigMap is deployed, not its values. No manifest in this repository
-          creates that ConfigMap (the thresholds ship in the gateway image), so the
-          validation cannot pass as written (POAM-2026-151).
+          Lula validation: compliance/lula/lula-validation-cm6.yaml queries compliance-bridge
+          GET /v1/compliance/cm6 (alias GET /v1/config/cm6) to verify a KMS-signed
+          GOVERNANCE_THRESHOLDS_LOADED SHA-256 thresholds_digest, matching active
+          region, schema_version, domain_sections, and zero GOVERNANCE_DECISION digest_mismatches;
+          it remains rated Stub in compliance/lula/README.md under POAM-2026-151 pending
+          a recorded live in-cluster Lula run.
 
           '
         implementation-status:
@@ -1332,29 +1347,32 @@ system-security-plan:
         integration for P1/P2 escalation is planned but not yet implemented; this
         gap is tracked and the automated Slack notification provides interim reporting
         capability. External incident reporting to regulators (SEC, FINRA) follows
-        manual procedures documented in the IR plan. Correction (2026-11-16, POAM-2026-230):
-        the reference Terraform pins alert_channel = "console" in every committed
-        profile, so no Slack notification is sent; alerts are log lines until POAM-2026-230
-        closes.
+        manual procedures documented in the IR plan. Note (POAM-2026-230): enforcing
+        postures refuse console fallback at plan time and pod startup and publish
+        to GCP Cloud Pub/Sub (PubSubNotifier, reference-architecture terminal sink);
+        Slack/PagerDuty human fan-out and OTel span-event alerting remain adopter-operated
+        or unimplemented.
 
         '
       props:
       - name: implementation-status
         value: partially-implemented
       - name: current-capability
-        value: Slack notifications via compliance_bridge/notifier.py (not delivered
-          in any committed profile; POAM-2026-230, 2026-11-16)
+        value: GCP Cloud Pub/Sub notifications via compliance_bridge/notifier.py (PubSubNotifier,
+          reference-architecture terminal sink; human fan-out adopter-operated, POAM-2026-230)
       - name: planned-capability
-        value: PagerDuty P1/P2 escalation (pending)
+        value: Adopter-operated PagerDuty/Slack P1/P2 fan-out and regulator-reporting
+          runbook (pending)
       responsible-roles:
       - role-id: isso
       by-components:
       - component-uuid: e5000004-0000-4000-8000-000000000004
         uuid: h8000008-0000-4000-8000-000000000009
-        description: 'src/compliance_bridge/notifier.py implements Slack alert notifications.
-          PagerDuty integration pending. Manual escalation procedures documented in
-          IR plan for external regulatory reporting. Correction (2026-11-16, POAM-2026-230):
-          no committed profile configures a Slack channel (alert_channel = "console").
+        description: 'src/compliance_bridge/notifier.py enforces external alert delivery
+          in staging/prod via PubSubNotifier (GCP Cloud Pub/Sub reference-architecture
+          terminal sink, POAM-2026-230), with optional Slack/Webhook/PagerDuty adapters;
+          human escalation fan-out is adopter-operated and external regulatory reporting
+          procedures remain pending in the IR plan.
 
           '
         implementation-status:

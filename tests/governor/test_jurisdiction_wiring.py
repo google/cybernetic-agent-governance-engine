@@ -453,15 +453,35 @@ async def test_refusal_without_review_is_hard() -> None:
 @pytest.mark.parametrize(
     "provider",
     [
-        _FakeProvider(hang=True),
-        _FakeProvider(exc=ConnectionError("provider down")),
-        _FakeProvider(ValidationResult(admitted=True, error="upstream 503")),
+        pytest.param(
+            _FakeProvider(hang=True),
+            id="timeout",
+            marks=pytest.mark.covers(
+                "src.gateway.governance.jurisdiction.eu_ai_act.fria_tier:FriaTier.evaluate#validate_fria timed out after"
+            ),
+        ),
+        pytest.param(
+            _FakeProvider(exc=ConnectionError("provider down")),
+            id="raises",
+            marks=pytest.mark.covers(
+                "src.gateway.governance.jurisdiction.eu_ai_act.fria_tier:FriaTier.evaluate#validate_fria raised"
+            ),
+        ),
+        pytest.param(
+            _FakeProvider(ValidationResult(admitted=True, error="upstream 503")),
+            id="error_field",
+            marks=pytest.mark.covers(
+                "src.gateway.governance.jurisdiction.eu_ai_act.fria_tier:FriaTier.evaluate#provider reported an error:"
+            ),
+        ),
     ],
-    ids=["timeout", "raises", "error_field"],
 )
 async def test_unavailable_provider_fails_closed(provider: _FakeProvider) -> None:
     [violation] = await _tier(provider).evaluate("execute_trade", dict(_TRADE))
-    assert (violation.code, violation.kind) == (CODE_UNAVAILABLE, ViolationKind.HARD)
+    assert (violation.code, violation.kind) == (
+        CODE_UNAVAILABLE,
+        ViolationKind.INFRASTRUCTURE,
+    )
 
 
 @pytest.mark.asyncio
@@ -620,11 +640,15 @@ async def test_fria_hold_parks_an_approval_token(defer_redis: Any) -> None:
 
 @pytest.mark.asyncio
 async def test_fria_provider_timeout_denies_with_a_receipt(defer_redis: Any) -> None:
-    with pytest.raises(GovernanceError) as exc:
+    from src.gateway.governance.governor.errors import GovernanceInfrastructureError
+
+    with pytest.raises(GovernanceInfrastructureError) as exc:
         await _fria_only_governor(_FakeProvider(hang=True)).validate_action(
             "execute_trade", {"amount": 10}
         )
-    assert exc.value.receipt is not None
+    assert exc.value.receipt is None
+    assert exc.value.dependency == "fria"
+    assert exc.value.failure_code == "FRIA_PROVIDER_UNAVAILABLE"
     assert "CTRL_FRIA_006" in str(exc.value)
 
 
@@ -719,10 +743,10 @@ async def test_approved_escalation_still_escalating_is_sealed(defer_redis: Any) 
     approval = await _parked_approval(governor, counter)
 
     with patch(_MINT, side_effect=_mint) as mint:
-        seal = await governor.revalidate_post_hitl(
+        sealed = await governor.revalidate_post_hitl(
             "execute_trade", dict(_TRADE), approval=approval
         )
-    assert seal == "seal-ok"
+    assert sealed.seal == "seal-ok"
     mint.assert_called_once()
     assert len(provider.calls) == 2
     assert counter.results == [True]
@@ -736,12 +760,10 @@ async def test_admission_at_revalidation_is_sealed(defer_redis: Any) -> None:
 
     provider.result = ValidationResult(admitted=True)
     with patch(_MINT, side_effect=_mint):
-        assert (
-            await governor.revalidate_post_hitl(
-                "execute_trade", dict(_TRADE), approval=approval
-            )
-            == "seal-ok"
+        sealed = await governor.revalidate_post_hitl(
+            "execute_trade", dict(_TRADE), approval=approval
         )
+    assert sealed.seal == "seal-ok"
 
 
 @pytest.mark.asyncio
@@ -773,8 +795,22 @@ async def test_hold_the_reviewer_never_saw_is_approval_drift(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "outage",
-    [{"exc": ConnectionError("provider down")}, {"hang": True}],
-    ids=["raises", "timeout"],
+    [
+        pytest.param(
+            {"exc": ConnectionError("provider down")},
+            id="raises",
+            marks=pytest.mark.covers(
+                "src.gateway.governance.jurisdiction.eu_ai_act.fria_tier:FriaTier.evaluate#validate_fria raised"
+            ),
+        ),
+        pytest.param(
+            {"hang": True},
+            id="timeout",
+            marks=pytest.mark.covers(
+                "src.gateway.governance.jurisdiction.eu_ai_act.fria_tier:FriaTier.evaluate#validate_fria timed out after"
+            ),
+        ),
+    ],
 )
 async def test_provider_outage_at_revalidation_denies(
     defer_redis: Any, outage: dict[str, Any]
@@ -899,10 +935,10 @@ async def test_approved_hold_commits_the_barrier_and_seals() -> None:
     governor, barrier = _governor_with_kernel_and_barrier(_FakeProvider(_escalate()))
     approval = granted_approval("PASS", approved_holds=frozenset({_FRIA_HOLD}))
     with patch(_MINT, side_effect=_mint):
-        seal = await governor.revalidate_post_hitl(
+        sealed = await governor.revalidate_post_hitl(
             "execute_trade", dict(_TRADE), approval=approval
         )
-    assert seal == "seal-ok"
+    assert sealed.seal == "seal-ok"
     assert barrier.commits == ["execute_trade"]
     assert barrier.rollbacks == []
 
@@ -979,8 +1015,8 @@ async def test_payload_names_the_verified_caller_and_the_trace() -> None:
 @pytest.mark.parametrize(
     ("params", "expected"),
     [
-        ({"thread_id": "t-1", "transaction_id": "tx-1"}, "t-1"),
-        ({"transaction_id": "tx-1"}, "tx-1"),
+        ({"thread_id": "t-1", "idempotency_key": "tx-1"}, "t-1"),
+        ({"idempotency_key": "tx-1"}, "tx-1"),
     ],
 )
 async def test_payload_thread_prefers_the_request_ids(
@@ -989,6 +1025,17 @@ async def test_payload_thread_prefers_the_request_ids(
     provider = _FakeProvider()
     await _tier(provider).evaluate("execute_trade", {**params, **_TRADE})
     assert provider.calls[0]["thread_id"] == expected
+
+
+def test_resolve_thread_id_order_and_legacy_rejection() -> None:
+    """verdicts.resolve_thread_id prefers thread_id -> idempotency_key and ignores transaction_id."""
+    from src.gateway.governance.governor.verdicts import resolve_thread_id
+
+    assert resolve_thread_id({"thread_id": "th-1", "idempotency_key": "ik-1"}) == "th-1"
+    assert resolve_thread_id({"idempotency_key": "ik-1"}) == "ik-1"
+    assert resolve_thread_id({"idempotency_key": ""}) == "unknown"
+    assert resolve_thread_id({"transaction_id": "legacy-tx-1"}) == "unknown"
+    assert resolve_thread_id({}) == "unknown"
 
 
 @pytest.mark.asyncio
@@ -1031,6 +1078,10 @@ async def test_eu_contribution_presents_the_workload_identity_it_verified() -> N
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    "src.gateway.governance.jurisdiction.eu_ai_act.fria_tier:FriaTier._payload#requires a non-empty correlation_id",
+    "src.gateway.governance.jurisdiction.eu_ai_act.fria_tier:FriaTier.evaluate#FRIA payload not built",
+)
 async def test_missing_trace_span_refuses_locally_without_calling_provider(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1046,7 +1097,7 @@ async def test_missing_trace_span_refuses_locally_without_calling_provider(
             tier._payload("execute_trade", {"amount": 10})
         [violation] = await tier.evaluate("execute_trade", {"amount": 10})
     assert violation.code == CODE_UNAVAILABLE
-    assert violation.kind == ViolationKind.HARD
+    assert violation.kind == ViolationKind.INFRASTRUCTURE
     assert "correlation_id" in violation.message
     assert provider.calls == []
 
@@ -1072,6 +1123,10 @@ async def test_missing_trace_span_refuses_locally_without_calling_provider(
     assert provider.calls == []
 
 
+@pytest.mark.covers(
+    "src.gateway.governance.governor.assembly:_require_configured_tracer#but OTEL_TRACES_EXPORTER=none",
+    "src.gateway.governance.governor.assembly:_require_configured_tracer#call setup_tracing() before assembling",
+)
 def test_enforcing_posture_refuses_assembly_without_configured_tracer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1157,6 +1212,11 @@ def _eu_components(provider: Any, posture: DeploymentPosture) -> GovernorCompone
     )
 
 
+@pytest.mark.covers(
+    "src.gateway.governance.jurisdiction.eu_ai_act:require_real_provider#backed by the stub",
+    'src.gateway.governance.governor.posture:_check_jurisdiction_requirements#raise RuntimeError(f"region',
+    'src.gateway.governance.governor.posture:assert_production_posture#raise PostureViolation(f"startup posture',
+)
 def test_enforcing_eu_posture_refuses_the_stub_provider(
     healthy: pytest.MonkeyPatch,
 ) -> None:

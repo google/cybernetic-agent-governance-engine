@@ -25,7 +25,7 @@ Before the fix, ``trade_contract``:
   defaults it to ``0.0``;
 * reused a cached ``ALLOW`` verdict for an order that differed in a field the
   digest did not bind (``limit_price``, ``account_id``, ``order_type``,
-  ``venue``, ``agent_id``, ``transaction_id``, ...).
+  ``venue``, ``agent_id``, ``idempotency_key``, ...).
 
 The safety-node tests drive the real ``GatewayClient`` over an
 ``httpx.MockTransport`` whose verdicts ``SignedGatewayStub`` signs, so the
@@ -46,6 +46,7 @@ import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 
 from src.cage_finance.tools.tool_provider import execute_trade_action
+from src.gateway.governance.commit_outcome import CommitOutcome, CommitStatus
 from src.gateway.governance.decisions import GovernanceDecision
 from src.governed_financial_advisor.graph.governance import tool_guard as guard_mod
 from src.governed_financial_advisor.graph.nodes import evaluator_node as evaluator_mod
@@ -95,7 +96,7 @@ _EXTRA_FIELDS = [
     ("venue", "DARKPOOL"),
     ("agent_id", "someone-else"),
     ("trader_id", "other-trader"),
-    ("transaction_id", "other-tx"),
+    ("idempotency_key", "other-tx"),
 ]
 
 _SUBSTRING_NAMES = [
@@ -317,104 +318,118 @@ def test_a_missing_or_under_confident_call_never_reuses() -> None:
 
 
 # ---------------------------------------------------------------------------
-# gateway_tool_guard re-validates any call the cache does not bind
+# governed_tool_node re-validates any call the cache does not bind
 # ---------------------------------------------------------------------------
-
-
-class _RecordingClient:
-    def __init__(self) -> None:
-        self.calls: list[dict[str, Any]] = []
-
-    async def validate_action(
-        self, *, action: str, params: dict[str, Any]
-    ) -> dict[str, Any]:
-        self.calls.append(params)
-        return {"verdict": GovernanceDecision.ALLOW, "violations": []}
 
 
 async def _guarded_call(
     monkeypatch: pytest.MonkeyPatch,
     args: dict[str, Any],
     executed: list[dict[str, Any]] | None = None,
-) -> tuple[_RecordingClient, dict[str, Any]]:
-    """Run one trade call through the guard; ``executed`` gets the tool's args."""
-    monkeypatch.delenv("CAGE_ROUTING_VERDICT_TTL_S", raising=False)
-    client = _RecordingClient()
-    monkeypatch.setattr(guard_mod, "GatewayClient", lambda: client)
-
-    async def executor(state: dict[str, Any]) -> dict[str, Any]:
-        if executed is not None:
-            executed.append(dict(state["messages"][-1].tool_calls[0]["args"]))
-        return {"messages": [ToolMessage(content="EXECUTED", tool_call_id="c1")]}
-
-    call = {"name": "execute_trade_action", "id": "c1", "args": args}
-    out = await guard_mod.gateway_tool_guard("execute_trade", approvable=True)(
-        executor
-    )(
-        {
-            "messages": [AIMessage(content="", tool_calls=[call])],
-            "routing_verdict_cache": build_routing_verdict_cache(
-                trade_params(_ORDER), verdict="ALLOW"
-            ),
-        }
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Run one trade call through ``governed_trader_graph.guarded_tool_executor_node``."""
+    from src.governed_financial_advisor.graph.subgraphs.governed_trader_graph import (
+        guarded_tool_executor_node,
     )
-    return client, out
+
+    monkeypatch.delenv("CAGE_ROUTING_VERDICT_TTL_S", raising=False)
+    GatewayClient._instance = None
+    stub = SignedGatewayStub()
+    preview_calls: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        if request.url.path == "/governance/validate-action":
+            preview_calls.append(dict(body["params"]))
+            return httpx.Response(
+                200, json={"verdict": "ALLOW", "violations": [], "latency_ms": 1.0}
+            )
+        if executed is not None:
+            executed.append(dict(body["params"]))
+        return httpx.Response(
+            200,
+            json={
+                "status": "SUCCESS",
+                "output": "EXECUTED",
+                "outcome": {"status": "EXECUTED", "message": "EXECUTED"},
+            },
+        )
+
+    client = GatewayClient()
+    client._http = httpx.AsyncClient(
+        transport=httpx.MockTransport(stub.transport_handler(handler)),
+        base_url="http://gateway.test",
+    )
+    try:
+        call = {"name": "execute_trade_action", "id": "c1", "args": args}
+        cmd = await guarded_tool_executor_node(
+            {
+                "messages": [AIMessage(content="", tool_calls=[call])],
+                "routing_verdict_cache": build_routing_verdict_cache(
+                    trade_params(_ORDER), verdict="ALLOW"
+                ),
+            }
+        )
+        return preview_calls, dict(cmd.update or {})
+    finally:
+        await client.close()
+        GatewayClient._instance = None
 
 
 @pytest.mark.asyncio
 async def test_tool_guard_reuses_the_verdict_for_the_exact_order(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    client, out = await _guarded_call(monkeypatch, dict(_ORDER))
+    preview_calls, out = await _guarded_call(monkeypatch, dict(_ORDER))
 
-    assert client.calls == []
+    assert preview_calls == []
     assert out["governance_status"] == "ALLOWED"
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("field", "value"),
-    # The guard replaces a model-supplied transaction_id with its own key (#514).
-    [(field, value) for field, value in _EXTRA_FIELDS if field != "transaction_id"],
+    # governed_tool_node replaces model-supplied idempotency_key with its derived key.
+    [(field, value) for field, value in _EXTRA_FIELDS if field != "idempotency_key"],
 )
 async def test_tool_guard_revalidates_a_call_with_an_extra_field(
     monkeypatch: pytest.MonkeyPatch, field: str, value: Any
 ) -> None:
-    client, out = await _guarded_call(monkeypatch, {**_ORDER, field: value})
+    preview_calls, out = await _guarded_call(monkeypatch, {**_ORDER, field: value})
 
-    assert len(client.calls) == 1
-    assert client.calls[0][field] == value
+    assert len(preview_calls) == 1
+    assert preview_calls[0][field] == value
     assert out["governance_status"] == "ALLOWED"
 
 
 @pytest.mark.asyncio
-async def test_tool_guard_replaces_the_model_transaction_id_and_still_reuses(
+async def test_tool_guard_replaces_the_model_idempotency_key_and_still_reuses(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     executed: list[dict[str, Any]] = []
-    client, out = await _guarded_call(
-        monkeypatch, {**_ORDER, "transaction_id": "other-tx"}, executed
+    preview_calls, out = await _guarded_call(
+        monkeypatch, {**_ORDER, "idempotency_key": "other-tx"}, executed
     )
 
-    assert client.calls == []  # the guard's own key does not block reuse
+    assert preview_calls == []  # the derived idempotency key does not block reuse
     assert out["governance_status"] == "ALLOWED"
     (args,) = executed
-    assert uuid.UUID(args["transaction_id"]).version == 5
+    assert uuid.UUID(args["idempotency_key"]).version == 5
 
 
 @pytest.mark.asyncio
-async def test_tool_guard_previews_the_order_without_its_transaction_id(
+async def test_tool_guard_previews_the_order_without_its_idempotency_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     executed: list[dict[str, Any]] = []
-    client, _ = await _guarded_call(
+    preview_calls, _ = await _guarded_call(
         monkeypatch, {**_ORDER, "limit_price": 1.0}, executed
     )
 
-    (previewed,) = client.calls
-    assert "transaction_id" not in previewed
+    (previewed,) = preview_calls
+    assert "idempotency_key" not in previewed
     (args,) = executed
-    assert uuid.UUID(args["transaction_id"]).version == 5
+    assert uuid.UUID(args["idempotency_key"]).version == 5
 
 
 # ---------------------------------------------------------------------------
@@ -747,7 +762,14 @@ async def test_substring_steps_never_reach_the_gateway_or_the_denial_budget(
         }
     )
 
-    assert skipped == {"safety_status": "SKIPPED", "routing_verdict_cache": None}
+    assert skipped == {
+        "safety_status": "SKIPPED",
+        "routing_verdict_cache": None,
+        "deferred_id": None,
+        "deferred_step_ids": None,
+        "approval_decision": None,
+        "hitl_reference_quote": None,
+    }
     assert approved["safety_status"] == "APPROVED"
     assert approved["consecutive_denials"] == 0
     assert _symbols(seen) == ["AAA"]

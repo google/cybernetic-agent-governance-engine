@@ -66,6 +66,7 @@ class BarrierFailureKind(str, Enum):
     INTEGRITY_VIOLATION = "INTEGRITY_VIOLATION"
     STORE_UNAVAILABLE = "STORE_UNAVAILABLE"
     RECONCILIATION_UNAVAILABLE = "RECONCILIATION_UNAVAILABLE"
+    STATE_UNAVAILABLE = "STATE_UNAVAILABLE"
 
 
 @dataclass(frozen=True)
@@ -190,6 +191,7 @@ async def _refusal(
     if failure_kind in (
         BarrierFailureKind.STORE_UNAVAILABLE,
         BarrierFailureKind.RECONCILIATION_UNAVAILABLE,
+        BarrierFailureKind.STATE_UNAVAILABLE,
     ):
         return Violation(
             tier=tier,

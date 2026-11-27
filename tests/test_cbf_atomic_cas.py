@@ -505,7 +505,7 @@ async def test_forward_moved_fence_epoch_retries_with_full_reread_and_succeeds(
 async def test_forward_moved_fence_epoch_exhausts_retries_and_returns_contended(
     cbf_instance, mock_redis_client, mock_raw_client
 ):
-    """When status 2 persists across all _COMMIT_ATTEMPTS, returns CBF_EPOCH_CONTENDED (HARD refusal)."""
+    """When status 2 persists across all _COMMIT_ATTEMPTS, returns CBF_EPOCH_CONTENDED (INFRASTRUCTURE)."""
     from src.gateway.governance.contracts import ViolationKind
     from src.gateway.governance.safety.barrier_tier import commit_barrier
 
@@ -556,7 +556,7 @@ async def test_forward_moved_fence_epoch_exhausts_retries_and_returns_contended(
 
         assert receipt is None
         assert len(violations) == 1
-        assert violations[0].kind == ViolationKind.HARD
+        assert violations[0].kind == ViolationKind.INFRASTRUCTURE
         assert "CBF_EPOCH_CONTENDED" in violations[0].message
         assert cbf_instance._resolve_ground_truth_balance.await_count == 3
         assert mock_raw_client.evalsha.await_count == 3

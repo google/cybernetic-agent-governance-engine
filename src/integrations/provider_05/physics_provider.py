@@ -92,7 +92,7 @@ class Provider05PhysicsProvider(AttestationProvider):
                     provider_name=self.provider_name,
                     metadata={
                         "node_id": node_id,
-                        "veip_v03_status": "REJECT",
+                        "provider_05_v03_status": "REJECT",
                         "reason_code": "MISSING",
                         "error": "Substrate attestation not found",
                     },
@@ -126,7 +126,7 @@ class Provider05PhysicsProvider(AttestationProvider):
                             "freshness_seconds": attestation.freshness_seconds,
                             "kid": attestation.kid,
                             "digest": attestation.digest,
-                            "veip_v03_status": verification.expected_status,
+                            "provider_05_v03_status": verification.expected_status,
                             "reason_code": verification.reason_code,
                             "error": verification.reason,
                         },
@@ -135,7 +135,7 @@ class Provider05PhysicsProvider(AttestationProvider):
             v03_meta = {
                 "kid": attestation.kid,
                 "digest": attestation.digest,
-                "veip_v03_status": verification.expected_status,
+                "provider_05_v03_status": verification.expected_status,
                 "reason_code": verification.reason_code,
             }
 
@@ -154,7 +154,7 @@ class Provider05PhysicsProvider(AttestationProvider):
             )
             status = AttestationStatus.DENIED.value
             if v03_meta:
-                v03_meta["veip_v03_status"] = "REJECT"
+                v03_meta["provider_05_v03_status"] = "REJECT"
                 v03_meta["reason_code"] = "ATTESTATION_FAIL"
 
         return [

@@ -110,9 +110,12 @@ async def test_symbolic_governor_confidence_pass(mock_ftra_safe, classification_
 
     # Confidence >= 0.95
     params = {"confidence": 0.99, "amount": 100, "symbol": "AAPL"}
-    await governor.govern("execute_trade", params)
+    governed = await governor.govern("execute_trade", params)
 
-    # Should not raise exception
+    # Should not raise exception; the sealed action commits to the evaluated
+    # params (no server input binds anything for execute_trade here).
+    assert governed.seal == "mock-routing-seal-" + "a" * 32
+    assert governed.params == params
 
 
 @pytest.mark.asyncio

@@ -71,26 +71,38 @@ logger = logging.getLogger("cage.integrations.provider_05.warrant_source")
 
 PROVIDER_NAME = "provider_05_warrant"
 
+#: External Provider 05 (VEIP) wire-protocol schema and discovery constants.
+PROVIDER_05_WARRANT_SCHEMA_V02 = "veip-warrant/0.2"
+PROVIDER_05_MANIFEST_SCHEMA_V02 = "veip-key-manifest/0.2"
+PROVIDER_05_MANIFEST_SCHEMA_V03 = "veip-key-manifest/0.3"
+PROVIDER_05_KEY_MANIFEST_PATH = "/.well-known/veip/key-manifest.json"
+
 #: Default VEIP v0.2 interoperability sandbox endpoint.
-VEIP_SANDBOX_BASE_URL = "https://veip-cage-sandbox.am-43b.workers.dev"
+PROVIDER_05_SANDBOX_BASE_URL = "https://veip-cage-sandbox.am-43b.workers.dev"
 
 #: Out-of-band VEIP v0.2 sandbox root key parameters.
-VEIP_SANDBOX_ROOT_KID = "veip-sandbox-manifest-root-2026-10"
-VEIP_SANDBOX_ROOT_PUBLIC_KEY_B64 = (
+PROVIDER_05_SANDBOX_ROOT_KID = "veip-sandbox-manifest-root-2026-10"
+PROVIDER_05_SANDBOX_ROOT_PUBLIC_KEY_B64 = (
     "MCowBQYDK2VwAyEAGkpGRonrFI0bgcXBOipmZVpjP2KgBczNryMe3mJ10PM="
 )
-VEIP_SANDBOX_ROOT_FINGERPRINT = (
+PROVIDER_05_SANDBOX_ROOT_FINGERPRINT = (
     "sha256:61ab867fc9ce773f2974081effbf0c9a4173caa23a4e18fa2c3bf65b249b8d85"
 )
-VEIP_SANDBOX_ISSUER_KID = "veip-sandbox-issuer-2026-10"
-VEIP_SANDBOX_ISSUER_PUBLIC_KEY_B64 = (
+PROVIDER_05_SANDBOX_ISSUER_KID = "veip-sandbox-issuer-2026-10"
+PROVIDER_05_SANDBOX_ISSUER_PUBLIC_KEY_B64 = (
     "MCowBQYDK2VwAyEAJ4RtpB51zP1atj/1hwsj4on1Hx1aARMEMMgXEWWs6G0="
 )
 
-VEIP_SANDBOX_TRUST_ANCHOR = WarrantTrustAnchor(
-    root_kid=VEIP_SANDBOX_ROOT_KID,
-    public_key_b64=VEIP_SANDBOX_ROOT_PUBLIC_KEY_B64,
-    expected_fingerprint=VEIP_SANDBOX_ROOT_FINGERPRINT,
+PROVIDER_05_SANDBOX_TRUST_ANCHOR = WarrantTrustAnchor(
+    root_kid=PROVIDER_05_SANDBOX_ROOT_KID,
+    public_key_b64=PROVIDER_05_SANDBOX_ROOT_PUBLIC_KEY_B64,
+    expected_fingerprint=PROVIDER_05_SANDBOX_ROOT_FINGERPRINT,
+    accepted_manifest_schemas=(
+        PROVIDER_05_MANIFEST_SCHEMA_V02,
+        PROVIDER_05_MANIFEST_SCHEMA_V03,
+    ),
+    purpose_required_manifest_schemas=(PROVIDER_05_MANIFEST_SCHEMA_V03,),
+    accepted_warrant_schemas=(PROVIDER_05_WARRANT_SCHEMA_V02,),
 )
 
 #: The fault modes that map onto a warrant-gate fail-closed path.
@@ -110,13 +122,19 @@ def _trust_anchor_from_env() -> WarrantTrustAnchor | None:
     fp = os.environ.get("PROVIDER_05_MANIFEST_ROOT_FINGERPRINT", "").strip()
     kid = (
         os.environ.get("PROVIDER_05_MANIFEST_ROOT_KID", "").strip()
-        or VEIP_SANDBOX_ROOT_KID
+        or PROVIDER_05_SANDBOX_ROOT_KID
     )
     if pub_b64 and fp:
         return WarrantTrustAnchor(
             root_kid=kid,
             public_key_b64=pub_b64,
             expected_fingerprint=fp,
+            accepted_manifest_schemas=(
+                PROVIDER_05_MANIFEST_SCHEMA_V02,
+                PROVIDER_05_MANIFEST_SCHEMA_V03,
+            ),
+            purpose_required_manifest_schemas=(PROVIDER_05_MANIFEST_SCHEMA_V03,),
+            accepted_warrant_schemas=(PROVIDER_05_WARRANT_SCHEMA_V02,),
         )
     return None
 
@@ -184,7 +202,7 @@ class Provider05WarrantSource:
             or self._endpoint
             or any(w.is_v02 for w in self._warrants.values())
         ):
-            return VEIP_SANDBOX_TRUST_ANCHOR
+            return PROVIDER_05_SANDBOX_TRUST_ANCHOR
         return None
 
     def seed(self, warrant: Warrant) -> None:
@@ -242,15 +260,15 @@ class Provider05WarrantSource:
         """Fetch the VEIP v0.2 key manifest (seeded or ``/.well-known/veip/key-manifest.json``)."""
         fault = self._fault
         if fault is FaultMode.TIMEOUT:
-            raise TimeoutError("simulated VEIP key manifest fetch timeout")
+            raise TimeoutError("simulated Provider 05 key manifest fetch timeout")
         if fault is FaultMode.CONNECTION_ERROR:
-            raise ConnectionError("simulated VEIP key manifest connection error")
+            raise ConnectionError("simulated Provider 05 key manifest connection error")
         if self._key_manifest is not None:
             return self._key_manifest
         if not self._endpoint:
             return None
 
-        url = f"{self._endpoint}/.well-known/veip/key-manifest.json"
+        url = f"{self._endpoint}{PROVIDER_05_KEY_MANIFEST_PATH}"
         data = await self._http_get_json(url)
         return data
 
@@ -263,9 +281,9 @@ class Provider05WarrantSource:
         """
         fault = self._fault
         if fault is FaultMode.TIMEOUT:
-            raise TimeoutError("simulated VEIP warrant fetch timeout")
+            raise TimeoutError("simulated Provider 05 warrant fetch timeout")
         if fault is FaultMode.CONNECTION_ERROR:
-            raise ConnectionError("simulated VEIP warrant connection error")
+            raise ConnectionError("simulated Provider 05 warrant connection error")
         warrant = self._warrants.get(norm_id)
         if warrant is not None:
             return self._apply_warrant_fault(warrant)
@@ -279,11 +297,15 @@ class Provider05WarrantSource:
         if payload is None:
             return None
         if not isinstance(payload, Mapping):
-            raise ConnectionError("VEIP warrant endpoint returned non-object JSON")
+            raise ConnectionError(
+                "Provider 05 warrant endpoint returned non-object JSON"
+            )
         try:
             fetched = Warrant(**dict(payload))
         except TypeError as exc:
-            raise ConnectionError(f"Malformed VEIP warrant payload: {exc}") from exc
+            raise ConnectionError(
+                f"Malformed Provider 05 warrant payload: {exc}"
+            ) from exc
         return self._apply_warrant_fault(fetched)
 
     async def _http_get_json(
@@ -299,20 +321,26 @@ class Provider05WarrantSource:
                 async with httpx.AsyncClient(timeout=self._timeout) as client:
                     response = await client.get(url, params=params)
         except httpx.TimeoutException as exc:
-            raise TimeoutError(f"VEIP HTTP request timed out for {url}: {exc}") from exc
+            raise TimeoutError(
+                f"Provider 05 HTTP request timed out for {url}: {exc}"
+            ) from exc
         except httpx.HTTPError as exc:
-            raise ConnectionError(f"VEIP HTTP request failed for {url}: {exc}") from exc
+            raise ConnectionError(
+                f"Provider 05 HTTP request failed for {url}: {exc}"
+            ) from exc
 
         if response.status_code == 404:
             return None
         if response.status_code != 200:
             raise ConnectionError(
-                f"VEIP endpoint {url} returned HTTP {response.status_code}"
+                f"Provider 05 endpoint {url} returned HTTP {response.status_code}"
             )
         try:
             body = response.json()
         except ValueError as exc:
-            raise ConnectionError(f"VEIP endpoint {url} returned invalid JSON") from exc
+            raise ConnectionError(
+                f"Provider 05 endpoint {url} returned invalid JSON"
+            ) from exc
         if not isinstance(body, dict):
-            raise ConnectionError(f"VEIP endpoint {url} returned non-dict JSON")
+            raise ConnectionError(f"Provider 05 endpoint {url} returned non-dict JSON")
         return body

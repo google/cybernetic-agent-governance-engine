@@ -23,35 +23,75 @@ TLS/mTLS (``sc-8``) protects only the wire transport and does NOT substitute
 for end-to-end envelope signature verification.
 """
 
-from .adapters.langgraph import cage_guard
 from .core import CageClient, enforce_verification_posture
 from .crypto import compute_expected_action_hash, generate_w3c_traceparent
 from .envelope import ExecutionGrant, GovernanceEnvelope
 from .exceptions import (
     CageGatewayError,
+    CommitOutcomeDecodeError,
     DeferralPending,
+    GatewayUnavailableError,
+    MissingDeferralTicketError,
     PolicyViolationException,
     RoutingSealVerificationError,
 )
+from .idempotency import (
+    derive_idempotency_key,
+    derive_plan_step_key,
+    extract_plan_step_bindings,
+)
 from .jwks import JwksCache, JwksKeyResolver
+from .outcomes import (
+    COMMIT_OUTCOME_SCHEMA,
+    COMPLETED_STATUSES,
+    INDETERMINATE_STATUSES,
+    NOT_EXECUTED_STATUSES,
+    RETRYABLE_REFUSALS,
+    ApprovalRedemptionRefusal,
+    CommitOutcome,
+    CommitStatus,
+    GovernanceDecision,
+    IndeterminateProvenance,
+    PreviewResult,
+    is_retryable_refusal,
+    verify_commit_outcome_payload,
+)
 from .transport import create_mtls_transport
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 __all__ = [
+    "COMMIT_OUTCOME_SCHEMA",
+    "COMPLETED_STATUSES",
+    "INDETERMINATE_STATUSES",
+    "NOT_EXECUTED_STATUSES",
+    "RETRYABLE_REFUSALS",
+    "ApprovalRedemptionRefusal",
     "CageClient",
     "CageGatewayError",
+    "CommitOutcome",
+    "CommitOutcomeDecodeError",
+    "CommitStatus",
     "DeferralPending",
     "ExecutionGrant",
+    "GatewayUnavailableError",
+    "GovernanceDecision",
     "GovernanceEnvelope",
+    "IndeterminateProvenance",
     "JwksCache",
     "JwksKeyResolver",
+    "MissingDeferralTicketError",
     "PolicyViolationException",
+    "PreviewResult",
     "RoutingSealVerificationError",
     "__version__",
-    "cage_guard",
     "compute_expected_action_hash",
     "create_mtls_transport",
+    "derive_idempotency_key",
+    "derive_plan_step_key",
     "enforce_verification_posture",
+    "extract_plan_step_bindings",
     "generate_w3c_traceparent",
+    "is_retryable_refusal",
+    "verify_commit_outcome_payload",
 ]

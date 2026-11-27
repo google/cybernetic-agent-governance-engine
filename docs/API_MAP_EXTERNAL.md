@@ -763,9 +763,13 @@ the compliance bridge `POST /v1/defer/{defer_id}/escalate` (operator identity
 required). There is no `/governance/revalidate-post-hitl` endpoint.
 
 APPROVED `POST /governance/validate-action` responses carry a signed
-governance envelope. The governor's KMS-signed routing seal
-(`src/gateway/governance/routing_seal.py`) is a separate mechanism and is not
-a caller credential.
+governance envelope. Its `subject.action_hash` binds the submitted params
+(the client recomputes it); HTTP `200` envelopes also carry
+`subject.evaluated_action_hash`, an audit binding over the server-bound params
+the stages evaluated, which the client cannot recompute. The governor's
+KMS-signed routing seal (`src/gateway/governance/routing_seal.py`) is a
+separate mechanism and is not a caller credential: the committing run returns
+it inside the gateway with the evaluated params it commits to.
 
 ---
 

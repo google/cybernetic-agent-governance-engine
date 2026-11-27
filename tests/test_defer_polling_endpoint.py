@@ -224,6 +224,9 @@ def test_get_defer_status_includes_routing_seal_when_resolved(compliance_bridge_
             )  # Will be populated when DeferToken.routing_seal is added
 
 
+@pytest.mark.covers(
+    "src.compliance_bridge.main:get_defer_status#DEFER_QUEUE_UNAVAILABLE"
+)
 def test_get_defer_status_handles_redis_unavailable(compliance_bridge_client):
     """Verify GET /v1/defer/{defer_id} returns HTTP 503 when Redis is unavailable."""
     with patch.dict(os.environ, {"REDIS_URL": "redis://localhost:6379"}):
@@ -282,6 +285,9 @@ def test_get_defer_status_with_partially_approved_status(compliance_bridge_clien
             assert data["routing_seal"] is None
 
 
+@pytest.mark.covers(
+    "src.compliance_bridge.main:get_defer_status#REDIS_URL_NOT_CONFIGURED"
+)
 def test_get_defer_status_handles_missing_redis_url():
     """Verify endpoint returns HTTP 503 when REDIS_URL is not configured."""
     from src.compliance_bridge.main import app

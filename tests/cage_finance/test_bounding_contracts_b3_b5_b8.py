@@ -93,7 +93,7 @@ class TestContractB3LiquidityDepth:
         assert result.findings[0]["min_required_ratio"] == 50.0
 
     def test_provider_unavailable_fails_closed(self, valid_thresholds):
-        """Provider unavailable fails closed with HITL_ESCALATE."""
+        """Provider unavailable fails closed with INFRASTRUCTURE severity."""
         request = BoundedTradeRequest(
             symbol="AAPL", amount=1000.0, side="buy", venue="NASDAQ"
         )
@@ -103,7 +103,7 @@ class TestContractB3LiquidityDepth:
         result = contract_b3_liquidity_depth(request, valid_thresholds, mock_provider)
 
         assert result.admitted is False
-        assert result.severity == ContractSeverity.HITL_ESCALATE
+        assert result.severity == ContractSeverity.INFRASTRUCTURE
         assert result.findings[0]["reason"] == "Market data provider unavailable"
 
     def test_stale_data_fails_closed(self, valid_thresholds):
@@ -205,7 +205,7 @@ class TestContractB5VolatilitySizing:
         result = contract_b5_volatility_sizing(request, valid_thresholds, mock_provider)
 
         assert result.admitted is False
-        assert result.severity == ContractSeverity.HITL_ESCALATE
+        assert result.severity == ContractSeverity.INFRASTRUCTURE
         assert result.findings[0]["reason"] == "Market data provider unavailable"
 
     def test_stale_volatility_data_fails_closed(self, valid_thresholds):
@@ -292,7 +292,7 @@ class TestContractB8TwapSlippage:
         assert result.findings[0]["max_slippage_bps"] == 50.0
 
     def test_provider_unavailable_fails_closed(self, valid_thresholds):
-        """Provider unavailable fails closed with HITL_ESCALATE."""
+        """Provider unavailable fails closed with INFRASTRUCTURE severity."""
         request = BoundedTradeRequest(
             symbol="AAPL", amount=1000.0, side="buy", venue="NASDAQ"
         )
@@ -302,7 +302,7 @@ class TestContractB8TwapSlippage:
         result = contract_b8_twap_slippage(request, valid_thresholds, mock_provider)
 
         assert result.admitted is False
-        assert result.severity == ContractSeverity.HITL_ESCALATE
+        assert result.severity == ContractSeverity.INFRASTRUCTURE
         assert result.findings[0]["reason"] == "Market data provider unavailable"
 
     def test_zero_twap_price_fails_closed(self, valid_thresholds):

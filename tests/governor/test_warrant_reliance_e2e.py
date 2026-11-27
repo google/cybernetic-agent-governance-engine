@@ -26,7 +26,7 @@ in a real ``DeferQueue``. Everything below the HTTP surface is CAGE code.
 What this does **not** exercise: the partner wire. Provider 05 (VEIP) has no
 live endpoint, so the warrant source is the seeded
 ``Provider05WarrantSource`` holding the VEIP v0.1 vectors verbatim
-(``tests/integrations/provider_05/test_provider_05_veip_vectors.py``). This is
+(``tests/integrations/provider_05/test_provider_05_v01_vectors.py``). This is
 not the Over-the-Wire conformance test AGENTS.md requires of Tier 1 adapters;
 that test cannot exist until VEIP publishes a sandbox endpoint.
 
@@ -81,6 +81,11 @@ from src.cage_finance.tiers.trade_confidence_tier import TRADE_CONFIDENCE_NORM_I
 from src.cage_finance.tools.tool_provider import execute_trade_action
 from src.gateway.governance import constants
 from src.gateway.governance import defer_queue as defer_queue_mod
+from src.gateway.governance.commit_outcome import (
+    ApprovalRedemptionRefusal,
+    CommitOutcome,
+    CommitStatus,
+)
 from src.gateway.governance.consequence_magnitude import ConsequenceMagnitudes
 from src.gateway.governance.contracts import PluginContribution
 from src.gateway.governance.decisions import GovernanceDecision
@@ -110,11 +115,11 @@ from src.gateway.server.workload_identity import (
     _serving,
 )
 from src.integrations.provider_05 import Provider05WarrantSource
-from tests.integrations.provider_05.test_provider_05_veip_vectors import (
+from tests.integrations.provider_05.test_provider_05_v01_vectors import (
+    PROVIDER_05_ACTIVE_DIGEST,
+    PROVIDER_05_REVOKED_DIGEST,
+    PROVIDER_05_TAMPERED_DIGEST,
     SHARED_WARRANT,
-    VEIP_ACTIVE_DIGEST,
-    VEIP_REVOKED_DIGEST,
-    VEIP_TAMPERED_DIGEST,
 )
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
@@ -123,7 +128,7 @@ ADVISOR = (
     "cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local"
 )
 #: The VEIP v0.1 shared ``evaluation_timestamp``.
-VEIP_NOW = datetime(2026, 8, 22, 12, 0, tzinfo=timezone.utc)
+PROVIDER_05_NOW = datetime(2026, 8, 22, 12, 0, tzinfo=timezone.utc)
 _CASH_KEY = "safety:current_cash"
 _OPENING_CASH = 1_000_000.0
 
@@ -132,10 +137,13 @@ VEC_002_REVOKED: dict[str, Any] = {
     **SHARED_WARRANT,
     "status": "REVOKED",
     "revocation_ref": "Emergency Risk Notice #912",
-    "digest": VEIP_REVOKED_DIGEST,
+    "digest": PROVIDER_05_REVOKED_DIGEST,
 }
 #: VEC-006: the shared warrant with its declared digest's last nibble flipped.
-VEC_006_TAMPERED: dict[str, Any] = {**SHARED_WARRANT, "digest": VEIP_TAMPERED_DIGEST}
+VEC_006_TAMPERED: dict[str, Any] = {
+    **SHARED_WARRANT,
+    "digest": PROVIDER_05_TAMPERED_DIGEST,
+}
 
 
 def _vec(fields: dict[str, Any]) -> Warrant:
@@ -149,7 +157,7 @@ def _vec(fields: dict[str, Any]) -> Warrant:
 class _Clock:
     """Monotonic and wall clocks advanced together, by hand."""
 
-    def __init__(self, wall: datetime = VEIP_NOW) -> None:
+    def __init__(self, wall: datetime = PROVIDER_05_NOW) -> None:
         self.mono = 1_000.0
         self.wall = wall
 
@@ -224,7 +232,7 @@ class Stack:
 
     async def execute(
         self, params: dict[str, Any], deferred_id: str | None = None
-    ) -> str:
+    ) -> CommitOutcome:
         # The advisor's MCP call reaches the tool behind WorkloadIdentityMiddleware,
         # which makes its verified identity current (the trader binding reads it).
         with _serving(ADVISOR):
@@ -233,7 +241,7 @@ class Stack:
                 params["amount"],
                 params["currency"],
                 params["confidence"],
-                params.get("transaction_id") or str(uuid.uuid4()),
+                params.get("idempotency_key") or str(uuid.uuid4()),
                 False,
                 deferred_id,
                 params["side"],
@@ -270,7 +278,7 @@ class Stack:
         self.actuate.assert_not_awaited()
         assert await self.records("GOVERNANCE_DECISION") == []  # no seal minted
         # No seal nonce burned. The execution ledger shares this Redis, so its
-        # transaction_id claim is not counted.
+        # idempotency_key claim is not counted.
         assert await self.seal_redis.keys("cage:seal:*") == []
 
 
@@ -306,9 +314,9 @@ async def assert_commit_defers(
     """
     before = len(await stack.records("GOVERNANCE_DEFERRAL"))
     result = await stack.execute(params)
-    assert result.startswith("DEFERRED"), result
-    assert DeferReason.WARRANT_INELIGIBLE.value in result
-    assert f"RELIANCE_{status}" in result
+    assert result.status is CommitStatus.DEFERRED, result
+    assert DeferReason.WARRANT_INELIGIBLE.value in result.message
+    assert f"RELIANCE_{status}" in result.message
     await stack.assert_nothing_actuated()
     assert await stack.records("GOVERNANCE_REFUSAL") == []
     stack.refusals.assert_not_awaited()
@@ -542,13 +550,14 @@ async def test_a_active_vec_001_allows_seals_the_reliance_and_executes_once(
     assert attestation["type"] == "WARRANT"
     assert attestation["status"] == "UNVERIFIED"
     assert attestation["provider_name"] == "provider_05_warrant"
-    assert attestation["warrant_digest"] == VEIP_ACTIVE_DIGEST
+    assert attestation["warrant_digest"] == PROVIDER_05_ACTIVE_DIGEST
     assert attestation["reliance_status"] == "ELIGIBLE"
     assert await stack.records("GOVERNANCE_DECISION") == []  # previews never seal
 
     # Commit through the trade tool: one seal, consumed, one actuation.
     result = await stack.execute(trade(0.98))
-    assert result.startswith("EXECUTED: AAPL x 500.0"), result
+    assert result.status is CommitStatus.EXECUTED, result
+    assert result.message.startswith("EXECUTED: AAPL x 500.0"), result
     stack.actuate.assert_awaited_once()
     clearance = stack.actuate.await_args.args[0]
 
@@ -564,12 +573,12 @@ async def test_a_active_vec_001_allows_seals_the_reliance_and_executes_once(
     (reliance,) = decision_payload["reliance"]
     assert reliance["reliance_status"] == "ELIGIBLE"
     assert reliance["warrant_id"] == "warrant-veip-2026-001"
-    assert reliance["warrant_digest"] == VEIP_ACTIVE_DIGEST
+    assert reliance["warrant_digest"] == PROVIDER_05_ACTIVE_DIGEST
     assert reliance["warrant_status"] == "ACTIVE"
     assert reliance["required_governing_version"] == "cage-policy-2.1.0"
     assert reliance["provider_name"] == "provider_05_warrant"
     assert reliance["verification_status"] == "UNVERIFIED"
-    assert reliance["attested_at"] == VEIP_NOW.isoformat()
+    assert reliance["attested_at"] == PROVIDER_05_NOW.isoformat()
     assert rs.verify_seal_against_evidence(
         clearance.routing_seal,
         "execute_trade",
@@ -600,7 +609,7 @@ async def test_a_reliance_is_fetched_once_per_window_across_preview_and_commit(
     monkeypatch.setattr(stack.source, "fetch", _counting)
     assert _body(await stack.validate(trade()))["verdict"] == GovernanceDecision.ALLOW
     stack.clock.advance(59.0)
-    assert (await stack.execute(trade())).startswith("EXECUTED")
+    assert (await stack.execute(trade())).status is CommitStatus.EXECUTED
     assert fetches == [TRADE_CONFIDENCE_NORM_ID]
 
 
@@ -619,7 +628,7 @@ async def test_eu_floor_live_below_097_is_not_allowed_despite_an_eligible_warran
     assert body.get("defer_reason") != DeferReason.WARRANT_INELIGIBLE.value
     (reliance,) = body["reliance"]
     assert reliance["reliance_status"] == "ELIGIBLE"  # the warrant is not the issue
-    assert (await stack.execute(trade(0.96))).startswith("BLOCKED")
+    assert (await stack.execute(trade(0.96))).status is CommitStatus.REFUSED
     await stack.assert_nothing_actuated()
 
 
@@ -740,7 +749,7 @@ async def test_c_stale_state_past_60s_with_a_faulted_source_defers(
     assert reliance["reliance_status"] == "INELIGIBLE_STALE"
     assert reliance["age_seconds"] == "61.000"
     assert reliance["max_age_seconds"] == "60.000"
-    assert reliance["warrant_digest"] == VEIP_ACTIVE_DIGEST  # what went stale
+    assert reliance["warrant_digest"] == PROVIDER_05_ACTIVE_DIGEST  # what went stale
     await assert_commit_defers(stack, trade(), "INELIGIBLE_STALE")
 
     # The source recovers: the next request re-fetches and is admitted again.
@@ -797,7 +806,7 @@ async def test_hard_domain_violation_with_a_revoked_warrant_denies_with_reliance
     assert any("RELIANCE_INELIGIBLE_REVOKED" in v for v in body["violations"])
     (reliance,) = body["refusal_receipt"]["reliance"]
     assert reliance["reliance_status"] == "INELIGIBLE_REVOKED"
-    assert reliance["warrant_digest"] == VEIP_REVOKED_DIGEST
+    assert reliance["warrant_digest"] == PROVIDER_05_REVOKED_DIGEST
     stack.refusals.assert_awaited_once()
     assert list(stack.refusals.await_args.kwargs["receipt"].reliance) == [reliance]
     (refusal,) = await stack.records("GOVERNANCE_REFUSAL")
@@ -830,7 +839,7 @@ async def test_kernel_hard_refusal_denies_before_the_warrant_is_consulted(
     assert body["refusal_receipt"].get("reliance", []) == []
     assert fetches == []
     assert await stack.records("GOVERNANCE_DEFERRAL") == []
-    assert (await stack.execute(trade())).startswith("BLOCKED")
+    assert (await stack.execute(trade())).status is CommitStatus.REFUSED
     await stack.assert_nothing_actuated()
 
 
@@ -854,7 +863,7 @@ async def test_post_hitl_approval_executes_while_the_warrant_holds(
     deferred_id = await _approved_floor_breach(stack)
     stack.clock.advance(120.0)  # re-fetched after the window: still ACTIVE
     result = await stack.execute(trade(0.96), deferred_id)
-    assert result.startswith("EXECUTED"), result
+    assert result.status is CommitStatus.EXECUTED, result
     stack.actuate.assert_awaited_once()
 
 
@@ -863,12 +872,14 @@ async def _approval_status(stack: Stack, deferred_id: str) -> str | None:
 
 
 async def _assert_post_hitl_deferral(
-    stack: Stack, deferred_id: str, result: str, reliance_status: str
+    stack: Stack, deferred_id: str, result: CommitOutcome, reliance_status: str
 ) -> dict[str, Any]:
     """A post-approval warrant failure: DEFER, nothing sealed, approval kept."""
-    assert result.startswith("DEFERRED"), result
-    assert DeferReason.WARRANT_INELIGIBLE.value in result
-    assert f"RELIANCE_{reliance_status}" in result
+    assert result.status is CommitStatus.DEFERRED, result
+    assert result.approval_retained is True, result
+    assert result.deferred_id == deferred_id, result
+    assert DeferReason.WARRANT_INELIGIBLE.value in result.message
+    assert f"RELIANCE_{reliance_status}" in result.message
     await stack.assert_nothing_actuated()
     # The approval was not spent: still RESOLVED (approved), not CONSUMED.
     assert await _approval_status(stack, deferred_id) == "RESOLVED"
@@ -890,14 +901,15 @@ async def _assert_post_hitl_deferral(
 async def _assert_redeems_once(stack: Stack, deferred_id: str) -> None:
     """The same approval now executes, sealed, and can never be replayed."""
     result = await stack.execute(trade(0.96), deferred_id)
-    assert result.startswith("EXECUTED"), result
+    assert result.status is CommitStatus.EXECUTED, result
     stack.actuate.assert_awaited_once()
     assert await _approval_status(stack, deferred_id) == "CONSUMED"
     (decision,) = await stack.records("GOVERNANCE_DECISION")  # exactly one seal
     (reliance,) = _payload(decision)["reliance"]
     assert reliance["reliance_status"] == "ELIGIBLE"
     replay = await stack.execute(trade(0.96), deferred_id)
-    assert replay.startswith("BLOCKED"), replay
+    assert replay.status is CommitStatus.REFUSED, replay
+    assert replay.redemption_refusal is ApprovalRedemptionRefusal.CONSUMED, replay
     stack.actuate.assert_awaited_once()
     assert len(await stack.records("GOVERNANCE_DECISION")) == 1
 
@@ -917,7 +929,7 @@ async def test_post_hitl_revocation_defers_and_keeps_the_approval(
     reliance = await _assert_post_hitl_deferral(
         stack, deferred_id, result, "INELIGIBLE_REVOKED"
     )
-    assert reliance["warrant_digest"] == VEIP_REVOKED_DIGEST
+    assert reliance["warrant_digest"] == PROVIDER_05_REVOKED_DIGEST
 
     # Still revoked: a retry defers again and still spends nothing.
     result = await stack.execute(trade(0.96), deferred_id)
@@ -944,7 +956,7 @@ async def test_post_hitl_source_fault_defers_and_the_approval_redeems_on_recover
     reliance = await _assert_post_hitl_deferral(
         stack, deferred_id, result, "INELIGIBLE_STALE"
     )
-    assert reliance["warrant_digest"] == VEIP_ACTIVE_DIGEST  # what went stale
+    assert reliance["warrant_digest"] == PROVIDER_05_ACTIVE_DIGEST  # what went stale
 
     stack.source.clear_fault()
     await _assert_redeems_once(stack, deferred_id)
@@ -971,7 +983,8 @@ async def test_post_hitl_deferred_approval_still_expires(
     stack.source.seed(_vec(SHARED_WARRANT))
     stack.clock.advance(60.001)
     result = await stack.execute(trade(0.96), deferred_id)
-    assert result.startswith("BLOCKED"), result
+    assert result.status is CommitStatus.REFUSED, result
+    assert result.redemption_refusal is ApprovalRedemptionRefusal.UNKNOWN_OR_EXPIRED
     await stack.assert_nothing_actuated()
 
 
@@ -987,7 +1000,7 @@ async def test_post_hitl_hard_refusal_still_spends_the_approval(
     stack.clock.advance(60.001)
     stack.opa.verdict = "DENY"
     result = await stack.execute(trade(0.96), deferred_id)
-    assert result.startswith("BLOCKED"), result
+    assert result.status is CommitStatus.REFUSED, result
     await stack.assert_nothing_actuated()
     assert await _approval_status(stack, deferred_id) == "CONSUMED"
     stack.refusals.assert_awaited_once()
@@ -996,7 +1009,9 @@ async def test_post_hitl_hard_refusal_still_spends_the_approval(
     stack.opa.verdict = "ALLOW"
     stack.source.seed(_vec(SHARED_WARRANT))
     stack.clock.advance(60.001)
-    assert (await stack.execute(trade(0.96), deferred_id)).startswith("BLOCKED")
+    replay = await stack.execute(trade(0.96), deferred_id)
+    assert replay.status is CommitStatus.REFUSED, replay
+    assert replay.redemption_refusal is ApprovalRedemptionRefusal.CONSUMED, replay
     await stack.assert_nothing_actuated()
 
 
@@ -1017,18 +1032,20 @@ async def test_post_hitl_concurrent_redemptions_after_a_deferral_commit_once(
     results = await asyncio.gather(
         *(stack.execute(trade(0.96), deferred_id) for _ in range(5))
     )
-    assert sum(r.startswith("EXECUTED") for r in results) == 1, results
-    assert all(r.startswith(("EXECUTED", "BLOCKED")) for r in results), results
+    assert sum(r.status is CommitStatus.EXECUTED for r in results) == 1, results
+    assert all(
+        r.status in (CommitStatus.EXECUTED, CommitStatus.REFUSED) for r in results
+    ), results
     stack.actuate.assert_awaited_once()
     assert len(await stack.records("GOVERNANCE_DECISION")) == 1
     assert await _approval_status(stack, deferred_id) == "CONSUMED"
 
 
 @pytest.mark.eu_ecb
-async def test_post_hitl_retries_under_one_transaction_id_execute_once(
+async def test_post_hitl_retries_under_one_idempotency_key_execute_once(
     build: StackFactory,
 ) -> None:
-    """#514: one transaction_id through deferral, retries and redemption.
+    """#514: one idempotency_key through deferral, retries and redemption.
 
     The approval re-claims the key its deferred attempt left BLOCKED, so the
     same trade redeems once the warrant holds again; a plain resubmission
@@ -1037,7 +1054,7 @@ async def test_post_hitl_retries_under_one_transaction_id_execute_once(
     """
     stack = await build(seed=_vec(SHARED_WARRANT))
     deferred_id = await _approved_floor_breach(stack)
-    params = trade(0.96, transaction_id=str(uuid.uuid4()))
+    params = trade(0.96, idempotency_key=str(uuid.uuid4()))
 
     stack.source.seed(_vec(VEC_002_REVOKED))
     stack.clock.advance(60.001)
@@ -1047,13 +1064,16 @@ async def test_post_hitl_retries_under_one_transaction_id_execute_once(
     await _assert_post_hitl_deferral(stack, deferred_id, result, "INELIGIBLE_REVOKED")
     assert len(await stack.records("GOVERNANCE_DEFERRAL")) == 3  # park + 2 retries
 
-    assert await stack.execute(params) == result  # a plain resubmission replays
+    # A plain resubmission replays the recorded reply; nothing executed then.
+    replayed = await stack.execute(params)
+    assert replayed.status is CommitStatus.REFUSED, replayed
+    assert replayed.message == result.message, replayed
     assert len(await stack.records("GOVERNANCE_DEFERRAL")) == 3
 
     stack.source.seed(_vec(SHARED_WARRANT))
     stack.clock.advance(60.001)
     executed = await stack.execute(params, deferred_id)
-    assert executed.startswith("EXECUTED"), executed
+    assert executed.status is CommitStatus.EXECUTED, executed
     assert await stack.execute(params, deferred_id) == executed
     assert await stack.execute(params) == executed
     stack.actuate.assert_awaited_once()
@@ -1105,7 +1125,7 @@ async def test_us_fed_unchanged_095_clears_and_executes_without_a_warrant(
     body = _body(await stack.validate(trade(0.95)))
     assert body["verdict"] == GovernanceDecision.ALLOW
     assert "reliance" not in body
-    assert (await stack.execute(trade(0.95))).startswith("EXECUTED")
+    assert (await stack.execute(trade(0.95))).status is CommitStatus.EXECUTED
     (decision,) = await stack.records("GOVERNANCE_DECISION")
     assert "reliance" not in _payload(decision)
     assert fetches == []
@@ -1129,18 +1149,18 @@ async def test_contract_fields_in_the_chained_allow_decision_and_envelope(
 ) -> None:
     stack = await build(seed=_vec(SHARED_WARRANT))
     envelope = (await stack.validate(trade(0.98))).json()
-    assert (await stack.execute(trade(0.98))).startswith("EXECUTED")
+    assert (await stack.execute(trade(0.98))).status is CommitStatus.EXECUTED
 
     (decision,) = await stack.records("GOVERNANCE_DECISION")  # chain verified
     (reliance,) = _payload(decision)["reliance"]
     assert _contract_fields(reliance) == {
         "warrant_id": "warrant-veip-2026-001",
         "norm_id": TRADE_CONFIDENCE_NORM_ID,
-        "digest": VEIP_ACTIVE_DIGEST,
+        "digest": PROVIDER_05_ACTIVE_DIGEST,
         "reliance_status": "ELIGIBLE",
         "governing_version": "cage-policy-2.1.0",
         "residual_risk_ref": "RRR-2026-08-01-A1",
-        "attested_at": VEIP_NOW.isoformat(),
+        "attested_at": PROVIDER_05_NOW.isoformat(),
     }
     assert reliance["required_governing_version"] == "cage-policy-2.1.0"
     assert reliance["issuing_authority"] == SHARED_WARRANT["issuing_authority"]
@@ -1203,7 +1223,7 @@ async def test_contract_fields_in_the_chained_post_hitl_deferral(
     assert _contract_fields(reliance) == {
         "warrant_id": "warrant-veip-2026-001",
         "norm_id": TRADE_CONFIDENCE_NORM_ID,
-        "digest": VEIP_REVOKED_DIGEST,
+        "digest": PROVIDER_05_REVOKED_DIGEST,
         "reliance_status": "INELIGIBLE_REVOKED",
         "governing_version": "cage-policy-2.1.0",
         "residual_risk_ref": "RRR-2026-08-01-A1",
@@ -1217,19 +1237,19 @@ async def test_contract_fields_in_the_chained_post_hitl_deferral(
 
 
 @pytest.mark.eu_ecb
-async def test_veip_v02_active_warrant_is_verified_and_executes_e2e(
+async def test_provider_05_v02_active_warrant_is_verified_and_executes_e2e(
     build: StackFactory,
 ) -> None:
     """VEIP v0.2 ACTIVE warrant + verified key manifest -> VERIFIED reliance & ALLOW."""
-    from tests.integrations.provider_05.test_provider_05_veip_vectors import (
-        VEIP_V02_EVAL_TIME,
-        VEIP_V02_KEY_MANIFEST,
-        VEIP_V02_WARRANTS,
+    from tests.integrations.provider_05.test_provider_05_v01_vectors import (
+        PROVIDER_05_V02_EVAL_TIME,
+        PROVIDER_05_V02_KEY_MANIFEST,
+        PROVIDER_05_V02_WARRANTS,
     )
 
-    clock = _Clock(wall=VEIP_V02_EVAL_TIME)
-    stack = await build(seed=_vec(VEIP_V02_WARRANTS["ACTIVE"]), clock=clock)
-    stack.source.seed_key_manifest(VEIP_V02_KEY_MANIFEST)
+    clock = _Clock(wall=PROVIDER_05_V02_EVAL_TIME)
+    stack = await build(seed=_vec(PROVIDER_05_V02_WARRANTS["ACTIVE"]), clock=clock)
+    stack.source.seed_key_manifest(PROVIDER_05_V02_KEY_MANIFEST)
 
     response = await stack.validate(trade(0.98))
     assert response.status_code == 200
@@ -1245,7 +1265,8 @@ async def test_veip_v02_active_warrant_is_verified_and_executes_e2e(
     )
 
     out = await stack.execute(trade(0.98))
-    assert out.startswith("EXECUTED:")
+    assert out.status is CommitStatus.EXECUTED, out
+    assert out.message.startswith("EXECUTED:")
     stack.actuate.assert_awaited_once()
     (decision,) = await stack.records("GOVERNANCE_DECISION")
     (reliance,) = _payload(decision)["reliance"]
@@ -1265,21 +1286,21 @@ async def test_veip_v02_active_warrant_is_verified_and_executes_e2e(
         ("UNKNOWN_KID", "INELIGIBLE_AUTHENTICITY", "UNVERIFIED"),
     ],
 )
-async def test_veip_v02_ineligible_scenarios_defer_e2e(
+async def test_provider_05_v02_ineligible_scenarios_defer_e2e(
     build: StackFactory,
     scenario: str,
     expected_status: str,
     expected_verified: str,
 ) -> None:
-    from tests.integrations.provider_05.test_provider_05_veip_vectors import (
-        VEIP_V02_EVAL_TIME,
-        VEIP_V02_KEY_MANIFEST,
-        VEIP_V02_WARRANTS,
+    from tests.integrations.provider_05.test_provider_05_v01_vectors import (
+        PROVIDER_05_V02_EVAL_TIME,
+        PROVIDER_05_V02_KEY_MANIFEST,
+        PROVIDER_05_V02_WARRANTS,
     )
 
-    clock = _Clock(wall=VEIP_V02_EVAL_TIME)
-    stack = await build(seed=_vec(VEIP_V02_WARRANTS[scenario]), clock=clock)
-    stack.source.seed_key_manifest(VEIP_V02_KEY_MANIFEST)
+    clock = _Clock(wall=PROVIDER_05_V02_EVAL_TIME)
+    stack = await build(seed=_vec(PROVIDER_05_V02_WARRANTS[scenario]), clock=clock)
+    stack.source.seed_key_manifest(PROVIDER_05_V02_KEY_MANIFEST)
 
     committed = await assert_commit_defers(stack, trade(0.98), expected_status)
     assert committed["verification_status"] == expected_verified

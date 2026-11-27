@@ -137,7 +137,7 @@ class BoundingContractTierPlugin(ReadOnlyTier):
                 trader_role=params.get("trader_role", "autonomous"),
                 jurisdiction=params.get("jurisdiction"),
                 rollback_window_seconds=raw_window,
-                transaction_id=params.get("transaction_id"),
+                idempotency_key=params.get("idempotency_key"),
             )
         except (ValueError, TypeError, KeyError) as e:
             logger.error("Failed to construct BoundedTradeRequest from params: %s", e)
@@ -171,9 +171,16 @@ class BoundingContractTierPlugin(ReadOnlyTier):
             Violation with appropriate code and kind
         """
         # Determine kind based on severity
+        # INFRASTRUCTURE → ViolationKind.INFRASTRUCTURE (503, no refusal receipt)
         # HARD_BLOCK → ViolationKind.HARD (fail-closed, must abort)
         # HITL_ESCALATE → ViolationKind.HITL (parks in DeferQueue for human review)
-        if result.severity == ContractSeverity.HITL_ESCALATE:
+        infra_dependency: str | None = None
+        infra_error_code: str | None = None
+        if result.severity == ContractSeverity.INFRASTRUCTURE:
+            kind = ViolationKind.INFRASTRUCTURE
+            infra_dependency = "bounding"
+            infra_error_code = "bounding_provider_unavailable"
+        elif result.severity == ContractSeverity.HITL_ESCALATE:
             kind = ViolationKind.HITL
         else:  # HARD_BLOCK
             kind = ViolationKind.HARD
@@ -204,4 +211,6 @@ class BoundingContractTierPlugin(ReadOnlyTier):
             or f"BOUNDING_{result.contract_id}_{result.severity.value}",
             message=message,
             kind=kind,
+            infra_dependency=infra_dependency,
+            infra_error_code=infra_error_code,
         )

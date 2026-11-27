@@ -98,6 +98,14 @@ class SettlementLedger:
             self._prune(now)
             self._entries[seal] = (now, commits)
 
+    def peek(self, seal: str) -> tuple[HeldCommit, ...]:
+        """Return held commits behind ``seal`` without consuming them."""
+        now = self._clock()
+        with self._lock:
+            self._prune(now)
+            entry = self._entries.get(seal)
+        return entry[1] if entry is not None else ()
+
     def take(self, seal: str) -> tuple[HeldCommit, ...]:
         """Remove and return the commits behind ``seal`` (empty if none or expired)."""
         now = self._clock()

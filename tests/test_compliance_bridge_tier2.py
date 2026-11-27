@@ -73,9 +73,9 @@ def _make_metrics(
     return ComplianceMetrics(
         control_id=control_id,
         safety_rate=safety_rate,
-        total_traces=100,
-        blocked_traces=int((1 - safety_rate) * 100),
-        passed_traces=int(safety_rate * 100),
+        total_traces=300,
+        blocked_traces=int((1 - safety_rate) * 300),
+        passed_traces=int(safety_rate * 300),
         window_hours=24.0,
         last_event_utc=datetime.now(tz=timezone.utc).isoformat(),
         evidence_age_seconds=evidence_age,

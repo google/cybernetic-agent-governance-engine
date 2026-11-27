@@ -198,6 +198,9 @@ class CausalTierPlugin(ReadOnlyTier):
                     self._violation(
                         CODE_TELEMETRY_UNAVAILABLE,
                         f"Telemetry provider failed: {provider_error}",
+                        kind=ViolationKind.INFRASTRUCTURE,
+                        infra_dependency="causal_telemetry",
+                        infra_error_code="causal_telemetry_unavailable",
                     )
                 ]
             decision = self._gatekeeper.evaluate(
@@ -211,14 +214,34 @@ class CausalTierPlugin(ReadOnlyTier):
         code, message = _REASON_CODES.get(
             decision.reason, (CODE_CHECK_FAILED, _CHECK_FAILED_MESSAGE)
         )
+        if code == CODE_TELEMETRY_UNAVAILABLE:
+            return [
+                self._violation(
+                    code,
+                    message,
+                    kind=ViolationKind.INFRASTRUCTURE,
+                    infra_dependency="causal_telemetry",
+                    infra_error_code="causal_telemetry_unavailable",
+                )
+            ]
         return [self._violation(code, message)]
 
-    def _violation(self, code: str, message: str) -> Violation:
+    def _violation(
+        self,
+        code: str,
+        message: str,
+        *,
+        kind: ViolationKind = ViolationKind.HARD,
+        infra_dependency: str | None = None,
+        infra_error_code: str | None = None,
+    ) -> Violation:
         return Violation(
             tier=self.tier_name,
             code=code,
             message=message,
-            kind=ViolationKind.HARD,
+            kind=kind,
+            infra_dependency=infra_dependency,
+            infra_error_code=infra_error_code,
         )
 
 

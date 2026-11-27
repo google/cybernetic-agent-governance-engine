@@ -38,15 +38,17 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+from src.gateway.governance.warrant.model import WARRANT_SCHEMA_VERSION_V02
 
 #: Ed25519 SubjectPublicKeyInfo (SPKI) DER prefix (12 bytes) before the 32-byte raw key.
 _ED25519_SPKI_PREFIX = bytes.fromhex("302a300506032b6570032100")
 _RAW_KEY_LEN = 32
 _ED25519_SIG_LEN = 64
 
-#: Supported key manifest schema versions.
-MANIFEST_SCHEMA_VERSION_V02 = "veip-key-manifest/0.2"
-MANIFEST_SCHEMA_VERSION_V03 = "veip-key-manifest/0.3"
+#: Default vendor-neutral key manifest schema versions (Layer 3 adapters supply
+#: issuer-specific wire schema identifiers on WarrantTrustAnchor).
+MANIFEST_SCHEMA_VERSION_V02 = "cage-key-manifest/0.2"
+MANIFEST_SCHEMA_VERSION_V03 = "cage-key-manifest/0.3"
 SUPPORTED_MANIFEST_SCHEMA_VERSIONS: tuple[str, ...] = (
     MANIFEST_SCHEMA_VERSION_V02,
     MANIFEST_SCHEMA_VERSION_V03,
@@ -146,6 +148,9 @@ class WarrantTrustAnchor:
     root_kid: str
     public_key_b64: str
     expected_fingerprint: str
+    accepted_manifest_schemas: tuple[str, ...] = SUPPORTED_MANIFEST_SCHEMA_VERSIONS
+    purpose_required_manifest_schemas: tuple[str, ...] = (MANIFEST_SCHEMA_VERSION_V03,)
+    accepted_warrant_schemas: tuple[str, ...] = (WARRANT_SCHEMA_VERSION_V02,)
     _raw_key: bytes = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -159,6 +164,21 @@ class WarrantTrustAnchor:
             raise ValueError(
                 "WarrantTrustAnchor.expected_fingerprint must be 'sha256:<64-hex>'"
             )
+        manifest_schemas = tuple(self.accepted_manifest_schemas)
+        warrant_schemas = tuple(self.accepted_warrant_schemas)
+        purpose_schemas = tuple(self.purpose_required_manifest_schemas)
+        if not manifest_schemas or not all(
+            isinstance(s, str) and s.strip() for s in manifest_schemas
+        ):
+            raise ValueError(
+                "WarrantTrustAnchor.accepted_manifest_schemas must be non-empty"
+            )
+        if not warrant_schemas or not all(
+            isinstance(s, str) and s.strip() for s in warrant_schemas
+        ):
+            raise ValueError(
+                "WarrantTrustAnchor.accepted_warrant_schemas must be non-empty"
+            )
         raw_key = _extract_ed25519_raw_public_key(self.public_key_b64)
         actual_fp = f"sha256:{hashlib.sha256(raw_key).hexdigest()}"
         if actual_fp != self.expected_fingerprint.lower():
@@ -166,6 +186,9 @@ class WarrantTrustAnchor:
                 f"Trust anchor fingerprint mismatch for {self.root_kid!r}: "
                 f"expected {self.expected_fingerprint}, computed {actual_fp}"
             )
+        object.__setattr__(self, "accepted_manifest_schemas", manifest_schemas)
+        object.__setattr__(self, "purpose_required_manifest_schemas", purpose_schemas)
+        object.__setattr__(self, "accepted_warrant_schemas", warrant_schemas)
         object.__setattr__(self, "_raw_key", raw_key)
 
     @property
@@ -246,6 +269,7 @@ class VerifiedKeyManifest:
     signature: str
     keys: Mapping[str, ManifestKeyEntry]
     anchor_fingerprint: str
+    accepted_warrant_schemas: tuple[str, ...] = (WARRANT_SCHEMA_VERSION_V02,)
     _seal: object = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -255,6 +279,9 @@ class VerifiedKeyManifest:
                 "use VerifiedKeyManifest.verify(raw_manifest, trust_anchor)"
             )
         object.__setattr__(self, "keys", MappingProxyType(dict(self.keys)))
+        object.__setattr__(
+            self, "accepted_warrant_schemas", tuple(self.accepted_warrant_schemas)
+        )
 
     @classmethod
     def verify(
@@ -288,7 +315,7 @@ class VerifiedKeyManifest:
             )
 
         schema_version = raw_manifest["schema_version"]
-        if schema_version not in SUPPORTED_MANIFEST_SCHEMA_VERSIONS:
+        if schema_version not in trust_anchor.accepted_manifest_schemas:
             raise KeyManifestVerificationError(
                 f"Unsupported key manifest schema_version: {schema_version!r}"
             )
@@ -355,7 +382,10 @@ class VerifiedKeyManifest:
                         "Key manifest entry must be a dict"
                     )
                 raw_purpose = str(item.get("purpose", "") or "")
-                if schema_version == MANIFEST_SCHEMA_VERSION_V03 and not raw_purpose:
+                if (
+                    schema_version in trust_anchor.purpose_required_manifest_schemas
+                    and not raw_purpose
+                ):
                     raise KeyManifestVerificationError(
                         f"Key manifest v0.3 entry {item.get('kid')!r} missing required 'purpose'"
                     )
@@ -393,6 +423,7 @@ class VerifiedKeyManifest:
             signature=str(signature),
             keys=parsed_keys,
             anchor_fingerprint=trust_anchor.fingerprint,
+            accepted_warrant_schemas=trust_anchor.accepted_warrant_schemas,
             _seal=_MANIFEST_SEAL,
         )
         if now is not None and not manifest.is_valid_at(now):

@@ -41,12 +41,12 @@ from src.gateway.governance.warrant import (
     WarrantStandingVerifier,
 )
 from src.integrations.provider_05 import Provider05WarrantSource
-from tests.integrations.provider_05.test_provider_05_veip_vectors import (
+from tests.integrations.provider_05.test_provider_05_v01_vectors import (
+    PROVIDER_05_ACTIVE_DIGEST,
+    PROVIDER_05_REVOKED_DIGEST,
+    PROVIDER_05_V01_VECTORS,
     SHARED_CONTEXT,
     SHARED_WARRANT,
-    VEIP_ACTIVE_DIGEST,
-    VEIP_REVOKED_DIGEST,
-    VEIP_V01_VECTORS,
 )
 
 pytestmark = [pytest.mark.unit, pytest.mark.local, pytest.mark.partner]
@@ -83,16 +83,18 @@ async def test_configured_unreachable_endpoint_raises_connection_error() -> None
     )
     async with httpx.AsyncClient(transport=transport) as client:
         source = Provider05WarrantSource(
-            endpoint="https://veip.invalid/", http_client=client
+            endpoint="https://provider-05.invalid/", http_client=client
         )
-        with pytest.raises(ConnectionError, match="VEIP HTTP request failed"):
+        with pytest.raises(ConnectionError, match="Provider 05 HTTP request failed"):
             await source.fetch(NORM_ID)
 
 
 @pytest.mark.asyncio
 async def test_http_404_resolves_as_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     """HTTP 404 from the VEIP v0.2 endpoint returns None (INELIGIBLE_MISSING)."""
-    monkeypatch.setenv("PROVIDER_05_ATTESTATION_ENDPOINT", "https://veip.example")
+    monkeypatch.setenv(
+        "PROVIDER_05_ATTESTATION_ENDPOINT", "https://provider-05.example"
+    )
     transport = httpx.MockTransport(lambda request: httpx.Response(404))
     async with httpx.AsyncClient(transport=transport) as client:
         source = Provider05WarrantSource(http_client=client)
@@ -106,7 +108,7 @@ async def test_fetch_returns_warrant_exactly_as_issued() -> None:
     source.seed(issued)
     fetched = await source.fetch(NORM_ID)
     assert fetched is issued
-    assert fetched.digest == VEIP_ACTIVE_DIGEST
+    assert fetched.digest == PROVIDER_05_ACTIVE_DIGEST
     assert await source.fetch("some.other.norm") is None
 
 
@@ -121,18 +123,18 @@ async def test_reseed_replaces_current_warrant() -> None:
                 **SHARED_WARRANT,
                 "status": "REVOKED",
                 "revocation_ref": "Emergency Risk Notice #912",
-                "digest": VEIP_REVOKED_DIGEST,
+                "digest": PROVIDER_05_REVOKED_DIGEST,
             }
         )
     )
     result = _verify(await source.fetch(NORM_ID), SHARED_CONTEXT)
     assert result.reliance_status == RelianceStatus.INELIGIBLE_REVOKED
-    assert result.warrant_digest == VEIP_REVOKED_DIGEST
+    assert result.warrant_digest == PROVIDER_05_REVOKED_DIGEST
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("warrant", "context", "expected"), VEIP_V01_VECTORS)
-async def test_veip_vectors_through_source(
+@pytest.mark.parametrize(("warrant", "context", "expected"), PROVIDER_05_V01_VECTORS)
+async def test_provider_05_vectors_through_source(
     warrant: dict[str, Any], context: dict[str, Any], expected: RelianceStatus
 ) -> None:
     source = Provider05WarrantSource()
@@ -169,7 +171,7 @@ async def test_malformed_payload_is_not_a_warrant() -> None:
     source.inject_fault("malformed_payload")
     payload = await source.fetch(NORM_ID)
     assert isinstance(payload, dict) and not isinstance(payload, Warrant)
-    assert payload["digest"] == VEIP_ACTIVE_DIGEST
+    assert payload["digest"] == PROVIDER_05_ACTIVE_DIGEST
 
 
 async def test_unverified_source_rewrites_fields_but_keeps_the_declared_digest() -> (
@@ -179,8 +181,8 @@ async def test_unverified_source_rewrites_fields_but_keeps_the_declared_digest()
     source.inject_fault(FaultMode.UNVERIFIED_SOURCE)
     warrant = await source.fetch(NORM_ID)
     assert isinstance(warrant, Warrant)
-    assert warrant.digest == VEIP_ACTIVE_DIGEST
-    assert warrant.compute_digest() != VEIP_ACTIVE_DIGEST
+    assert warrant.digest == PROVIDER_05_ACTIVE_DIGEST
+    assert warrant.compute_digest() != PROVIDER_05_ACTIVE_DIGEST
     result = _verify(warrant, SHARED_CONTEXT)
     assert result.reliance_status == RelianceStatus.INELIGIBLE_UNRESOLVED
 
@@ -214,7 +216,9 @@ async def test_cache_treats_every_transport_fault_as_unresolved_then_stale(
     now[0] += 60.001
     stale = await cache.observe(NORM_ID)
     assert stale.freshness is WarrantFreshness.STALE
-    assert stale.warrant is not None and stale.warrant.digest == VEIP_ACTIVE_DIGEST
+    assert (
+        stale.warrant is not None and stale.warrant.digest == PROVIDER_05_ACTIVE_DIGEST
+    )
 
 
 @pytest.mark.parametrize(
@@ -246,4 +250,4 @@ async def test_clear_fault_restores_the_seeded_warrant() -> None:
     source.inject_fault(FaultMode.CONNECTION_ERROR)
     source.clear_fault()
     warrant = await source.fetch(NORM_ID)
-    assert isinstance(warrant, Warrant) and warrant.digest == VEIP_ACTIVE_DIGEST
+    assert isinstance(warrant, Warrant) and warrant.digest == PROVIDER_05_ACTIVE_DIGEST

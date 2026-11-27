@@ -34,7 +34,7 @@ import logging
 import math
 import os
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import AsyncExitStack
 from contextvars import ContextVar, Token
 from datetime import datetime, timezone
@@ -47,6 +47,7 @@ from opentelemetry import context as otel_context
 from opentelemetry.propagate import extract as otel_extract
 from pydantic import BaseModel, Field, field_validator
 
+from src.gateway.governance.commit_outcome import ApprovalRedemptionRefusal
 from src.gateway.governance.decisions import GovernanceDecision
 from src.gateway.governance.evidence.stream import get_evidence_sink
 from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
@@ -62,6 +63,7 @@ from src.gateway.governance.governor.metrics import (
     mark_request_refused,
 )
 from src.gateway.governance.governor.pipeline import OpaVerdict
+from src.gateway.governance.governor.sealing import SealedAction
 from src.gateway.governance.governor.stages.opa import decode_opa_verdict
 from src.gateway.governance.iso_control import stamp_iso_control
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
@@ -72,6 +74,7 @@ from src.gateway.observability.mcp_tracing import (
 )
 from src.gateway.observability.mcp_tracing import sanitize_trace_carrier
 from src.gateway.server.app_state import governor_of
+from src.gateway.server.quarantine_guard import refuse_if_quarantined
 from src.gateway.server.state_commitment_api import (
     router as state_commitment_router,
 )
@@ -151,6 +154,25 @@ class GovernanceBlockedError(PermissionError):
         self.violated_tier: str = violated_tier
 
 
+class ApprovalRedemptionRefused(GovernanceBlockedError):
+    """The committing run refused because the named approval was not redeemable.
+
+    ``refusal`` is the typed reason (POAM-2026-245); callers decide on it
+    (``is_retryable_refusal``), never on the message.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        refusal: ApprovalRedemptionRefusal,
+        proof_hash: str = "",
+        violated_tier: str = "",
+    ) -> None:
+        super().__init__(message, proof_hash=proof_hash, violated_tier=violated_tier)
+        self.refusal: ApprovalRedemptionRefusal = refusal
+
+
 class ActionDeferred(PermissionError):
     """The committing run deferred: nothing was sealed, committed or refused.
 
@@ -171,27 +193,32 @@ class ActionDeferred(PermissionError):
 
 async def enforce_governance(
     governor: SymbolicGovernor, tool_name: str, params: dict[str, Any]
-) -> str:
+) -> SealedAction:
     """Run the full Symbolic Governor pipeline for the given tool call.
 
-    Gap 2 fix (No-Direct-Bind): ``govern()`` now returns a routing seal on
-    approval.  This function propagates that seal to callers so they can
-    verify it before executing the governed action, satisfying the invariant:
+    Gap 2 fix (No-Direct-Bind): ``govern()`` returns a
+    :class:`~src.gateway.governance.governor.sealing.SealedAction` on
+    approval: the routing seal and the evaluated params it commits to (the
+    caller's params with the action's server inputs bound once by the
+    kernel). Callers verify the seal against ``SealedAction.params`` and
+    actuate exactly those params, never their own input, satisfying the
+    invariant:
         NoDirectBind == (phase = "EXECUTED") => (resolvedAllow = TRUE)
 
+    Every tool call is governed; there is no exempt tool name.
+
     Returns:
-        HMAC-SHA256 routing seal string (non-empty on approval).
+        The ``SealedAction`` (``seal`` non-empty on approval).
 
     Raises:
         ActionDeferred: The committing run deferred (an ineligible warrant).
         PermissionError: If the governor blocks the action.
+        GovernanceInfrastructureError: A dependency was unavailable, including
+            a refusal whose receipt could not be signed (no unsigned receipt
+            is committed).
     """
-    if tool_name in {"verify_content_safety"}:
-        return ""  # Exempt kernel-internal read-only tools from governance overhead
-
     try:
-        seal = await governor.govern(tool_name, params)
-        return seal
+        return await governor.govern(tool_name, params)
     except GovernanceDeferred as exc:
         # A warrant failure removes reliance; it is never a refusal. The
         # deferral (parked token + GOVERNANCE_DEFERRAL) is already evidenced.
@@ -240,48 +267,76 @@ async def enforce_approved_governance(
     *,
     deferred_id: str,
     approval_covers: Callable[[dict[str, Any], dict[str, Any]], bool],
-) -> str:
+) -> SealedAction:
     """Commit and seal a human-approved action: the post-approval committing run.
 
     1. Check that the ``HITL_REQUIRED`` token ``deferred_id`` in the gateway's
-       DeferQueue is redeemable (``DeferQueue.redeemable_approval``): quorum-
-       approved, unspent, parked for ``tool_name``, and
-       ``approval_covers(approved_params, params)`` holds, so an approval for
-       one action cannot authorise a different or larger one. Nothing is
-       spent yet.
+       DeferQueue is redeemable by its state alone
+       (``DeferQueue.redeemable_token``, which takes no ``covers``): quorum-
+       approved, unspent, parked for ``tool_name`` and carrying approved
+       params. This pre-check binds no server inputs and decides no coverage
+       of its own. Nothing is spent yet.
     2. Run ``SymbolicGovernor.revalidate_post_hitl()`` (POST_HITL profile) on
-       the fresh ``params``, handing it the approval bound to its
-       ``barrier_preview``, to the human-review holds the reviewer was shown
-       (``DeferToken.hitl_holds``; a hold outside them refuses the run) and
-       to a ``spend`` that re-checks the token and
-       consumes it with the ``RESOLVED -> CONSUMED`` compare-and-swap
-       (``DeferQueue.consume_approval``). The governor spends it only when
-       it seals (a replayed or concurrent ``deferred_id`` loses the swap and
-       seals nothing) or refuses; a warrant-ineligible DEFER leaves it
-       unspent, so the same approval redeems once the warrant returns
-       (POAM-2026-104).
+       the fresh ``params``. The governor binds their server inputs exactly
+       once; the evaluated params are what every stage evaluates and what is
+       sealed. It is handed the approval bound to its ``barrier_preview``,
+       to the human-review holds the reviewer was shown
+       (``DeferToken.hitl_holds``; a hold outside them refuses the run), to
+       a ``covers`` that checks the evaluated params against the token's
+       approved params (``approval_covers(approved_params, evaluated)``)
+       before any stage runs, and to a ``spend`` that consumes the token
+       with the ``RESOLVED -> CONSUMED`` compare-and-swap
+       (``DeferQueue.consume_approval``) only if ``approval_covers`` holds
+       for the same evaluated params. The governor spends it only when it
+       seals (a replayed or concurrent ``deferred_id`` loses the swap and
+       seals nothing) or refuses; an uncovered request, an infrastructure
+       block or a warrant-ineligible DEFER leaves it unspent, so the same
+       approval redeems once the warrant returns (POAM-2026-104).
+
+    An approval is consumed only by a run that seals exactly the params it
+    covers. Coverage is evaluated against the evaluated (sealed) params,
+    before any stage runs and again inside the compare-and-swap that
+    consumes the approval. There is no second server-input lookup, so an
+    approval for one action, trader or amount cannot authorise a different
+    or larger one. ``approval_covers(approved, evaluated)`` must be side
+    effect free; one that raises never authorises.
 
     Returns:
-        The routing seal for ``params``.
+        The ``SealedAction``: the seal and the evaluated params it commits
+        to. Callers verify the seal against, and actuate, those params.
 
     Raises:
         ActionDeferred: Post-approval re-validation deferred; the approval
             is retained (``approval_retained``).
-        PermissionError: The approval is missing, unapproved, mismatched,
-            expired or already consumed, or post-approval re-validation
-            refused.
+        ApprovalRedemptionRefused: The approval is not redeemable; ``refusal``
+            names why (pending, consumed, expired, mismatched, uncovered...).
+        PermissionError: Post-approval re-validation refused.
+        GovernanceInfrastructureError: A dependency was unavailable, including
+            a refusal whose receipt could not be signed (no unsigned receipt
+            is committed). The signing failure itself spends nothing;
+            an approval already spent by a DENY stays spent.
     """
     from src.gateway.governance.defer_queue import open_defer_queue
 
-    def _covers(approved: dict[str, Any]) -> bool:
+    def _covers(approved: Any, evaluated: Mapping[str, Any]) -> bool:
+        if not isinstance(approved, dict):
+            return False
         try:
-            return bool(approval_covers(approved, params))
+            return bool(approval_covers(approved, dict(evaluated)))
         except Exception as exc:  # a raising matcher never authorises
             logger.warning("approval_covers raised for %s: %s", tool_name, exc)
             return False
 
-    async def _refuse_unredeemable() -> NoReturn:
-        reason = f"no unconsumed approval {deferred_id!r} covers this {tool_name}"
+    # Why the approval was refused inside the committing run (not covering the
+    # evaluated params, or not spendable), recorded where it is decided so the
+    # refusal raised below names it without reading any message.
+    run_refusals: list[ApprovalRedemptionRefusal] = []
+
+    async def _refuse_unredeemable(refusal: ApprovalRedemptionRefusal) -> NoReturn:
+        reason = (
+            f"approval {deferred_id!r} is not redeemable for this {tool_name} "
+            f"({refusal.value})"
+        )
         emitted = await _emit_refusal_receipt(
             action_id=tool_name,
             refusal_reason=reason,
@@ -292,8 +347,9 @@ async def enforce_approved_governance(
         resolved_hash = emitted if isinstance(emitted, str) else ""
         if resolved_hash:
             set_last_refusal_proof_hash(resolved_hash)
-        raise GovernanceBlockedError(
+        raise ApprovalRedemptionRefused(
             f"Governance Blocked: {reason}",
+            refusal=refusal,
             proof_hash=resolved_hash,
             violated_tier="MIDDLEWARE",
         )
@@ -310,9 +366,9 @@ async def enforce_approved_governance(
 
             try:
                 queue = await stack.enter_async_context(open_defer_queue())
-                token = await queue.redeemable_approval(
-                    deferred_id, action=tool_name, covers=_covers
-                )
+                # Token state only: coverage is decided against the evaluated
+                # params inside the committing run.
+                checked = await queue.check_redemption(deferred_id, action=tool_name)
             except Exception as exc:  # queue unreachable: block 503, preserve approval
                 logger.error("DeferQueue unavailable checking %s: %s", deferred_id, exc)
                 await handle_infrastructure_block(
@@ -333,13 +389,19 @@ async def enforce_approved_governance(
                     ],
                     [],
                 )
+            token = checked.token
             if token is None:
-                await _refuse_unredeemable()
+                await _refuse_unredeemable(
+                    checked.refusal or ApprovalRedemptionRefusal.UNRECOGNIZED_STATE
+                )
+            approved_params = token.opa_input_snapshot.get("params")
 
-            async def _spend() -> bool:
+            async def _spend(evaluated: Mapping[str, Any]) -> bool:
                 try:
-                    spent = await queue.consume_approval(
-                        deferred_id, action=tool_name, covers=_covers
+                    spent = await queue.consume_redemption(
+                        deferred_id,
+                        action=tool_name,
+                        covers=lambda approved: _covers(approved, evaluated),
                     )
                 except (
                     Exception
@@ -351,12 +413,24 @@ async def enforce_approved_governance(
                         f"DeferQueue unavailable spending approval "
                         f"{deferred_id}: {type(exc).__name__}: {exc}"
                     ) from exc
-                return spent is not None
+                if spent.token is None:
+                    run_refusals.append(
+                        spent.refusal or ApprovalRedemptionRefusal.UNRECOGNIZED_STATE
+                    )
+                    return False
+                return True
+
+            def _approval_covers_evaluated(evaluated: Mapping[str, Any]) -> bool:
+                if _covers(approved_params, evaluated):
+                    return True
+                run_refusals.append(ApprovalRedemptionRefusal.PARAMS_NOT_COVERED)
+                return False
 
             approval = PostHitlApproval(
                 approval_id=deferred_id,
                 barrier_preview=token.barrier_preview,
                 spend=_spend,
+                covers=_approval_covers_evaluated,
                 thread_id=token.thread_id,
                 approved_holds=token.hitl_holds,
             )
@@ -389,12 +463,24 @@ async def enforce_approved_governance(
         )
         if resolved_hash:
             set_last_refusal_proof_hash(resolved_hash)
+        violated_tier = (
+            str(getattr(exc.receipt, "violated_tier", "") or "")
+            if exc.receipt is not None
+            else ""
+        )
+        if run_refusals:
+            # The governor refused because the approval did not cover the
+            # evaluated params or could not be spent.
+            raise ApprovalRedemptionRefused(
+                f"Governance Blocked: {exc}",
+                refusal=run_refusals[-1],
+                proof_hash=resolved_hash,
+                violated_tier=violated_tier,
+            ) from exc
         raise GovernanceBlockedError(
             f"Governance Blocked: {exc}",
             proof_hash=resolved_hash,
-            violated_tier=str(getattr(exc.receipt, "violated_tier", "") or "")
-            if exc.receipt is not None
-            else "",
+            violated_tier=violated_tier,
         ) from exc
 
 
@@ -415,24 +501,34 @@ async def sanitize_mcp_tool_response(
     tool_name: str,
     response_text: str,
     span: Any = None,
+    *,
+    post_exec_protected: bool = False,
 ) -> str | None:
     """Sanitize an MCP tool response for indirect injection (AI 600-1 §2.3, AI600-003).
 
     Checks the tool response against the indirect injection pattern set in
     ``prompt_injection_detector.detect_indirect_injection()``.  Called in the
     governance middleware after every MCP tool invocation, before the response
-    is returned to the agent pipeline.
+    is returned to the agent pipeline. Stamps ISO 42001 ``A.9.2`` ``BLOCK``
+    only when ``not post_exec_protected`` (POAM-2026-253).
 
     Args:
-        tool_name:     Name of the MCP tool that produced the response.
-        response_text: The raw string content returned by the tool call.
-        span:          Active OTel span for evidence stamping (optional).
+        tool_name:           Name of the MCP tool that produced the response.
+        response_text:       The raw string content returned by the tool call.
+        span:                Active OTel span for evidence stamping (optional).
+        post_exec_protected: True when the tool run executed or may have
+                             executed; suppresses ``A.9.2`` ``BLOCK`` stamping.
 
     Returns:
         A violation description string if indirect injection was detected,
         ``None`` if the response is clean.
     """
-    return await _sanitize_mcp_tool_response(tool_name, response_text, span=span)
+    return await _sanitize_mcp_tool_response(
+        tool_name,
+        response_text,
+        span=span,
+        post_exec_protected=post_exec_protected,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -510,12 +606,47 @@ class ValidateActionRequest(BaseModel):
     action: str
     params: dict[str, Any]
     policy_version_id: str | None = None
+    correlation_id: str | None = None
 
     @field_validator("params")
     @classmethod
     def _reject_non_finite_floats(cls, v: dict[str, Any]) -> dict[str, Any]:
         _check_non_finite_recursive(v, "params")
         return v
+
+
+def _resolve_validate_correlation_id(
+    body_correlation_id: str | None,
+    header_correlation_id: str | None,
+) -> tuple[str | None, JSONResponse | None]:
+    """Resolve and validate per-request correlation_id from body and X-Correlation-ID."""
+    body_clean: str | None = None
+    if body_correlation_id is not None:
+        body_clean = body_correlation_id.strip()
+        if not body_clean:
+            return None, JSONResponse(
+                status_code=400,
+                content={
+                    "error": "invalid_correlation_id",
+                    "detail": "correlation_id must not be empty when supplied.",
+                },
+            )
+    header_clean: str | None = None
+    if header_correlation_id is not None:
+        header_clean = header_correlation_id.strip() or None
+    if (
+        body_clean is not None
+        and header_clean is not None
+        and body_clean != header_clean
+    ):
+        return None, JSONResponse(
+            status_code=400,
+            content={
+                "error": "mismatched_correlation_id",
+                "detail": "Body correlation_id does not match X-Correlation-ID header.",
+            },
+        )
+    return body_clean or header_clean, None
 
 
 class PolicyPrecheckRequest(BaseModel):
@@ -588,6 +719,10 @@ async def record_refusal(
     Such a refusal has no tier ``RefusalReceipt`` (for example, a resubmitted
     idempotency key the execution ledger turned away), so its summary receipt
     is signed and ingested like every other refusal in this module.
+
+    Raises:
+        GovernanceInfrastructureError: The receipt could not be signed; the
+            refusal stands but no unsigned receipt is committed.
     """
     return await _emit_refusal_receipt(
         action_id=action_id,
@@ -596,6 +731,98 @@ async def record_refusal(
         params=params,
         receipt_expected=False,
     )
+
+
+#: Dependency and failure code recorded when a refusal receipt cannot be signed.
+_RECEIPT_SIGNING_DEPENDENCY = "kms"
+_RECEIPT_SIGNING_FAILURE_CODE = "KMS_SIGNING_UNAVAILABLE"
+
+
+async def _sign_refusal_receipt(
+    signable: dict[str, Any],
+    *,
+    action_id: str,
+    receipt_id: str,
+    params: dict[str, Any],
+) -> str:
+    """Return the refusal receipt's signature, or block fail-closed.
+
+    An unsigned ``GOVERNANCE_REFUSAL_RECEIPT`` must never enter the
+    tamper-evident chain where a signature is expected. A configured signer
+    that raises or returns an empty signature blocks the request as an
+    infrastructure outage (``GOVERNANCE_INFRASTRUCTURE_BLOCK``,
+    ``dependency="kms"``, HTTP 503), in every posture; so does an enforcing
+    posture with no active signer. Only a non-enforcing posture with no signer
+    configured by design (hermetic tests, unconfigured local runs) returns
+    ``""``, and such a receipt is never evidence.
+
+    Raises:
+        GovernanceInfrastructureError: The receipt could not be signed.
+        EvidenceChainUnavailableError: The infrastructure block itself could
+            not be committed while ``EVIDENCE_CHAIN_BLOCKING`` is on.
+    """
+    from src.gateway.governance.contracts import Violation, ViolationKind
+    from src.gateway.governance.env_posture import is_enforcing, resolve_posture
+    from src.gateway.governance.governor.verdicts import handle_infrastructure_block
+
+    try:
+        signer = get_governance_signer()
+        active = bool(
+            getattr(signer, "is_kms_active", False)
+            and getattr(signer, "kms_active", True) is not False
+        )
+        if not active:
+            if not is_enforcing(resolve_posture()):
+                logger.warning(
+                    "⚠️ [P6] No active refusal-receipt signer in a non-enforcing "
+                    "posture: receipt_id=%s for action '%s' is emitted unsigned "
+                    "and is not evidence.",
+                    receipt_id,
+                    action_id,
+                )
+                return ""
+            raise RuntimeError(
+                "no active refusal-receipt signer in an enforcing posture"
+            )
+        signature = await signer.sign_async(signable)
+        if not isinstance(signature, str) or not signature.strip():
+            raise ValueError("signer returned an empty signature")
+        return signature
+    except Exception as sign_exc:  # every signing failure fails closed
+        logger.error(
+            "❌ [P6] Failed to sign refusal receipt for action '%s' "
+            "(receipt_id=%s): %s — failing closed as an infrastructure block; "
+            "no unsigned receipt is committed.",
+            action_id,
+            receipt_id,
+            sign_exc,
+        )
+        await handle_infrastructure_block(
+            action_id,
+            params,
+            [
+                Violation(
+                    tier=_RECEIPT_SIGNING_DEPENDENCY,
+                    code=_RECEIPT_SIGNING_FAILURE_CODE,
+                    message=(
+                        f"refusal receipt for {action_id!r} could not be signed "
+                        f"({type(sign_exc).__name__}); failing closed instead of "
+                        "committing an unsigned receipt"
+                    ),
+                    kind=ViolationKind.INFRASTRUCTURE,
+                    infra_dependency=_RECEIPT_SIGNING_DEPENDENCY,
+                    infra_error_code="kms_signing_unavailable",
+                )
+            ],
+            [],
+        )
+        # handle_infrastructure_block always raises; never fall through unsigned.
+        raise GovernanceInfrastructureError(
+            f"[{_RECEIPT_SIGNING_FAILURE_CODE}] refusal receipt for "
+            f"{action_id!r} could not be signed",
+            dependency=_RECEIPT_SIGNING_DEPENDENCY,
+            failure_code=_RECEIPT_SIGNING_FAILURE_CODE,
+        ) from sign_exc
 
 
 async def _emit_refusal_receipt(
@@ -610,12 +837,17 @@ async def _emit_refusal_receipt(
     """Emit a signed OSCAL compliance receipt for a hard governance refusal.
 
     Called from every ``GovernanceError`` handler in this module.  The receipt
-    is signed via ``KMSGovernanceSigner.sign()`` and published to the evidence
-    stream via ``EvidenceStreamSink.ingest()``.
+    is signed (:func:`_sign_refusal_receipt`) before the refusal is counted,
+    its ``proof_hash`` is advertised, or anything is published to the
+    evidence stream.
 
-    If OSCAL emission itself fails, the error is logged at ERROR level but the
-    original ``GovernanceError`` is NOT suppressed — the refusal must still
-    propagate to the caller.
+    Fail-closed contract: if the receipt cannot be signed, nothing is
+    committed as a ``GOVERNANCE_REFUSAL_RECEIPT``; a
+    ``GOVERNANCE_INFRASTRUCTURE_BLOCK`` (``dependency="kms"``) is chained and
+    :class:`GovernanceInfrastructureError` propagates, which gateway surfaces
+    answer with HTTP 503. The action is refused either way; only the receipt
+    is withheld. If publishing the signed receipt fails, the error is logged
+    and, under ``EVIDENCE_CHAIN_BLOCKING``, raised.
 
     A2 fix: Now accepts the full RefusalReceipt v3 object and serializes it
     with tier_failures and the 5-part proof chain intact. When receipt is None,
@@ -630,6 +862,11 @@ async def _emit_refusal_receipt(
         receipt:           Full RefusalReceipt v3 object (if available).
         receipt_expected:  False for a refusal decided outside the governor,
                            which never has a RefusalReceipt to attach.
+
+    Raises:
+        GovernanceInfrastructureError: The receipt could not be signed.
+        EvidenceChainUnavailableError: Evidence could not be committed while
+            ``EVIDENCE_CHAIN_BLOCKING`` is on.
     """
     receipt_id = str(uuid.uuid4())
     timestamp_utc = datetime.now(tz=timezone.utc).isoformat()
@@ -686,25 +923,21 @@ async def _emit_refusal_receipt(
         else:
             receipt_payload["proof_hash"] = computed_hash
         proof_hash = computed_hash
-        governor_metrics().refusal_decided("MIDDLEWARE")
 
+    # Sign before the refusal is counted, advertised or committed. A
+    # signing failure blocks fail-closed (HTTP 503 infrastructure block) and no
+    # unsigned GOVERNANCE_REFUSAL_RECEIPT enters the tamper-evident chain.
+    signable = {k: v for k, v in receipt_payload.items() if k != "kms_signature"}
+    receipt_payload["kms_signature"] = await _sign_refusal_receipt(
+        signable,
+        action_id=action_id,
+        receipt_id=receipt_id,
+        params=params,
+    )
+    if receipt is None:
+        governor_metrics().refusal_decided("MIDDLEWARE")
     if proof_hash:
         set_last_refusal_proof_hash(proof_hash)
-
-    # Sign the receipt via KMS
-    try:
-        signer = get_governance_signer()
-        # Sign a stable subset of the receipt (exclude kms_signature itself)
-        signable = {k: v for k, v in receipt_payload.items() if k != "kms_signature"}
-        receipt_payload["kms_signature"] = await signer.sign_async(signable)
-    except Exception as sign_exc:
-        logger.error(
-            "❌ [P6] Failed to KMS-sign refusal receipt for action '%s' "
-            "(receipt_id=%s): %s — receipt will be emitted unsigned.",
-            action_id,
-            receipt_id,
-            sign_exc,
-        )
 
     # Publish to evidence stream
     from src.gateway.governance.evidence.stream import (
@@ -743,6 +976,19 @@ async def _emit_refusal_receipt(
         if is_evidence_chain_blocking():
             raise
     return proof_hash
+
+
+def _infrastructure_block_response(exc: GovernanceInfrastructureError) -> JSONResponse:
+    """HTTP 503 body for a fail-closed infrastructure block (POAM-2026-233)."""
+    return JSONResponse(
+        status_code=503,
+        content={
+            "error": exc.error_code,
+            "dependency": exc.dependency,
+            "failure_code": exc.failure_code,
+            "detail": str(exc),
+        },
+    )
 
 
 @governance_app.get("/policy-version")
@@ -883,22 +1129,79 @@ async def policy_precheck_endpoint(
             },
         )
 
+    if q_resp := await refuse_if_quarantined(
+        request,
+        action_id=body.action,
+        surface="governance_middleware",
+        body_params=body.params,
+    ):
+        return q_resp
+
     governor = governor_of(request.app)  # fail closed if governor not assembled
     carrier = sanitize_trace_carrier(request.headers)
     remote_ctx = otel_extract(carrier)
     token = otel_context.attach(remote_ctx)
     try:
+        from src.gateway.governance.contracts import (
+            PolicyEngineUnavailableError,
+            ServerInputUnavailableError,
+        )
+
         try:
             bound_params = await governor.bind_server_inputs(body.action, body.params)
             # body.action always overrides any caller-supplied "action" inside params.
             opa_payload: dict[str, Any] = {**bound_params, "action": body.action}
             raw_result = await governor.components.opa.evaluate_policy(opa_payload)
             verdict = decode_opa_verdict(raw_result)
-        except Exception as exc:
+        except ServerInputUnavailableError as exc:
             logger.error(
-                "OPA policy-precheck failed for action=%s: %s", body.action, exc
+                "OPA policy-precheck server-input failure for action=%s: %s",
+                body.action,
+                exc,
             )
-            verdict = OpaVerdict.DENY
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "schema_version": "1.0.0",
+                    "action": body.action,
+                    "decision": "UNAVAILABLE",
+                    "dry_run": True,
+                    "advisory": True,
+                    "error": "server_input_unavailable",
+                },
+            )
+        except (PolicyEngineUnavailableError, Exception) as exc:
+            logger.error(
+                "OPA policy-precheck engine error for action=%s: %s", body.action, exc
+            )
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "schema_version": "1.0.0",
+                    "action": body.action,
+                    "decision": "UNAVAILABLE",
+                    "dry_run": True,
+                    "advisory": True,
+                    "error": "policy_engine_unavailable",
+                },
+            )
+
+        if verdict is None:
+            logger.error(
+                "OPA policy-precheck undecodable verdict for action=%s",
+                body.action,
+            )
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "schema_version": "1.0.0",
+                    "action": body.action,
+                    "decision": "UNAVAILABLE",
+                    "dry_run": True,
+                    "advisory": True,
+                    "error": "policy_engine_unavailable",
+                },
+            )
 
         if verdict is OpaVerdict.ALLOW:
             decision = "ALLOW"
@@ -973,6 +1276,13 @@ async def validate_action_endpoint(
     if canary_rejection is not None:
         return canary_rejection
 
+    req_correlation_id, corr_err = _resolve_validate_correlation_id(
+        body.correlation_id,
+        request.headers.get("X-Correlation-ID"),
+    )
+    if corr_err is not None:
+        return corr_err
+
     # ── Rate limiting: shared dual-bucket GCRA (identity + principal) ─────────
     rl_res = await _check_validate_action_rate_limit(request)
     if inspect.isawaitable(rl_res):
@@ -994,6 +1304,14 @@ async def validate_action_endpoint(
                 "retry_after_seconds": retry_after,
             },
         )
+
+    if q_resp := await refuse_if_quarantined(
+        request,
+        action_id=body.action,
+        surface="governance_middleware",
+        body_params=body.params,
+    ):
+        return q_resp
 
     # ── Extract W3C trace context from inbound headers ────────────────────────
     # The GFA injected 'traceparent' via otel_inject(headers).  Extracting it
@@ -1047,8 +1365,13 @@ async def validate_action_endpoint(
                     attestations.append(att)
 
         payload_result = {
-            k: v for k, v in result.items() if k != "external_attestations"
+            k: v
+            for k, v in result.items()
+            if k not in ("external_attestations", "evaluated_action_hash")
         }
+        # Audit binding of the server-bound params the stages evaluated; the
+        # request binding (subject.action_hash) stays over body.params.
+        evaluated_action_hash = result.get("evaluated_action_hash")
         if "violations" in payload_result and isinstance(
             payload_result["violations"], list
         ):
@@ -1089,6 +1412,12 @@ async def validate_action_endpoint(
             agent_id=result.get("agent_id"),
             tiers_passed=result.get("tiers_passed", []),
             external_attestations=attestations,
+            evaluated_action_hash=(
+                evaluated_action_hash
+                if isinstance(evaluated_action_hash, str)
+                else None
+            ),
+            correlation_id=req_correlation_id,
         )
         return JSONResponse(content=envelope.to_dict(include_signature=True))
 
@@ -1105,15 +1434,7 @@ async def validate_action_endpoint(
             },
         )
     except GovernanceInfrastructureError as exc:
-        return JSONResponse(
-            status_code=503,
-            content={
-                "error": exc.error_code,
-                "dependency": exc.dependency,
-                "failure_code": exc.failure_code,
-                "detail": str(exc),
-            },
-        )
+        return _infrastructure_block_response(exc)
     except GovernanceError as exc:
         from src.gateway.governance.evidence.stream import (
             EvidenceChainUnavailableError,
@@ -1138,6 +1459,10 @@ async def validate_action_endpoint(
                     "detail": str(emit_exc),
                 },
             )
+        except GovernanceInfrastructureError as signing_exc:
+            # The receipt could not be signed and nothing unsigned was
+            # committed, so this answers as an infrastructure block, not a 403.
+            return _infrastructure_block_response(signing_exc)
 
         # ADR-008 Phase 3: Build canonical refusal payload and wrap in a signed
         # GovernanceEnvelope (identical JCS + KMS/Ed25519 signature, expires_at,
@@ -1164,6 +1489,7 @@ async def validate_action_endpoint(
                 params=body.params,
                 governance_result=jsonable_encoder(refusal_content),
                 tiers_passed=[],
+                correlation_id=req_correlation_id,
             )
         except Exception:
             logger.error("❌ Failed to sign HTTP 403 refusal envelope", exc_info=True)

@@ -43,11 +43,16 @@ class TestApprovalResumeRequest:
     def test_approval_node_raises_on_empty_rationale(self):
         from unittest.mock import patch
 
+        # Missing deferred_id must fail closed by raising MissingDeferralTicketError
+        from cage_client import MissingDeferralTicketError
         from pydantic import ValidationError
 
         from src.governed_financial_advisor.graph.nodes.approval_node import (
             approval_node,
         )
+
+        with pytest.raises(MissingDeferralTicketError):
+            approval_node({"execution_plan_output": {}, "evaluation_result": {}})
 
         # Simulate interrupt() returning a decision with empty rationale
         with patch(
@@ -55,7 +60,13 @@ class TestApprovalResumeRequest:
             return_value={"approved": True, "reviewer": "test", "rationale": ""},
         ):
             try:
-                approval_node({"execution_plan_output": {}, "evaluation_result": {}})
+                approval_node(
+                    {
+                        "deferred_id": "def-test-1",
+                        "execution_plan_output": {},
+                        "evaluation_result": {},
+                    }
+                )
                 raise AssertionError("Should have raised ValidationError")
             except ValidationError as e:
                 assert "rationale is required and must be a non-empty string" in str(e)
@@ -135,6 +146,7 @@ class TestApprovalNodeRationale:
             return_value=decision,
         ):
             state = {
+                "deferred_id": "def-test-1",
                 "execution_plan": {"ticker": "AAPL", "quantity": 100},
                 "evaluation_result": {"decision": "APPROVED"},
             }

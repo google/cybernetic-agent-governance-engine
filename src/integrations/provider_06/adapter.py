@@ -668,6 +668,25 @@ class Provider06AgentIntegrityAdapter:
                 secret=self._hmac_secret,
             )
         else:
+            from src.gateway.governance.env_posture import (
+                is_enforcing,
+                resolve_posture,
+            )
+
+            if is_enforcing(resolve_posture()):
+                return VerifyReleaseOutcome(
+                    admitted=False,
+                    status=None,
+                    request_id=req_id,
+                    error="Sidecar HMAC secret is required in enforcing posture",
+                    findings=[
+                        {
+                            "code": FINDING_CODE_ENDPOINT_ERROR,
+                            "severity": "blocked",
+                            "message": "CAGE_AGENT_INTEGRITY_HMAC_SECRET is required in enforcing posture",
+                        }
+                    ],
+                )
             headers = {
                 "Content-Type": "application/json",
                 "Accept": "application/json",
@@ -1423,21 +1442,25 @@ class Provider06AgentIntegrityAdapter:
             )
 
         expires_at_str = receipt.get("expiresAt")
-        if expires_at_str:
-            try:
-                expires_at = datetime.fromisoformat(
-                    expires_at_str.replace("Z", "+00:00")
+        if not isinstance(expires_at_str, str) or not expires_at_str.strip():
+            logger.error("[Provider06] Receipt missing expiresAt timestamp")
+            return "Receipt missing expiresAt timestamp"
+
+        try:
+            expires_at = datetime.fromisoformat(expires_at_str.replace("Z", "+00:00"))
+            if expires_at.tzinfo is None or expires_at.utcoffset() is None:
+                raise ValueError("expiresAt must include an explicit timezone offset")
+            now = datetime.now(timezone.utc)
+            if now >= expires_at:
+                logger.error(
+                    "[Provider06] Receipt expired: now=%s expires_at=%s",
+                    now.isoformat(),
+                    expires_at.isoformat(),
                 )
-                now = datetime.now(timezone.utc)
-                if now > expires_at:
-                    logger.error(
-                        "[Provider06] Receipt expired: now=%s expires_at=%s",
-                        now.isoformat(),
-                        expires_at.isoformat(),
-                    )
-                    return f"Receipt expired at {expires_at.isoformat()}"
-            except (ValueError, TypeError) as exc:
-                logger.warning("[Provider06] Invalid expiresAt format: %s", exc)
+                return f"Receipt expired at {expires_at.isoformat()}"
+        except (ValueError, TypeError) as exc:
+            logger.error("[Provider06] Invalid expiresAt format: %s", exc)
+            return f"Invalid expiresAt format: {exc}"
 
         logger.info("[Provider06] Receipt verification SUCCESS (kid=%s)", key_id)
         return None

@@ -12,19 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The trade tool sends ``side`` and a server-side ``portfolio_total`` to UCA-13.
+"""The trade tool sends ``side`` and the kernel binds ``portfolio_total`` for UCA-13.
 
-``execute_trade_action`` takes the order side from the caller. For a sell it
-sets ``portfolio_total`` to the current NAV from the gateway's
+``execute_trade_action`` takes the order side from the caller. For a sell the
+governor's committing run (``SymbolicGovernor.govern``) binds
+``portfolio_total`` to the current NAV from the gateway's
 :class:`~src.cage_finance.tools.trade_inputs.PortfolioNavSource`, never from
-the caller and never from the custodian cash balance. These tests run the
-params the tool hands to governance through the generated finance STPA rules
-for each region (FIN-1 sell fraction EU_ECB 0.08 / APAC_MAS 0.09 / US_FED 0.10):
+the caller and never from the custodian cash balance; the tool itself binds
+nothing. These tests run a real committing run whose sealing step is replaced
+by the generated finance STPA rules, so the params checked are exactly the
+evaluated params the kernel bound, for each region (FIN-1 sell fraction
+EU_ECB 0.08 / APAC_MAS 0.09 / US_FED 0.10):
 
 * a sell within the regional fraction of NAV clears the STPA stage;
 * a sell over it is a HARD UCA-13 violation;
-* a missing, faulted or untrustworthy NAV source leaves ``portfolio_total``
-  unset, and UCA-13 refuses the sell;
+* a missing or unreachable NAV source blocks the run on infrastructure, and a
+  faulted or untrustworthy one leaves ``portfolio_total`` unset, so UCA-13
+  refuses the sell;
 * a buy carries no ``portfolio_total`` and skips UCA-13.
 """
 
@@ -55,10 +59,12 @@ from src.cage_finance.tools.trade_inputs import (
     TradeInputUnavailable,
     resolve_portfolio_total,
 )
+from src.gateway.governance.commit_outcome import CommitOutcome, CommitStatus
 from src.gateway.governance.contracts import ViolationKind
+from src.gateway.governance.governor import governor as governor_mod
 from src.gateway.governance.schemas.thresholds import load_and_validate_thresholds
 from src.gateway.governance.seams.ground_truth import FaultMode
-from tests.fixtures.trade_inputs import trade_governor
+from tests.fixtures.trade_inputs import committing_trade_governor
 
 pytestmark = [
     pytest.mark.unit,
@@ -73,7 +79,7 @@ _CASH = "finance.cash_balance"
 
 
 class _Cleared(Exception):
-    """Raised by the fake gateway when the STPA stage has no HARD violation."""
+    """Raised by the STPA stand-in when the stage has no HARD violation."""
 
     def __init__(self, params: dict[str, Any]) -> None:
         super().__init__("cleared")
@@ -92,26 +98,32 @@ def region(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> s
 
 @pytest.fixture
 def stpa_gateway(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
-    """Replace ``enforce_governance`` with the generated finance STPA stage.
+    """The committing run, with the generated finance STPA rules as its only stage.
 
-    A HARD violation becomes the ``PermissionError`` the real middleware
-    raises (the tool returns ``BLOCKED: ...``). A clean run raises
-    :class:`_Cleared` carrying the params, so the test stops before sealing.
+    The real ``enforce_governance`` and ``SymbolicGovernor.govern`` run, so
+    the kernel binds the trade's server inputs exactly once (an unavailable
+    source blocks the run on infrastructure before any stage runs). The
+    sealing step receives the evaluated params and is replaced here: a HARD
+    violation becomes the ``PermissionError`` the tool reports as
+    ``BLOCKED: ...``; a clean run raises :class:`_Cleared` carrying the
+    evaluated params, so the test stops before sealing.
     """
     seen: list[dict[str, Any]] = []
 
-    async def _enforce(_governor: Any, action: str, params: dict[str, Any]) -> str:
-        seen.append(dict(params))
+    async def _stpa_stage(
+        _stages: Any, ctx: Any, evaluated: dict[str, Any], **_kwargs: Any
+    ) -> Any:
+        seen.append(dict(evaluated))
         hard = [
             v
-            for v in GeneratedSTPAValidator().validate(action, dict(params))
+            for v in GeneratedSTPAValidator().validate(ctx.action, dict(evaluated))
             if v.kind is ViolationKind.HARD
         ]
         if hard:
             raise PermissionError("; ".join(f"{v.code}: {v.message}" for v in hard))
-        raise _Cleared(dict(params))
+        raise _Cleared(dict(evaluated))
 
-    monkeypatch.setattr(tool_provider, "enforce_governance", _enforce)
+    monkeypatch.setattr(governor_mod, "run_sealed", _stpa_stage)
     return seen
 
 
@@ -129,10 +141,12 @@ def _inputs(nav_source: Any = None, *, no_nav: bool = False) -> ServerTradeInput
 
 def _governor(
     inputs: ServerTradeInputs, providers: dict[str, Any] | None = None
-) -> MagicMock:
-    governor = trade_governor({"execute_trade": TradeInputResolver(inputs)})
-    governor.components.ground_truth_providers = providers or {}
-    return governor
+) -> Any:
+    """A real governor whose committing run binds ``inputs`` for execute_trade."""
+    return committing_trade_governor(
+        {"execute_trade": TradeInputResolver(inputs)},
+        ground_truth_providers=providers,
+    )
 
 
 async def _trade(
@@ -141,14 +155,14 @@ async def _trade(
     inputs: ServerTradeInputs | None = None,
     governor: Any = None,
     **kwargs: Any,
-) -> str:
+) -> CommitOutcome:
     return await execute_trade_action(
         symbol="AAPL",
         amount=amount,
         currency="USD",
         confidence=0.99,
         governor=governor or _governor(inputs or _inputs()),
-        **{"transaction_id": str(uuid.uuid4()), **kwargs},
+        **{"idempotency_key": str(uuid.uuid4()), **kwargs},
     )
 
 
@@ -183,8 +197,9 @@ async def test_sell_over_regional_limit_is_hard_uca13(
     region: str, stpa_gateway: list[dict[str, Any]]
 ) -> None:
     result = await _trade(_limit(region) * 1.5, side="sell")
-    assert result.startswith("BLOCKED:")
-    assert _UCA_13 in result
+    assert result.status is CommitStatus.REFUSED
+    assert result.message.startswith("BLOCKED:")
+    assert _UCA_13 in result.message
     assert stpa_gateway[-1]["portfolio_total"] == pytest.approx(_OPEN_NAV)
 
 
@@ -194,9 +209,12 @@ async def test_regions_differ_at_the_same_sell(
 ) -> None:
     """8,500 of a 100,000 NAV is refused under EU_ECB (8%) only."""
     try:
-        result = await _trade(8_500.0, side="sell")
+        outcome = await _trade(8_500.0, side="sell")
     except _Cleared:
         result = "CLEARED"
+    else:
+        assert outcome.status is CommitStatus.REFUSED
+        result = outcome.message
     assert (_UCA_13 in result) is (region == "EU_ECB")
 
 
@@ -213,7 +231,8 @@ async def test_limit_tracks_current_nav_not_opening_nav(
     inputs = _inputs(_nav(drawdown_pct=2.0))
     amount = (_limit(region, current) + _limit(region)) / 2
     result = await _trade(amount, side="sell", inputs=inputs)
-    assert _UCA_13 in result
+    assert result.status is CommitStatus.REFUSED
+    assert _UCA_13 in result.message
     assert stpa_gateway[-1]["portfolio_total"] == pytest.approx(current)
     assert stpa_gateway[-1]["drawdown"] == pytest.approx(2.0)
 
@@ -295,8 +314,9 @@ async def test_faulted_nav_source_refuses_sell(
     nav = _nav()
     nav.inject_fault(fault)
     result = await _trade(1.0, side="sell", inputs=_inputs(nav))
-    assert result.startswith("BLOCKED:")
-    assert _UCA_13 in result
+    assert result.status is CommitStatus.REFUSED
+    assert result.message.startswith("BLOCKED:")
+    assert _UCA_13 in result.message
     assert "portfolio_total" not in stpa_gateway[-1]
 
 
@@ -306,7 +326,8 @@ async def test_zero_nav_refuses_sell(
 ) -> None:
     """A 100% drawdown is a valid UCA-5 reading but no FIN-1 base."""
     result = await _trade(1.0, side="sell", inputs=_inputs(_nav(drawdown_pct=100.0)))
-    assert _UCA_13 in result
+    assert result.status is CommitStatus.REFUSED
+    assert _UCA_13 in result.message
     assert "portfolio_total" not in stpa_gateway[-1]
     assert stpa_gateway[-1]["drawdown"] == pytest.approx(100.0)
 
@@ -328,7 +349,8 @@ async def test_invalid_side_is_blocked_before_governance(
     stpa_gateway: list[dict[str, Any]],
 ) -> None:
     result = await _trade(1.0, side="short")  # type: ignore[arg-type]
-    assert result.startswith("BLOCKED: invalid trade side")
+    assert result.status is CommitStatus.REFUSED
+    assert result.message.startswith("BLOCKED: invalid trade side")
     assert stpa_gateway == []
 
 

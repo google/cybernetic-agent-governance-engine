@@ -23,6 +23,9 @@ async def test_stpa_stage_happy_path():
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    'src.gateway.governance.governor.stages.stpa:StpaStage.run#code="STPA_ERROR"'
+)
 async def test_stpa_stage_fail_closed_on_error():
     ctx = StageContext(action="test_action", params={}, profile=Profile.FULL)
     validator = MagicMock()
@@ -72,6 +75,9 @@ async def test_stpa_stage_evaluates_contributed_finance_uca_rules():
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    "src.gateway.governance.stpa_validator:UcaRule.evaluate#evaluation error — failing closed"
+)
 async def test_stpa_validator_custom_uca_rule_fails_closed_on_predicate_error():
     def _broken_predicate(_params: dict) -> Violation | None:
         raise RuntimeError("predicate exploded")
@@ -86,16 +92,21 @@ async def test_stpa_validator_custom_uca_rule_fails_closed_on_predicate_error():
     ctx = StageContext(action="custom_action", params={}, profile=Profile.FULL)
     violations = await stage.run(ctx)
     assert len(violations) == 1
-    assert violations[0].code == "STPA_UCA_TEST_99"
-    assert violations[0].kind == ViolationKind.HARD
+    assert violations[0].code == "STPA_ERROR"
+    assert violations[0].kind == ViolationKind.INFRASTRUCTURE
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "kind", [k for k in ViolationKind if k is not ViolationKind.HARD]
+    "kind",
+    [
+        k
+        for k in ViolationKind
+        if k not in (ViolationKind.HARD, ViolationKind.INFRASTRUCTURE)
+    ],
 )
 async def test_stpa_stage_promotes_non_hard_findings_to_hard(kind):
-    """A UCA is never routable to a human: any non-HARD kind becomes HARD."""
+    """A UCA is never routable to a human: any non-HARD/non-INFRA kind becomes HARD."""
     ctx = StageContext(action="test_action", params={}, profile=Profile.FULL)
     finding = Violation(
         tier="stpa", code="STPA_UCA_X", message="uca", kind=kind, bound=5.0
@@ -118,11 +129,10 @@ async def test_stpa_stage_promotes_non_hard_findings_to_hard(kind):
 
 
 @pytest.mark.asyncio
-async def test_stpa_stage_keeps_hard_findings_identical():
+@pytest.mark.parametrize("kind", [ViolationKind.HARD, ViolationKind.INFRASTRUCTURE])
+async def test_stpa_stage_keeps_hard_findings_identical(kind):
     ctx = StageContext(action="test_action", params={}, profile=Profile.FULL)
-    finding = Violation(
-        tier="stpa", code="STPA_UCA_Y", message="uca", kind=ViolationKind.HARD
-    )
+    finding = Violation(tier="stpa", code="STPA_UCA_Y", message="uca", kind=kind)
     validator = MagicMock()
     validator.validate.return_value = [finding]
     stage = StpaStage(validator=validator)

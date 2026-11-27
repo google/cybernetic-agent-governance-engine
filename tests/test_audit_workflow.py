@@ -228,7 +228,7 @@ class TestStep4CriticalAlert:
         findings = [self._make_finding(critical_control, "FAIL")]
 
         mock_notifier = MagicMock()
-        mock_notifier.send_critical_alert = AsyncMock()
+        mock_notifier.send_critical_alert = AsyncMock(return_value=True)
 
         with patch(
             "src.compliance_bridge.audit_workflow.create_notifier",
@@ -252,7 +252,7 @@ class TestStep4CriticalAlert:
         findings = [self._make_finding(critical_control, "ERROR")]
 
         mock_notifier = MagicMock()
-        mock_notifier.send_critical_alert = AsyncMock()
+        mock_notifier.send_critical_alert = AsyncMock(return_value=True)
 
         with patch(
             "src.compliance_bridge.audit_workflow.create_notifier",
@@ -265,6 +265,27 @@ class TestStep4CriticalAlert:
         assert alerted is True
 
     @pytest.mark.asyncio
+    async def test_alert_false_when_notifier_does_not_confirm_delivery(self):
+        """POAM-2026-230: alerted must be False when ConsoleNotifier or failed HTTP transport returns False."""
+        from src.compliance_bridge.audit_workflow import _step4_alert_on_critical_fail
+        from src.compliance_bridge.notifier import ConsoleNotifier
+        from src.compliance_bridge.types import CRITICAL_CONTROLS
+
+        critical_control = next(iter(CRITICAL_CONTROLS))
+        findings = [self._make_finding(critical_control, "FAIL")]
+
+        with patch(
+            "src.compliance_bridge.audit_workflow.create_notifier",
+            return_value=ConsoleNotifier(),
+        ):
+            alerted, targets = await _step4_alert_on_critical_fail(
+                findings, "audit-console-001"
+            )
+
+        assert alerted is False
+        assert critical_control in targets
+
+    @pytest.mark.asyncio
     async def test_no_alert_for_non_critical_fail(self):
         """No alert is sent for a FAIL on a non-critical control."""
         from src.compliance_bridge.audit_workflow import _step4_alert_on_critical_fail
@@ -273,7 +294,7 @@ class TestStep4CriticalAlert:
         findings = [self._make_finding("NON_CRITICAL_CONTROL_XYZ", "FAIL")]
 
         mock_notifier = MagicMock()
-        mock_notifier.send_critical_alert = AsyncMock()
+        mock_notifier.send_critical_alert = AsyncMock(return_value=True)
 
         with patch(
             "src.compliance_bridge.audit_workflow.create_notifier",

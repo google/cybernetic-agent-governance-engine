@@ -1,0 +1,43 @@
+{
+  "baseline": 74,
+  "detector_sha256": "34aa355166ab749bf7d90b32c1d5fcb07c7f175b6e223cc05cf92ca01f83effa",
+  "history": [
+    {
+      "after_baseline": 47,
+      "after_covered": 7,
+      "after_total": 54,
+      "before_baseline": null,
+      "before_detector_sha256": null,
+      "detector_sha256": "pr846-v1-src-only-untyped-reraise-unfiltered-siblings",
+      "event": "initial_baseline",
+      "reason": "Initial PR #846 baseline across src/ only (54 total pairs, 7 covered, 47 uncovered).",
+      "uncovered_breakdown": {
+        "collapse_or_covers_pin": 47,
+        "needs_structured_discriminator": 0,
+        "oscal_claim_cited": 0
+      }
+    },
+    {
+      "after_baseline": 74,
+      "after_covered": 8,
+      "after_total": 82,
+      "before_baseline": 47,
+      "before_detector_sha256": "pr846-v1-src-only-untyped-reraise-unfiltered-siblings",
+      "detector_sha256": "34aa355166ab749bf7d90b32c1d5fcb07c7f175b6e223cc05cf92ca01f83effa",
+      "event": "recompute",
+      "reason": "Extend shadow-except walk to packages/*/src/; bind bare raise to caught exception type (reraise-vs-wrap), recurse into compound if/with handler tails instead of classifying conditional raises as fallthrough, tag prose-only return pairs as needs_structured_discriminator (refusing @pytest.mark.covers pins), tag oscal_claim_cited pairs from evidence_claim_census.jsonl, and prune provably disjoint sibling handlers. Prior 47 baseline misstated standing debt in both directions: overstated by 9 disjoint non-shadow sibling pairs, and understated by 36 newly-detected uncovered shadow pairs (2 in packages/cage-client/src, 18 bare-raise/compound-tail pairs in src/, 16 needs_structured_discriminator prose-only return pairs in src/; +1 covered pair in policy.py: 47 - 9 + 36 = 74 uncovered across 82 total pairs, 33 in oscal_claim_cited modules).",
+      "uncovered_breakdown": {
+        "collapse_or_covers_pin": 58,
+        "needs_structured_discriminator": 16,
+        "oscal_claim_cited": 33
+      }
+    }
+  ],
+  "schema_version": 1,
+  "standing_debt_policy": "Non-regression ratchet over standing historical debt: prevents new shadow-except pairs rather than committing to clear all historical items. Optional burn-down prioritizes oscal_claim_cited pairs (modules cited on read_back-backed claims in compliance/oscal/evidence_claim_census.jsonl, where a dead narrow handler affects a published OSCAL claim). Pairs in needs_structured_discriminator differ only by free-text message/error prose and cannot be cleared by @pytest.mark.covers pins \u2014 add a structured code/failure_kind discriminator or collapse the handlers.",
+  "uncovered_breakdown": {
+    "collapse_or_covers_pin": 58,
+    "needs_structured_discriminator": 16,
+    "oscal_claim_cited": 33
+  }
+}

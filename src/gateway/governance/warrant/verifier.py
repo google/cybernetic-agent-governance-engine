@@ -39,7 +39,6 @@ from typing import Any
 from src.gateway.governance.warrant.model import (
     REQUIRED_CONTEXT_KEYS,
     SCOPE_DIMENSIONS,
-    WARRANT_SCHEMA_VERSION_V02,
     RelianceStatus,
     StandingVerificationResult,
     Warrant,
@@ -150,7 +149,7 @@ class WarrantStandingVerifier:
                     RelianceStatus.INELIGIBLE_AUTHENTICITY,
                     "Warrant carries v0.2 signature fields but no VerifiedKeyManifest was supplied",
                 )
-            if warrant.schema_version != WARRANT_SCHEMA_VERSION_V02:
+            if warrant.schema_version not in key_manifest.accepted_warrant_schemas:
                 return _ineligible(
                     RelianceStatus.INELIGIBLE_UNRESOLVED,
                     f"Unsupported warrant schema_version: {warrant.schema_version!r}",

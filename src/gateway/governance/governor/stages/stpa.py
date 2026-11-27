@@ -91,13 +91,14 @@ class StpaStage(Stage):
 
 
 def _as_hard(violation: Violation) -> Violation:
-    """``violation`` with ``kind=HARD``.
+    """``violation`` with ``kind=HARD`` (preserving ``INFRASTRUCTURE``).
 
-    An STPA finding is an unsafe control action: it is refused outright, never
-    deferred, narrowed or routed to a human. Promoting here makes that a
-    property of the stage rather than of each validator, and guarantees
-    ``run_pipeline`` stops before ``ConfidenceStage`` on any STPA finding.
+    An STPA UCA finding is refused outright, never deferred, narrowed, or
+    routed to a human. Infrastructure failures (`STPA_ERROR` with
+    ``kind=INFRASTRUCTURE``) are preserved so verdicts classify dependency
+    failures as HTTP 503 while ``run_pipeline`` still stops before
+    ``ConfidenceStage``.
     """
-    if violation.kind == ViolationKind.HARD:
+    if violation.kind in (ViolationKind.HARD, ViolationKind.INFRASTRUCTURE):
         return violation
     return dataclasses.replace(violation, kind=ViolationKind.HARD)

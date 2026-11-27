@@ -48,7 +48,6 @@ from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
 from src.cage_finance.tiers.fiscal_tier import FiscalTierPlugin
 from src.cage_finance.tools import tool_provider
 from src.cage_finance.tools.tool_provider import (
-    SHARED_CALLER,
     _approval_covers_trade,
     execute_trade_action,
 )
@@ -58,6 +57,7 @@ from src.cage_finance.tools.trade_inputs import (
 )
 from src.cage_finance.tools.trader_binding import TraderBinding, TraderRoleBindings
 from src.gateway.governance.classification_engine import InfrastructureOutcome
+from src.gateway.governance.commit_outcome import CommitStatus
 from src.gateway.governance.contracts import (
     CommitReceipt,
     MutatingTier,
@@ -75,6 +75,7 @@ from src.gateway.governance.defer_queue import (
 )
 from src.gateway.governance.evidence.stream import EvidenceChainUnavailableError
 from src.gateway.governance.execution_idempotency import (
+    SHARED_CALLER,
     Duplicate,
     ExecutionLedger,
     ExecutionLedgerUnavailable,
@@ -263,6 +264,10 @@ def _healthy_trade_resolver(
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    "src.gateway.server.governance_middleware:enforce_approved_governance#DeferQueue unavailable checking %s",
+    "src.gateway.governance.governor.verdicts:handle_infrastructure_block",
+)
 async def test_cause3_path_a1_defer_queue_down_during_redeemable_approval_preserves_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -305,7 +310,7 @@ async def test_cause3_path_a1_defer_queue_down_during_redeemable_approval_preser
                     amount=1_000.0,
                     currency="USD",
                     confidence=0.99,
-                    transaction_id=tx_id,
+                    idempotency_key=tx_id,
                     deferred_id=deferred_id,
                     dry_run=False,
                     side="buy",
@@ -344,7 +349,7 @@ async def test_cause3_path_a1_defer_queue_down_during_redeemable_approval_preser
     assert "GOVERNANCE_REFUSAL_RECEIPT" not in sink.types()
     refusal_metric_spy.assert_not_called()
 
-    # Restore DB1: token is STILL RESOLVED and redeems cleanly on the SAME transaction_id!
+    # Restore DB1: token is STILL RESOLVED and redeems cleanly on the SAME idempotency_key!
     proxy_db1.fail_hmget = None
     stored_status = await raw_db1.hget(f"DEFER:{deferred_id}", "status")
     assert stored_status == "RESOLVED"
@@ -375,7 +380,7 @@ async def test_cause3_path_a1_defer_queue_down_during_redeemable_approval_preser
         status2, body2_bytes, _ = await _dispatch_execute(tx_a1)
     body2 = body2_bytes if isinstance(body2_bytes, dict) else json.loads(body2_bytes)
     assert status2 == 200, body2
-    assert body2["output"].startswith("EXECUTED:")
+    assert body2["output"].status is CommitStatus.EXECUTED
     assert await raw_db1.hget(f"DEFER:{deferred_id}", "status") == "CONSUMED"
 
 
@@ -424,7 +429,7 @@ async def test_cause3_path_a2_trapdoor1_atomic_resolve_failure_rolls_back_phase2
     )
     gov.components.opa.evaluate_policy = AsyncMock(return_value={"allow": "ALLOW"})
 
-    # Plant Trapdoor 1: hmget succeeds in redeemable_approval(), but Lua eval in
+    # Plant Trapdoor 1: hmget succeeds in redeemable_token(), but Lua eval in
     # DeferQueue._atomic_resolve() raises ConnectionError during _spend()!
     proxy_db1.fail_eval = ConnectionError("DB1 Lua eval socket lost")
 
@@ -470,7 +475,7 @@ async def test_cause3_path_a2_trapdoor1_atomic_resolve_failure_rolls_back_phase2
             new=AsyncMock(return_value="seal-after-db1-recovery"),
         ),
     ):
-        seal = await governance_middleware.enforce_approved_governance(
+        governed = await governance_middleware.enforce_approved_governance(
             gov,
             "execute_trade",
             {
@@ -485,11 +490,21 @@ async def test_cause3_path_a2_trapdoor1_atomic_resolve_failure_rolls_back_phase2
             deferred_id=deferred_id,
             approval_covers=_approval_covers_trade,
         )
-    assert seal == "seal-after-db1-recovery"
+    assert governed.seal == "seal-after-db1-recovery"
+    # The sealed params carry the trader bound from the verified caller identity.
+    assert governed.params["trader_id"] == "desk-a"
+    assert governed.params["trader_role"] == "senior"
+    assert governed.params["amount"] == 2_500.0
     assert await raw_db1.hget(f"DEFER:{deferred_id}", "status") == "CONSUMED"
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    'src.gateway.governance.execution_idempotency:execution_claim_scope#infra_dependency="execution_ledger"',
+    "src.gateway.governance.execution_idempotency:_settle_claim_on_error#await ledger.release_unexecuted(claim)",
+    "src.gateway.server.mcp_tool_server:execute_tool_endpoint#Evidence chain unavailable during /tools/execute",
+    "src.gateway.server.mcp_tool_server:execute_tool_endpoint#Governance infrastructure unavailable during /tools/execute",
+)
 async def test_cause3_path_a3_execution_ledger_outage_and_release_unexecuted_plus_evidence_metric(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -515,7 +530,7 @@ async def test_cause3_path_a3_execution_ledger_outage_and_release_unexecuted_plu
             amount=500.0,
             currency="USD",
             confidence=0.99,
-            transaction_id="22222222-2222-4222-8222-222222222222",
+            idempotency_key="22222222-2222-4222-8222-222222222222",
             dry_run=False,
             governor=gov,
         )
@@ -525,7 +540,7 @@ async def test_cause3_path_a3_execution_ledger_outage_and_release_unexecuted_plu
     assert "GOVERNANCE_REFUSAL_RECEIPT" not in sink.types()
 
     # Part 2: Healthy Redis ExecutionLedger claims key, then OPA outage raises GovernanceInfrastructureError;
-    # release_unexecuted deletes the IN_FLIGHT key so retry with same transaction_id succeeds!
+    # release_unexecuted deletes the IN_FLIGHT key so retry with same idempotency_key succeeds!
     healthy_redis = fakeredis.aioredis.FakeRedis(decode_responses=False)
     real_ledger = ExecutionLedger(healthy_redis)
     gov_real = make_governor(
@@ -555,7 +570,7 @@ async def test_cause3_path_a3_execution_ledger_outage_and_release_unexecuted_plu
                 amount=500.0,
                 currency="USD",
                 confidence=0.99,
-                transaction_id="33333333-3333-4333-8333-333333333333",
+                idempotency_key="33333333-3333-4333-8333-333333333333",
                 dry_run=False,
                 governor=gov_real,
             )
@@ -1298,21 +1313,23 @@ async def test_cause2_server_input_outages_emit_503_and_preserve_approval_while_
         assert ver_res["decision"] == InfrastructureOutcome.INFRASTRUCTURE_BLOCK
         assert ver_res["violations"][0].code == exp_code
 
-        # revalidate_post_hitl (both rebind_inputs=False and True) -> preserves approval unspent!
-        for rebind in (False, True):
-            with (
-                _serving(_SENIOR_ID),
-                pytest.raises(GovernanceInfrastructureError) as rev_exc,
-            ):
-                await gov.revalidate_post_hitl(
-                    "execute_trade",
-                    {"symbol": "AAPL", "amount": 500.0, "confidence": 0.99},
-                    approval=granted_approval(counter=spend_counter),
-                    rebind_inputs=rebind,
-                )
-            assert rev_exc.value.error_code == "server_input_unavailable"
-            assert rev_exc.value.dependency == exp_dep
-            assert spend_counter.calls == 0
+        # revalidate_post_hitl binds server inputs exactly once, afresh, under
+        # the verified approval: an unavailable source blocks the run before
+        # any coverage check or stage runs and leaves the approval unspent.
+        with (
+            _serving(_SENIOR_ID),
+            pytest.raises(GovernanceInfrastructureError) as rev_exc,
+        ):
+            await gov.revalidate_post_hitl(
+                "execute_trade",
+                {"symbol": "AAPL", "amount": 500.0, "confidence": 0.99},
+                approval=granted_approval(counter=spend_counter),
+            )
+        assert rev_exc.value.error_code == "server_input_unavailable"
+        assert rev_exc.value.dependency == exp_dep
+        assert rev_exc.value.failure_code == exp_code
+        assert spend_counter.calls == 0
+        assert spend_counter.covered == []  # no evaluated params, no coverage
 
         assert "GOVERNANCE_REFUSAL" not in sink.types()
 

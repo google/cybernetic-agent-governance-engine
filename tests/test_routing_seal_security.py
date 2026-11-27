@@ -629,6 +629,9 @@ async def test_concurrent_valid_replays_exactly_one_wins(trusted_jwks):
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    "src.gateway.governance.routing_seal:verify_and_consume_seal#replay protection failed (Redis error)"
+)
 async def test_redis_failure_after_valid_verification_fails_closed(trusted_jwks):
     """A valid seal is still refused when the nonce store cannot record the burn."""
     from unittest.mock import AsyncMock
@@ -699,6 +702,10 @@ async def test_seal_audience_mismatch_is_rejected_without_burning_nonce(trusted_
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("bad_seal", [None, 0, 12345, b"bytes.seal", ""])
+@pytest.mark.covers(
+    "src.gateway.governance.routing_seal:seal_nonce#seal must be a non-empty string",
+    "src.gateway.governance.routing_seal:verify_and_consume_seal#SymbolicGovernorViolation(exc.reason, action)",
+)
 async def test_non_string_seal_refuses_with_governor_violation(bad_seal):
     """A non-string or empty seal refuses via SymbolicGovernorViolation (issue #379).
 

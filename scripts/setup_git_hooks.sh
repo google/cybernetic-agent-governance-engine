@@ -94,7 +94,9 @@ gate_scripts=(
   scripts/check_telemetry_literals.py
   scripts/check_vendor_brands.py
   scripts/check_project_id_hygiene.py
+  scripts/check_agents_size.py
   scripts/check_doc_references.py
+  scripts/check_standard_citations.py
   scripts/check_partner_headers.py
   scripts/check_yaml_unique_keys.py
   scripts/check_write_only_state.py
@@ -103,6 +105,9 @@ gate_scripts=(
   scripts/check_poam_lula_divergence.py
   scripts/check_producer_consumer_keys.py
   scripts/check_mechanism_references.py
+  scripts/check_advisory_traces.py
+  scripts/check_poam_sha_citations.py
+  scripts/check_fail_closed_coverage.py
   scripts/check_k8s_terraform_parity.py
   scripts/check_stpa_freshness.py
   scripts/check_ai600_lula_manifests.py

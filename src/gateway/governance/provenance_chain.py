@@ -12,20 +12,38 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Provenance chain — AI 600-1 §2.7 information integrity control.
+"""Provenance chain: an UNWIRED hash-chain library with no production caller.
 
-Builds a cryptographic hash chain linking each LangGraph governance node's
-input and output, creating an immutable audit trail of governance decisions.
+Status (POAM-2026-246): nothing in ``src/``, ``scripts/`` or ``packages/``
+imports this module, and nothing has at any commit since it was added in
+``8c6e9361`` (2026-06-15). Only ``tests/test_provenance_chain.py`` exercises
+it. It is therefore not a control and not evidence for any control:
 
-In production, each record is signed with the US_FED KMS key ring via
-``src/gateway/governance/kms_signer.py`` and written to the GCS WORM bucket
-under ``provenance/<date>/<trace_id>.json``.
+- No LangGraph node, harness or governor stage calls
+  ``build_provenance_record()``, so no governance decision produces a
+  ``ProvenanceRecord`` at runtime.
+- No record is signed. There is no path from this module to
+  ``kms_signer.py`` or any other signer.
+- No record is persisted. There is no GCS WORM write and no
+  ``provenance/<date>/<trace_id>.json`` object prefix anywhere in ``src/`` or
+  ``infra/``.
 
-POAM: AI600-005
-Controls: AgentSight daemon, KMS signing
-Region: US_FED (CAGE_DEPLOYMENT_REGION=US_FED)
+Earlier text in this docstring said each record was KMS-signed and written to
+the WORM bucket in production, and that the module chained every LangGraph
+governance node. None of that was ever true, and it is withdrawn. The
+authoritative hash-chained decision record is the evidence stream
+(``src/gateway/governance/evidence/stream.py``), which
+``generate_seal_with_evidence()`` in ``routing_seal.py`` commits to before it
+issues a seal.
 
-Usage::
+What the module does provide, as pure computation: ``compute_hash()`` (SHA-256
+over RFC 8785 JCS bytes), ``build_provenance_record()`` (hashes a node's input
+and output and checks ``decision`` against ``GovernanceDecision``), and
+``verify_chain_integrity()`` (checks the ``parent_hash`` links). Whether to
+wire it into a production call path or delete it is the open remediation
+choice recorded in POAM-2026-246.
+
+Usage (tests only; there is no production caller)::
 
     from src.gateway.governance.provenance_chain import (
         build_provenance_record, compute_hash, ProvenanceRecord

@@ -1871,6 +1871,13 @@ def _audit_oscal_checks(
                     )
 
         meta_tests = getattr(census_mod, "META_SCHEMA_TEST_FILES", frozenset())
+        non_strict_seal_re = getattr(
+            census_mod,
+            "NON_STRICT_SEAL_ENV_RE",
+            re.compile(
+                r'setenv\(\s*["\']CAGE_SEAL_STRICT_MODE["\']\s*,\s*["\']false["\']\s*\)'
+            ),
+        )
         candidates = _extract_unpinned_runnable_candidates(blob)
         pr_ci_runnable_ok = False
         active_lula_ok = False
@@ -1882,6 +1889,12 @@ def _audit_oscal_checks(
                 continue
             if rel.startswith("tests/") and Path(rel).name.startswith("test_"):
                 ft = full.read_text(encoding="utf-8", errors="replace")
+                if non_strict_seal_re.search(ft):
+                    errors.append(
+                        f"[Check 1: Read-Back] OSCAL {rid}: {claim_kind} claim relies on fallback-mode test "
+                        f"{rel!r} setting CAGE_SEAL_STRICT_MODE=false"
+                    )
+                    continue
                 if _TEST_FN_RE.search(ft) and _PR_CI_PYTEST_MARKER_RE.search(ft):
                     pr_ci_runnable_ok = True
             elif rel.endswith(".tftest.hcl"):
@@ -1899,13 +1912,9 @@ def _audit_oscal_checks(
         # an Active Lula manifest satisfies HOLDS only alongside a PR-CI runnable check or an
         # Observed YYYY-MM-DD live/Gate-W record (POAM-2026-235).
         observed_ok = bool(_OBSERVED_RECORD_RE.search(blob))
-        if (
-            not pr_ci_runnable_ok
-            and not (active_lula_ok and observed_ok)
-            and not observed_ok
-        ):
+        if not pr_ci_runnable_ok and not (active_lula_ok and observed_ok):
             errors.append(
-                f"[Check 1: Read-Back] OSCAL {rid}: {claim_kind} claim cites no resolvable PR-CI runnable test/tftest/CI-gate or Observed record"
+                f"[Check 1: Read-Back] OSCAL {rid}: {claim_kind} claim cites no resolvable PR-CI runnable test/tftest/CI-gate or Active Lula + Observed record"
             )
 
     return errors, impl_count

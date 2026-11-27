@@ -3,7 +3,7 @@ system-security-plan:
   metadata:
     title: CAGE System Security Plan (EU_ECB — EU AI Act / GDPR / DORA)
     published: '2026-06-15T00:00:00Z'
-    last-modified: '2026-11-15T04:48:23Z'
+    last-modified: '2026-11-21T02:11:31Z'
     version: 1.0.0-draft+stpa
     oscal-version: 1.0.4
     remarks: 'This System Security Plan (SSP) documents the compliance controls implemented
@@ -388,8 +388,9 @@ system-security-plan:
         verification_status (VERIFIED under v0.2). Refusals are primary evidence:
         DEFER and REQUIRE_APPROVAL tokens and a hash-chained GOVERNANCE_DEFERRAL record
         carry the same record, and a DENY receipt with a co-occurring warrant failure
-        carries it inside proof_hash. Refusal and deferral evidence writes are non-blocking
-        (neither executes anything) but a failed write logs at ERROR and increments
+        carries it inside proof_hash. Refusal and deferral evidence writes are blocking
+        under is_evidence_chain_blocking() (raising REFUSAL_EVIDENCE_UNPERSISTED /
+        DEFERRAL_EVIDENCE_UNPERSISTED on sink failure), logging at ERROR and incrementing
         cage_governance_evidence_publish_failures_total{kind} (src/gateway/governance/governor/metrics.py).
         Whether an action is governed is resolved over the full stage set before POST_HITL
         filtering (resolve_claims, src/gateway/governance/governor/pipeline.py, shared
@@ -530,8 +531,9 @@ system-security-plan:
         0.95) universal confidence band in src/gateway/governance/governor/stages/confidence.py;
         [0.70, 0.97) EU_ECB trade-confidence band in src/cage_finance/tiers/trade_confidence_tier.py)
         with distinct-principal dual-control human operator quorum in DeferQueue (src/gateway/governance/defer_queue.py)
-        and single-use POST_HITL drift revalidation (SymbolicGovernor.revalidate_post_hitl()).
-        Sub-0.70 DEFER and WARRANT_INELIGIBLE are turn-terminal epistemic/reliance
+        and single-use POST_HITL drift revalidation (SymbolicGovernor.revalidate_post_hitl()
+        paired with the fail-closed advisor reviewer slippage gate in src/governed_financial_advisor/graph/subgraphs/governed_trader_graph.py,
+        POAM-2026-240). Sub-0.70 DEFER and WARRANT_INELIGIBLE are turn-terminal epistemic/reliance
         holds rather than Art. 22 human-approval gates. Planned / adopter-paired scope
         (POAM EU-006): subject-initiated Art. 22(3) point-of-view and post-decision
         contestation on request (requiring data-controller intake) and GET /v1/compliance/gdpr/art22
@@ -558,19 +560,25 @@ system-security-plan:
           escalations (src/cage_finance/tiers/consensus_tier.py, src/gateway/governance/governor/stages/confidence.py,
           src/cage_finance/tiers/trade_confidence_tier.py) park tokens in DeferQueue
           (src/gateway/governance/defer_queue.py) for distinct-principal dual-control
-          human OIDC approval (DeferQueue.approve(); WebAuthn assertions are not verified,
+          human OIDC + cryptographic W3C WebAuthn assertion approval (DeferQueue.approve()
+          and verify_webauthn_assertion() in src/gateway/governance/webauthn_verifier.py,
           POAM-2026-210) and single-use consumption with POST_HITL drift revalidation
-          (DeferQueue.consume_approval(), SymbolicGovernor.revalidate_post_hitl()),
-          verified in tests/test_defer_dual_control_auth.py, tests/test_defer_queue_quorum.py,
-          tests/test_defer_queue_single_use.py, tests/test_hitl_toctou_revalidation.py,
-          tests/governor/test_post_hitl_approval_spend.py, tests/governor/test_regional_overlay.py,
-          and tests/cage_finance/test_trade_confidence_tier.py.'
+          (DeferQueue.consume_approval(), SymbolicGovernor.revalidate_post_hitl(),
+          and fail-closed post_hitl_rehydrate_node / post_hitl_revalidate_node in
+          src/governed_financial_advisor/graph/subgraphs/governed_trader_graph.py,
+          POAM-2026-240), verified in tests/test_defer_dual_control_auth.py, tests/unit/governance/test_webauthn_verifier.py,
+          tests/test_defer_queue_quorum.py, tests/test_defer_queue_single_use.py,
+          tests/test_hitl_toctou_revalidation.py, tests/governor/test_post_hitl_approval_spend.py,
+          tests/governor/test_regional_overlay.py, and tests/cage_finance/test_trade_confidence_tier.py.'
         implementation-status:
           state: implemented
         links:
         - href: ../../tests/test_defer_dual_control_auth.py
           rel: reference
           text: Dual-control distinct-principal HITL tests
+        - href: ../../tests/unit/governance/test_webauthn_verifier.py
+          rel: reference
+          text: Cryptographic W3C WebAuthn assertion verification tests
         - href: ../../tests/test_hitl_toctou_revalidation.py
           rel: reference
           text: POST_HITL drift revalidation tests
@@ -681,7 +689,8 @@ system-security-plan:
         and the kernel bind_server_inputs() (src/gateway/governance/governor/server_inputs.py)
         drops every caller value for latency_ms, drawdown, its aliases and portfolio_total
         before resolving them, in POST /governance/validate-action, the MCP simulate_governance_check
-        dry run and the trade tool before its committing run. No STPA input is defaulted
+        dry run and once inside each committing run (SymbolicGovernor.govern() / revalidate_post_hitl(),
+        returning a SealedAction over the bound params). No STPA input is defaulted
         on a dry run. UCA-6 (order-volume fraction 0.005) is evaluated on every trade
         and refuses one lacking either input (POAM-2026-106 closed): order_size is
         the caller''s notional amount divided by the verified quote price, and daily_vol
@@ -819,18 +828,19 @@ system-security-plan:
           and GOVERNANCE_DEFERRAL records carry the ineligible record (test_defer_carries_the_ineligible_reliance_record),
           a post-approval revocation defers with no seal when only read-only tiers
           claim the action (test_post_hitl_revocation_is_caught_when_only_read_only_tiers_claim),
-          and a failed deferral evidence write is counted while the deferral proceeds
-          (test_deferral_proceeds_and_is_counted_when_the_sink_fails). Observed in
-          tests/governor/test_warrant_freshness.py (injected clocks, no sleeps): a
-          warrant is served without a fetch up to and including 60.000 s and re-fetched
-          at 60.001 s, a re-fetched revocation is refused immediately, a re-fetch
-          error or timeout is INELIGIBLE_STALE and the governor defers with WARRANT_INELIGIBLE,
-          concurrent requests share one fetch, POST_HITL inside the window relies
-          on the cached warrant while an expired one is re-fetched (and deferred without
-          a seal or a spent approval when the re-fetch fails), out-of-range windows
-          (above 60 s, at or below 0, NaN, infinite, timeout not below max_age) are
-          refused by the schema, the loader and the cache, and every reliance record
-          carries observed_at, age_seconds and max_age_seconds. Observed in tests/integrations/provider_05/test_provider_05_reliance_record.py
+          and a failed deferral evidence write blocks under blocking mode while incrementing
+          the failure counter (test_deferral_blocks_and_is_counted_when_the_sink_fails).
+          Observed in tests/governor/test_warrant_freshness.py (injected clocks, no
+          sleeps): a warrant is served without a fetch up to and including 60.000
+          s and re-fetched at 60.001 s, a re-fetched revocation is refused immediately,
+          a re-fetch error or timeout is INELIGIBLE_STALE and the governor defers
+          with WARRANT_INELIGIBLE, concurrent requests share one fetch, POST_HITL
+          inside the window relies on the cached warrant while an expired one is re-fetched
+          (and deferred without a seal or a spent approval when the re-fetch fails),
+          out-of-range windows (above 60 s, at or below 0, NaN, infinite, timeout
+          not below max_age) are refused by the schema, the loader and the cache,
+          and every reliance record carries observed_at, age_seconds and max_age_seconds.
+          Observed in tests/integrations/provider_05/test_provider_05_reliance_record.py
           (2026-10-07): for VEC-001 to VEC-006 and MISSING the record carries the
           seven Warrant Contract v0.1 evidence fields with the vector values (residual_risk_ref
           RRR-2026-08-01-A1), MISSING leaves every warrant-declared field empty, VEC-005
@@ -842,7 +852,7 @@ system-security-plan:
           the CAGE_WARRANT_SOURCE=provider_05 adapter; requests enter through POST
           /governance/validate-action behind workload identity and through execute_trade_action().
           VEC-001 at confidence 0.98 is admitted, and with a signed VEIP v0.2 ACTIVE
-          warrant and verified key manifest (test_veip_v02_active_warrant_is_verified_and_executes_e2e)
+          warrant and verified key manifest (test_provider_05_v02_active_warrant_is_verified_and_executes_e2e)
           the signed envelope and sealed GOVERNANCE_DECISION record carry verification_status
           VERIFIED; VEC-002 to VEC-006, the v0.2 REVOKED, SUSPENDED, EXPIRED, STALE_STATE,
           TAMPERED_SIGNATURE and UNKNOWN_KID scenarios, a missing warrant and a stale

@@ -335,27 +335,46 @@ async def analyst_reporter_node(state: DataAnalystState):  # type: ignore[no-unt
 
 
 # ---------------------------------------------------------------------------
-# 7. Build Subgraph — Apply CAGE governance to tool executor
+# 7. Build Subgraph — Apply CAGE governance preview via cage-client SDK
 # ---------------------------------------------------------------------------
+from cage_client.langgraph import governed_tool_node
+
 from src.governed_financial_advisor.graph.governance.tool_guard import (
-    gateway_tool_guard,
+    advisor_principal_extractor,
+    preview_trade_with_drift_revalidation,
 )
+from src.governed_financial_advisor.infrastructure.gateway_client import GatewayClient
 
 # Every tool call is validated by the gateway (POST /governance/validate-action)
-# before execution; any non-APPROVED outcome refuses the batch (fail closed).
+# in non-committing preview mode before MCP execution; read-only calls never hit
+# /tools/execute or ExecutionLedger, and any non-ALLOW/NARROW verdict halts
+# directly to ``reporter`` with paired ToolMessages.
 # The action must be one the finance domain registers: ``market_analysis`` is
-# READ_ONLY in the FTRA registry and allowed by trade_governance.rego. An
-# unregistered name is denied by OPA and treated as irreversible by FTRA.
+# READ_ONLY in the FTRA registry and allowed by trade_governance.rego.
 GOVERNED_ACTION = "market_analysis"
 
-guarded_tool_executor_node = gateway_tool_guard(GOVERNED_ACTION)(tool_executor_node)
+guarded_tool_executor_node = governed_tool_node(
+    client=lambda: GatewayClient().sdk_client(),
+    action=GOVERNED_ACTION,
+    mode="preview",
+    committing_tools=frozenset(),
+    approvable=False,
+    principal_extractor=advisor_principal_extractor,
+    preview_fn=preview_trade_with_drift_revalidation,
+    on_complete="mcp_execute",
+    on_deny="reporter",
+    on_defer="reporter",
+    on_unavailable="reporter",
+    extra_clear_keys=("routing_verdict_cache",),
+)
 
 builder = StateGraph(DataAnalystState)
 
 # Add Nodes
 builder.add_node("thinker", analyst_thinker_node)
 builder.add_node("doer", analyst_doer_node)
-builder.add_node("execute_tool", guarded_tool_executor_node)  # CAGE governance enforced
+builder.add_node("execute_tool", guarded_tool_executor_node)  # CAGE preview gate
+builder.add_node("mcp_execute", tool_executor_node)  # Read-only MCP execution
 builder.add_node("reporter", analyst_reporter_node)
 
 # Edges
@@ -366,7 +385,7 @@ builder.add_edge("thinker", "doer")
 # Conditional routing out of Doer
 def doer_router(state: DataAnalystState):  # type: ignore[no-untyped-def]
     last_message = state["messages"][-1]
-    # If the LLM returned tool calls, we execute them
+    # If the LLM returned tool calls, preview them first at execute_tool
     if getattr(last_message, "tool_calls", None):
         return "execute_tool"
     # Otherwise, it hallucinated text and refused tool calls, just report it
@@ -374,7 +393,8 @@ def doer_router(state: DataAnalystState):  # type: ignore[no-untyped-def]
 
 
 builder.add_conditional_edges("doer", doer_router)
-builder.add_edge("execute_tool", "reporter")
+# execute_tool returns Command(goto="mcp_execute" | "reporter"); only mcp_execute needs a static edge.
+builder.add_edge("mcp_execute", "reporter")
 builder.add_edge("reporter", END)
 
 # Compile!

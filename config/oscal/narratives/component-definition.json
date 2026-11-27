@@ -30,7 +30,7 @@
       "links": null
     },
     "e1f2a3b4-c5d6-7890-efab-901234567890": {
-      "remarks": "Zero-tolerance control: lula-validation-a92.yaml requires a safety_rate of 1.0 over custody-chain metrics at /v1/metrics/A.9.2 (INFERENCE_PROXY_PII_SCRUB_PASS; POAM-2026-146 closed 2026-11-12). In the maintained staging profile (inference_backend=none) no advisor or model emits A.9.2 records unless seeded (POAM-2026-201), and dark controls currently report evidence_age_seconds = 0.0 (POAM-2026-234). A FAIL or ERROR on A.9.2 in Lula results submitted to POST /v1/audit/ingest alerts through the compliance bridge audit workflow (_step4_alert_on_critical_fail in src/compliance_bridge/audit_workflow.py; console channel in reference Terraform, POAM-2026-230).\n"
+      "remarks": "Zero-tolerance control: lula-validation-a92.yaml requires a safety_rate of 1.0 over custody-chain metrics at /v1/metrics/A.9.2 (INFERENCE_PROXY_PII_SCRUB_PASS; POAM-2026-146 closed 2026-11-12). In the maintained staging profile (inference_backend=none) no advisor or model emits A.9.2 records unless seeded (POAM-2026-201), and dark controls currently report evidence_age_seconds = 0.0 (POAM-2026-234). A FAIL or ERROR on A.9.2 in Lula results submitted to POST /v1/audit/ingest alerts through the compliance bridge audit workflow (_step4_alert_on_critical_fail in src/compliance_bridge/audit_workflow.py; enforced PubSubNotifier GCP Pub/Sub terminal sink in enforcing postures, human fan-out adopter-operated, POAM-2026-230).\n"
     }
   }
 }

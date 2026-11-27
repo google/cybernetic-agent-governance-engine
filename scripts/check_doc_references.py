@@ -24,7 +24,18 @@ git's own revision syntax: `<sha>:<path>` or `<sha>^:<path>`. A pinned path is
 verified against history: the commit must exist and be an ancestor of HEAD, and
 the path must exist in that commit. Verification needs full history and fails
 closed in a shallow clone (CI checks out with fetch-depth: 0). Pins break if
-history is rewritten; whoever rewrites `main` owns re-pinning them.
+history is rewritten; whoever rewrites `main` owns re-pinning them. A pin may
+be backticked or written bare in parentheses, `(<sha>:<path>)`; both are
+verified. When STRICT_SYMBOL_ANCHORS is enabled, a pin's own `:<line>` / `#L<n>` /
+`#symbol` suffix, and any prose `line(s) <n>` / `L<n>` citation it governs, is
+checked against the pinned blob (`git show <sha>:<path>`): bounds, non-blank
+single lines, and agreement with the clause's backticked identifiers.
+
+Anchor accounting reports three tiers separately so nobody reads the gate as
+proving more than it does: Tier 1 structural anchors (a named definition
+exists), Tier 2 scoped subtokens (a definition exists and a literal appears in
+its non-comment body), and pinned-blob citations (checked against history, not
+HEAD).
 
 The label of a Markdown link with a local target is display text: the target is
 the reference, and it is what gets verified.
@@ -50,12 +61,16 @@ from __future__ import annotations
 
 import argparse
 import ast
+import atexit
 import functools
+import io
 import json
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
+import tokenize
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -65,6 +80,7 @@ import tomllib
 import yaml
 
 REPO_ROOT = Path.cwd().resolve()
+STRICT_SYMBOL_ANCHORS = False
 
 
 class _DuplicateKeyRejectingLoader(yaml.SafeLoader):
@@ -116,6 +132,7 @@ DOC_SCOPE = (
     "docs/compliance/universal/POAM_ISO42001.md",
     "docs/compliance/eu_ecb/POAM_EU_ECB.md",
     "docs/compliance/apac_mas/POAM_APAC_MAS.md",
+    "docs/operations/ALERT_QUEUE_READBACK.md",
     "docs/architecture",
     "compliance",
     "infra",
@@ -135,10 +152,28 @@ RETRACTION_NOTICE_PATTERN = re.compile(
 MD_LINK_PATTERN = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
 # Inline code backticks: `code`
 INLINE_CODE_PATTERN = re.compile(r"`([^`\n]+)`")
-# Revision-pinned path: `<sha>:<path>` or `<sha>^:<path>`
+# Revision-pinned path: `<sha>:<path>` or `<sha>^:<path>` (with optional trailing `:line` or `#anchor`)
 PINNED_PATH_PATTERN = re.compile(
-    r"^(?P<commit>[0-9a-f]{7,40})(?P<parent>\^?):(?P<path>(?:\.[A-Za-z0-9_]|[A-Za-z0-9_])[A-Za-z0-9_./-]*)$"
+    r"^(?P<commit>[0-9a-f]{7,40})(?P<parent>\^?):(?P<path>(?:\.[A-Za-z0-9_]|[A-Za-z0-9_])[A-Za-z0-9_./-]*)(?P<suffix>:L?\d+(?:[-\u2013]L?\d+)?|#[^\s]+)?$"
 )
+# Any path-bearing pin in prose, backticked (`<sha>:<path>[suffix]`) or bare in
+# parentheses ((<sha>:<path>[suffix]), optionally followed by `:<line>`). The
+# suffix is `:<line_spec>`, `#L<n>[-L<m>]` or `#symbol`.
+PINNED_REF_PATTERN = re.compile(
+    r"`(?P<b_commit>[0-9a-f]{7,40})(?P<b_parent>\^?):"
+    r"(?P<b_path>(?:\.[A-Za-z0-9_]|[A-Za-z0-9_])[A-Za-z0-9_./-]*?)"
+    r"(?P<b_suffix>:L?\d+(?:[-\u2013]L?\d+)?|#[^\s`]+)?`"
+    r"|(?<![`A-Za-z0-9_])\((?P<p_commit>[0-9a-f]{7,40})(?P<p_parent>\^?):"
+    r"(?P<p_path>(?:\.[A-Za-z0-9_]|[A-Za-z0-9_])[A-Za-z0-9_./-]*?)"
+    r"(?P<p_suffix>:L?\d+(?:[-\u2013]L?\d+)?|#[^\s)`]+)?\)"
+    r"(?P<p_tail>:L?\d+(?:[-\u2013]L?\d+)?\b)?"
+)
+# Commit-only pin clause (no path): "at `<sha>`", "in commit `<sha>`"
+COMMIT_CLAUSE_PATTERN = re.compile(
+    r"(?:at|in|commit|commits)\s+`(?P<commit>[0-9a-f]{7,40})\^?`", re.IGNORECASE
+)
+# A pin governs prose line citations at most this many characters after it
+PIN_GOVERNANCE_WINDOW = 140
 GIT_TIMEOUT_SECONDS = 30
 
 # Concrete file extensions to check
@@ -157,6 +192,13 @@ CONCRETE_EXTENSIONS = {
     ".tf",
     ".tfvars",
     ".hcl",
+    ".example",
+    ".mk",
+    ".ts",
+    ".tsx",
+    ".js",
+    ".mjs",
+    ".tla",
 }
 
 # Literal words or tokens to ignore
@@ -182,8 +224,33 @@ class Issue:
     reason: str
 
 
+@dataclass(frozen=True)
+class SymbolSpan:
+    name: str
+    kind: str
+    start_line: int
+    end_line: int
+
+
+@dataclass
+class AnchorStats:
+    tier1_structural: int = 0
+    tier2_scoped_subtoken: int = 0
+    pinned_blob: int = 0
+
+
 # Markdown link line anchor: #L<start> or #L<start>-L<end>
 LINE_ANCHOR_PATTERN = re.compile(r"#L(\d+)(?:-L(\d+))?$")
+# Markdown or inline hash symbol anchor: #<symbol> or #<symbol>:<subtoken>
+HASH_SYMBOL_ANCHOR_PATTERN = re.compile(r"#(?P<anchor>(?!L\d+(?:-L\d+)?$)[^#\s]+)$")
+# Inline double-colon symbol anchor: path/to/file.ext::<symbol>[#<subtoken>]
+DOUBLE_COLON_ANCHOR_PATTERN = re.compile(
+    r"^(?P<path>[A-Za-z0-9_./-]+(?:\.[a-z0-9]+|Makefile|Dockerfile))::(?P<anchor>[^\s]+)$"
+)
+# Structured table-row ID anchor in Markdown files (e.g. #POAM-2026-011, #EU-001)
+MD_ROW_ID_ANCHOR_PATTERN = re.compile(
+    r"^(?:POAM|AI600|EU|MAS|UCA|H|SC)-[A-Za-z0-9_.-]+$"
+)
 # Inline colon line anchor: path/to/file.ext:<line_spec>
 COLON_LINE_SPEC_PATTERN = re.compile(
     r"^(?P<path>[A-Za-z0-9_./-]+\.[a-z0-9]+):(?P<spec>\d+(?:[-\u2013]\d+)?(?:,\d+(?:[-\u2013]\d+)?)*)$"
@@ -195,6 +262,18 @@ PROSE_LINE_REF_PATTERN = re.compile(
 )
 # Standalone line range on a line that also links a YAML file and a UUID
 STANDALONE_LINE_RANGE_PATTERN = re.compile(r"`?lines\s+(?P<spec>\d+[-\u2013]\d+)`?")
+# Unpinned prose line-number patterns rejected when STRICT_SYMBOL_ANCHORS is True
+UNPINNED_PROSE_LINE_WORD_PATTERN = re.compile(
+    r"\blines?\s+\d+(?:[-\u2013]\d+)?(?:\s*,\s*\d+(?:[-\u2013]\d+)?)*",
+    re.IGNORECASE,
+)
+UNPINNED_PROSE_L_SPAN_PATTERN = re.compile(
+    r"(?::L\d+(?:[-\u2013]L?\d+)?|\(\s*(?:L\d{2,}(?:[-\u2013,\s]+L?\d+)*|L[1-9][-\u2013,\s]+L?\d+(?:[-\u2013,\s]+L?\d+)*)\s*\)|\bL\d{2,}(?:[-\u2013]L?\d+)?\b|\bL[1-9][-\u2013]L?\d+\b)"
+)
+PINNED_CLAUSE_PREFIX_PATTERN = re.compile(
+    r"(?:`[0-9a-f]{7,40}\^?:[A-Za-z0-9_./-]+`|\([0-9a-f]{7,40}\^?:[A-Za-z0-9_./-]+[^\s)]*\)"
+    r"|(?:at|in|commit|commits)\s+`[0-9a-f]{7,40}\^?`)"
+)
 
 # HCL / Terraform block header in .tf files
 HCL_HEADER_PATTERN = re.compile(
@@ -381,8 +460,13 @@ def _validate_line_anchor(
     return True, ""
 
 
-def _resolve_candidate_path(base_dir: Path, target_path_str: str) -> Path | None:
-    """Resolve a relative or repo-root path string to an existing Path on disk, or None."""
+def _resolve_candidate_path(
+    base_dir: Path,
+    target_path_str: str,
+    *,
+    markdown_link: bool = False,
+) -> Path | None:
+    """Resolve a path string to an existing Path on disk without guessing subtree aliases."""
     stripped_target = target_path_str.strip().strip("'\"`")
     clean_target = re.split(r"[:#]", stripped_target)[0].strip()
     if (
@@ -391,74 +475,32 @@ def _resolve_candidate_path(base_dir: Path, target_path_str: str) -> Path | None
         or is_template_or_pattern(clean_target)
     ):
         return None
-    norm = clean_target[2:] if clean_target.startswith("./") else clean_target
 
-    candidates = [
-        # 1. Direct from repo root
-        REPO_ROOT / norm,
-        # 2. Relative to the document base directory
-        base_dir / clean_target,
-        # 3. Subtree aliases
-        REPO_ROOT / "docs" / norm,
-        REPO_ROOT / "compliance" / norm,
-        REPO_ROOT / "docs" / "compliance" / norm,
-        REPO_ROOT / "src" / norm,
-        REPO_ROOT / "src" / "gateway" / norm,
-        REPO_ROOT / "src" / "gateway" / "governance" / norm,
-        REPO_ROOT / "src" / "gateway" / "governance" / "nemo" / norm,
-        REPO_ROOT / "src" / "governed_financial_advisor" / norm,
-        REPO_ROOT / "src" / "governed_financial_advisor" / norm.replace("src/", ""),
-        REPO_ROOT
-        / norm.replace("src/integrations/flowsignal", "src/integrations/provider_01"),
-        REPO_ROOT / "src" / "governed_financial_advisor" / "tools" / norm,
-        REPO_ROOT / "src" / "governed_financial_advisor" / "agents" / norm,
-        REPO_ROOT / "src" / "integrations" / norm,
-        REPO_ROOT / "docs" / "compliance" / "us_fed" / norm,
-        REPO_ROOT / "docs" / "compliance" / "universal" / norm,
-        REPO_ROOT / "docs" / "governance" / norm,
-        REPO_ROOT / "docs" / "operations" / norm,
-        REPO_ROOT / "docs" / "project" / norm,
-        REPO_ROOT / "compliance" / "rar" / norm,
-        REPO_ROOT / "compliance" / "categorization" / norm,
-        REPO_ROOT / "compliance" / "boundary" / norm,
-        REPO_ROOT / "compliance" / "lula" / norm,
-        REPO_ROOT / "docs" / "architecture" / norm,
-        REPO_ROOT / "docs" / "compliance" / "cross-region" / norm,
-        REPO_ROOT / "src" / "gateway" / "governance" / "opa" / norm,
-        REPO_ROOT / "src" / "gateway" / "governance" / "opa" / norm.replace("opa/", ""),
-        REPO_ROOT / "src" / "cage_finance" / "opa" / norm.replace("opa/", ""),
-        REPO_ROOT / "src" / "cage_healthcare" / "opa" / norm.replace("opa/", ""),
-        REPO_ROOT
-        / "src"
-        / "compliance_bridge"
-        / norm.replace("compliance_bridge/", ""),
-        REPO_ROOT / "src" / "compliance_bridge" / norm,
-        REPO_ROOT
-        / "src"
-        / "gateway"
-        / "compliance_bridge"
-        / norm.replace("compliance_bridge/", ""),
-        REPO_ROOT / "src" / "cage_healthcare" / "policy" / norm.replace("opa/", ""),
-        REPO_ROOT / "config" / norm,
-        REPO_ROOT / "local" / "plans" / norm.replace("plans/", ""),
-        REPO_ROOT / "local" / norm,
-        REPO_ROOT / "compliance" / "continuous-monitoring" / norm,
-        REPO_ROOT / "local" / "plans" / "remediation" / norm,
-        REPO_ROOT / "scripts" / norm,
-        REPO_ROOT / "infra" / "targets" / "gcp-gke" / norm,
-    ]
-    if norm.startswith("compliance/"):
-        candidates.append(REPO_ROOT / "docs" / norm)
+    if markdown_link:
+        candidates = (
+            [REPO_ROOT / clean_target.lstrip("/")]
+            if clean_target.startswith("/")
+            else [base_dir / clean_target]
+        )
+    else:
+        norm = clean_target[2:] if clean_target.startswith("./") else clean_target
+        candidates = (
+            [REPO_ROOT / clean_target.lstrip("/")]
+            if clean_target.startswith("/")
+            else [REPO_ROOT / norm, base_dir / clean_target]
+        )
 
-    has_line_anchor = bool(
+    has_file_anchor = bool(
         LINE_ANCHOR_PATTERN.search(stripped_target)
         or COLON_LINE_SPEC_PATTERN.match(stripped_target)
+        or HASH_SYMBOL_ANCHOR_PATTERN.search(stripped_target)
+        or DOUBLE_COLON_ANCHOR_PATTERN.match(stripped_target)
     )
     for cand in candidates:
         try:
             resolved = cand.resolve()
             if resolved.exists():
-                if has_line_anchor and not resolved.is_file():
+                if has_file_anchor and not resolved.is_file():
                     continue
                 return resolved
         except Exception:
@@ -466,10 +508,76 @@ def _resolve_candidate_path(base_dir: Path, target_path_str: str) -> Path | None
     return None
 
 
-def verify_file_path(
-    base_dir: Path, target_path_str: str, *, allow_colon_anchor: bool = False
+def _validate_resolved_path_anchors(
+    resolved: Path,
+    clean_target: str,
+    stripped_target: str,
+    *,
+    allow_colon_anchor: bool = False,
+    anchor_stats: AnchorStats | None = None,
 ) -> tuple[bool, str]:
-    """Verify if a relative or repo-root path exists on disk and validate any #L or :line anchor."""
+    """Validate optional line, ::symbol, or #symbol anchors against an existing resolved path."""
+    line_match = LINE_ANCHOR_PATTERN.search(stripped_target)
+    colon_line_match = (
+        COLON_LINE_SPEC_PATTERN.match(stripped_target)
+        if (allow_colon_anchor and not line_match)
+        else None
+    )
+    if line_match or colon_line_match:
+        if STRICT_SYMBOL_ANCHORS:
+            anchor_lbl = (
+                line_match.group(0)
+                if line_match
+                else f":{colon_line_match.group('spec')}"  # type: ignore[union-attr]
+            )
+            return (
+                False,
+                f"Unpinned line-number anchor '{anchor_lbl}' is forbidden on live file "
+                f"'{resolved.name}'; use a structural symbol anchor (#symbol or ::symbol) "
+                f"or pin to '<sha>:{clean_target}'",
+            )
+        return _validate_line_anchor(
+            resolved, stripped_target, allow_colon=allow_colon_anchor
+        )
+
+    dbl_match = (
+        DOUBLE_COLON_ANCHOR_PATTERN.match(stripped_target)
+        if allow_colon_anchor
+        else None
+    )
+    if dbl_match is not None:
+        return resolve_symbol_anchor(
+            resolved,
+            dbl_match.group("anchor"),
+            subtoken_sep="#",
+            anchor_stats=anchor_stats,
+        )
+
+    hash_match = HASH_SYMBOL_ANCHOR_PATTERN.search(stripped_target)
+    if hash_match is not None:
+        raw_anchor = hash_match.group("anchor")
+        if resolved.suffix.lower() == ".md" and not STRICT_SYMBOL_ANCHORS:
+            if not MD_ROW_ID_ANCHOR_PATTERN.match(raw_anchor.split(":", 1)[0]):
+                return True, ""
+        return resolve_symbol_anchor(
+            resolved,
+            raw_anchor,
+            subtoken_sep=":",
+            anchor_stats=anchor_stats,
+        )
+
+    return True, ""
+
+
+def verify_file_path(
+    base_dir: Path,
+    target_path_str: str,
+    *,
+    allow_colon_anchor: bool = False,
+    markdown_link: bool = False,
+    anchor_stats: AnchorStats | None = None,
+) -> tuple[bool, str]:
+    """Verify if a relative or repo-root path exists on disk and validate any symbol or line anchor."""
     stripped_target = target_path_str.strip().strip("'\"`")
     clean_target = re.split(r"[:#]", stripped_target)[0].strip()
     if not clean_target or clean_target.lower() in IGNORED_TOKENS:
@@ -478,17 +586,28 @@ def verify_file_path(
     if is_template_or_pattern(clean_target):
         return True, ""
 
-    resolved = _resolve_candidate_path(base_dir, target_path_str)
+    resolved = _resolve_candidate_path(
+        base_dir,
+        target_path_str,
+        markdown_link=markdown_link,
+    )
     if resolved is not None:
-        return _validate_line_anchor(
-            resolved, target_path_str, allow_colon=allow_colon_anchor
+        return _validate_resolved_path_anchors(
+            resolved,
+            clean_target,
+            stripped_target,
+            allow_colon_anchor=allow_colon_anchor,
+            anchor_stats=anchor_stats,
         )
 
     return False, f"Target path '{clean_target}' does not exist on disk"
 
 
-def _git(repo_root: Path, *args: str) -> tuple[bool, str]:
-    """Run git with a fixed argument list (no shell) in *repo_root*."""
+def _git(repo_root: Path, *args: str, strip: bool = True) -> tuple[bool, str]:
+    """Run git with a fixed argument list (no shell) in *repo_root*.
+
+    *strip* is False when the caller needs byte-exact line numbering (blob reads).
+    """
     git = shutil.which("git")
     if git is None:
         return False, "git is not installed"
@@ -503,7 +622,7 @@ def _git(repo_root: Path, *args: str) -> tuple[bool, str]:
         )
     except (OSError, subprocess.TimeoutExpired) as err:
         return False, str(err)
-    return result.returncode == 0, result.stdout.strip()
+    return result.returncode == 0, (result.stdout.strip() if strip else result.stdout)
 
 
 @functools.lru_cache(maxsize=8)
@@ -535,6 +654,36 @@ def verify_pinned_path(commit: str, parent: str, path: str) -> tuple[bool, str]:
     if not _git(REPO_ROOT, "cat-file", "-e", f"{revision}:{path}")[0]:
         return False, f"'{path}' does not exist at {revision}"
     return True, ""
+
+
+_PIN_BLOB_ROOT: list[Path] = []
+
+
+def _pin_blob_root() -> Path:
+    """Lazily create one private temp tree for pinned blobs, removed at exit."""
+    if not _PIN_BLOB_ROOT:
+        root = Path(tempfile.mkdtemp(prefix="g9-pinned-"))
+        atexit.register(shutil.rmtree, root, True)
+        _PIN_BLOB_ROOT.append(root)
+    return _PIN_BLOB_ROOT[0]
+
+
+@functools.lru_cache(maxsize=1024)
+def _materialize_pinned_blob(repo_root: Path, revision: str, path: str) -> Path | None:
+    """Write `git show <revision>:<path>` to a temp file (same relative path), or None.
+
+    Callers verify the pin with verify_pinned_path() first. Absolute paths and
+    `..` segments are refused so the write cannot escape the temp tree.
+    """
+    if Path(path).is_absolute() or ".." in Path(path).parts:
+        return None
+    ok, out = _git(repo_root, "show", f"{revision}:{path}", strip=False)
+    if not ok:
+        return None
+    dest = _pin_blob_root() / re.sub(r"[^0-9A-Za-z]", "_", revision) / path
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(out, encoding="utf-8")
+    return dest
 
 
 def _parse_tf_blocks(text: str, tf_path: Path) -> list[TerraformBlock]:
@@ -830,7 +979,7 @@ def _get_python_file_symbols(py_path: Path, _depth: int = 0) -> set[str]:
         elif isinstance(node, ast.Attribute):
             syms.add(node.attr)
         elif isinstance(node, ast.Constant) and isinstance(node.value, str):
-            if re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", node.value):
+            if re.fullmatch(r"[A-Z][A-Z0-9_]{2,}", node.value):
                 syms.add(node.value)
     return syms
 
@@ -876,6 +1025,939 @@ def _get_yaml_uuid_span(yaml_path: Path, uuid_str: str) -> tuple[int, int] | Non
                     break
             return start_line, end_line
     return None
+
+
+def _find_brace_block_end_line(text: str, open_brace_idx: int) -> int:
+    """Return 1-indexed closing line for a `{` at *open_brace_idx*, skipping strings and comments."""
+    depth = 0
+    in_quote: str | None = None
+    esc = False
+    idx = open_brace_idx
+    end_pos = len(text)
+    while idx < len(text):
+        ch = text[idx]
+        if in_quote is not None:
+            if esc:
+                esc = False
+            elif ch == "\\" and in_quote == '"':
+                esc = True
+            elif ch == in_quote:
+                in_quote = None
+        else:
+            if ch == "#" or (
+                ch == "/" and idx + 1 < len(text) and text[idx + 1] == "/"
+            ):
+                nl = text.find("\n", idx)
+                if nl == -1:
+                    break
+                idx = nl
+            elif ch in {'"', "'"}:
+                in_quote = ch
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    end_pos = idx + 1
+                    break
+        idx += 1
+    return text.count("\n", 0, end_pos) + 1
+
+
+def _merge_symbol_spans(spans: list[SymbolSpan]) -> tuple[SymbolSpan, ...]:
+    """Merge identical (name, kind) spans (e.g. @overload, @property.setter, multi-clause Rego)."""
+    merged: dict[tuple[str, str], SymbolSpan] = {}
+    order: list[tuple[str, str]] = []
+    for sp in spans:
+        key = (sp.name, sp.kind)
+        prev = merged.get(key)
+        if prev is None:
+            merged[key] = sp
+            order.append(key)
+        else:
+            merged[key] = SymbolSpan(
+                sp.name,
+                sp.kind,
+                min(prev.start_line, sp.start_line),
+                max(prev.end_line, sp.end_line),
+            )
+    return tuple(merged[k] for k in order)
+
+
+def _extract_python_structural_symbols(text: str) -> list[SymbolSpan]:
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return []
+    out: list[SymbolSpan] = []
+
+    def _assign_names(target: ast.expr) -> list[str]:
+        if isinstance(target, ast.Name):
+            return [target.id]
+        if isinstance(target, (ast.Tuple, ast.List)):
+            names: list[str] = []
+            for elt in target.elts:
+                names.extend(_assign_names(elt))
+            return names
+        return []
+
+    def _walk_scope(stmts: list[ast.stmt], prefix: str) -> None:
+        for node in stmts:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                qual = f"{prefix}.{node.name}" if prefix else node.name
+                start_l = min([node.lineno, *(d.lineno for d in node.decorator_list)])
+                end_l = getattr(node, "end_lineno", None) or node.lineno
+                out.append(SymbolSpan(qual, "py_func", start_l, end_l))
+            elif isinstance(node, ast.ClassDef):
+                qual = f"{prefix}.{node.name}" if prefix else node.name
+                start_l = min([node.lineno, *(d.lineno for d in node.decorator_list)])
+                end_l = getattr(node, "end_lineno", None) or node.lineno
+                out.append(SymbolSpan(qual, "py_class", start_l, end_l))
+                _walk_scope(node.body, qual)
+            elif isinstance(node, ast.Assign):
+                end_l = getattr(node, "end_lineno", None) or node.lineno
+                for name in [n for t in node.targets for n in _assign_names(t)]:
+                    qual = f"{prefix}.{name}" if prefix else name
+                    out.append(SymbolSpan(qual, "py_assign", node.lineno, end_l))
+            elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                end_l = getattr(node, "end_lineno", None) or node.lineno
+                qual = f"{prefix}.{node.target.id}" if prefix else node.target.id
+                out.append(SymbolSpan(qual, "py_assign", node.lineno, end_l))
+            elif hasattr(ast, "TypeAlias") and isinstance(node, ast.TypeAlias):
+                end_l = getattr(node, "end_lineno", None) or node.lineno
+                qual = f"{prefix}.{node.name.id}" if prefix else node.name.id
+                out.append(SymbolSpan(qual, "py_type", node.lineno, end_l))
+            elif isinstance(node, ast.If):
+                _walk_scope(node.body, prefix)
+                _walk_scope(node.orelse, prefix)
+            elif isinstance(node, ast.Try):
+                _walk_scope(node.body, prefix)
+                for handler in node.handlers:
+                    _walk_scope(handler.body, prefix)
+                _walk_scope(node.orelse, prefix)
+                _walk_scope(node.finalbody, prefix)
+            elif isinstance(node, (ast.With, ast.AsyncWith)):
+                _walk_scope(node.body, prefix)
+
+    _walk_scope(tree.body, "")
+    return out
+
+
+_HCL_TEST_BLOCK_RE = re.compile(
+    r'^\s*(?:(?P<kind>run|mock_provider|provider)\s+"(?P<name>[A-Za-z0-9_-]+)"'
+    r"|(?P<vars>variables))\s*\{",
+    re.MULTILINE,
+)
+
+
+def _extract_hcl_test_symbols(text: str, resolved_path: Path) -> list[SymbolSpan]:
+    out = [
+        SymbolSpan(b.address, "tf_block", b.start_line, b.end_line)
+        for b in _parse_tf_blocks(text, resolved_path)
+    ]
+    lines = text.splitlines()
+    for match in _HCL_TEST_BLOCK_RE.finditer(text):
+        start_l = text.count("\n", 0, match.start()) + 1
+        end_l = _find_brace_block_end_line(text, match.end() - 1)
+        if match.group("kind"):
+            kind = match.group("kind")
+            name = match.group("name")
+            out.append(SymbolSpan(f"{kind}.{name}", "hcl_block", start_l, end_l))
+            if kind == "run":
+                out.append(SymbolSpan(name, "hcl_run", start_l, end_l))
+        elif match.group("vars"):
+            out.append(SymbolSpan("variables", "hcl_vars", start_l, end_l))
+            depth = 0
+            for l_idx in range(start_l, end_l + 1):
+                clean = re.sub(r"(#|//).*$", "", lines[l_idx - 1])
+                if depth == 1:
+                    km = re.match(r"^\s*([A-Za-z_][A-Za-z0-9_-]*)\s*=", clean)
+                    if km:
+                        out.append(
+                            SymbolSpan(
+                                f"variables.{km.group(1)}", "hcl_var", l_idx, l_idx
+                            )
+                        )
+                depth += clean.count("{") - clean.count("}")
+    return out
+
+
+def _extract_tfvars_symbols(text: str) -> list[SymbolSpan]:
+    out: list[SymbolSpan] = []
+    lines = text.splitlines()
+    depth = 0
+    cur_key: str | None = None
+    cur_start = 1
+    for idx, raw in enumerate(lines, start=1):
+        clean = re.sub(r"(#|//).*$", "", raw)
+        if depth == 0:
+            km = re.match(r"^\s*([A-Za-z_][A-Za-z0-9_-]*)\s*=", clean)
+            if km:
+                cur_key = km.group(1)
+                cur_start = idx
+        delta = (
+            clean.count("{") + clean.count("[") - clean.count("}") - clean.count("]")
+        )
+        depth = max(0, depth + delta)
+        if cur_key is not None and depth == 0:
+            out.append(SymbolSpan(cur_key, "tfvars_key", cur_start, idx))
+            cur_key = None
+    if cur_key is not None:
+        out.append(SymbolSpan(cur_key, "tfvars_key", cur_start, len(lines)))
+    return out
+
+
+def _extract_yaml_symbols(text: str, resolved_path: Path) -> list[SymbolSpan]:
+    out: list[SymbolSpan] = []
+    total_lines = max(1, len(text.splitlines()))
+    try:
+        docs = list(yaml.compose_all(text, Loader=_DuplicateKeyRejectingLoader))
+    except yaml.YAMLError:
+        return out
+
+    def _node_end_line(node: yaml.Node, start_l: int) -> int:
+        if node.end_mark is None:
+            return start_l
+        # end_mark points at the line after a block mapping/sequence when column == 0
+        raw_end = (
+            node.end_mark.line
+            if node.end_mark.column == 0 and node.end_mark.line >= start_l
+            else node.end_mark.line + 1
+        )
+        return min(total_lines, max(start_l, raw_end))
+
+    def _walk_yaml(node: yaml.Node | None, prefix: str) -> None:
+        if isinstance(node, yaml.MappingNode):
+            seen_keys: set[str] = set()
+            for k_node, v_node in node.value:
+                if not isinstance(k_node, yaml.ScalarNode):
+                    continue
+                key = str(k_node.value).strip()
+                if not key or key in seen_keys:
+                    continue
+                seen_keys.add(key)
+                start_l = (k_node.start_mark.line + 1) if k_node.start_mark else 1
+                end_l = _node_end_line(v_node, start_l)
+                qual = f"{prefix}.{key}" if prefix else key
+                out.append(SymbolSpan(qual, "yaml_key", start_l, end_l))
+                if prefix == "jobs":
+                    out.append(SymbolSpan(key, "yaml_job", start_l, end_l))
+                if key == "uuid" and isinstance(v_node, yaml.ScalarNode):
+                    u_val = str(v_node.value).strip()
+                    if u_val:
+                        u_span = _get_yaml_uuid_span(resolved_path, u_val)
+                        u_start, u_end = u_span if u_span else (start_l, end_l)
+                        out.append(SymbolSpan(u_val, "yaml_uuid", u_start, u_end))
+                        out.append(
+                            SymbolSpan(f"uuid:{u_val}", "yaml_uuid", u_start, u_end)
+                        )
+                _walk_yaml(v_node, qual)
+        elif isinstance(node, yaml.SequenceNode):
+            for item in node.value:
+                if isinstance(item, yaml.MappingNode):
+                    item_start = (item.start_mark.line + 1) if item.start_mark else 1
+                    item_end = _node_end_line(item, item_start)
+                    for k_node, v_node in item.value:
+                        if (
+                            isinstance(k_node, yaml.ScalarNode)
+                            and isinstance(v_node, yaml.ScalarNode)
+                            and k_node.value in {"id", "control-id"}
+                        ):
+                            id_val = str(v_node.value).strip()
+                            if id_val:
+                                out.append(
+                                    SymbolSpan(
+                                        f"{prefix}.{id_val}" if prefix else id_val,
+                                        "yaml_item",
+                                        item_start,
+                                        item_end,
+                                    )
+                                )
+                _walk_yaml(item, prefix)
+
+    for doc_node in docs:
+        if isinstance(doc_node, yaml.MappingNode):
+            doc_start = (doc_node.start_mark.line + 1) if doc_node.start_mark else 1
+            doc_end = _node_end_line(doc_node, doc_start)
+            kind_val = ""
+            meta_name = ""
+            for dk, dv in doc_node.value:
+                if isinstance(dk, yaml.ScalarNode):
+                    if dk.value == "kind" and isinstance(dv, yaml.ScalarNode):
+                        kind_val = str(dv.value).strip()
+                    elif dk.value == "metadata" and isinstance(dv, yaml.MappingNode):
+                        for mk, mv in dv.value:
+                            if (
+                                isinstance(mk, yaml.ScalarNode)
+                                and mk.value == "name"
+                                and isinstance(mv, yaml.ScalarNode)
+                            ):
+                                meta_name = str(mv.value).strip()
+            if kind_val and meta_name:
+                out.append(
+                    SymbolSpan(
+                        f"{kind_val}/{meta_name}", "k8s_resource", doc_start, doc_end
+                    )
+                )
+        _walk_yaml(doc_node, "")
+    return out
+
+
+_JSON_TOK_RE = re.compile(
+    r'"(?:\\.|[^"\\])*"|[{}\[\]:,]|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null'
+)
+
+
+def _extract_json_symbols(text: str) -> list[SymbolSpan]:
+    try:
+        json.loads(text)
+    except ValueError:
+        return []
+    tokens = [
+        (m.group(0), text.count("\n", 0, m.start()) + 1)
+        for m in _JSON_TOK_RE.finditer(text)
+    ]
+    out: list[SymbolSpan] = []
+    pos = 0
+    n = len(tokens)
+
+    def _parse_val(prefix: str) -> tuple[int, int, dict[str, str]]:
+        nonlocal pos
+        if pos >= n:
+            return 1, 1, {}
+        tok, start_l = tokens[pos]
+        if tok == "{":
+            pos += 1
+            scalars: dict[str, str] = {}
+            end_l = start_l
+            while pos < n and tokens[pos][0] != "}":
+                if tokens[pos][0] == ",":
+                    pos += 1
+                    continue
+                k_tok, k_line = tokens[pos]
+                pos += 1
+                if pos < n and tokens[pos][0] == ":":
+                    pos += 1
+                key = json.loads(k_tok) if k_tok.startswith('"') else k_tok
+                qual = f"{prefix}.{key}" if prefix else key
+                v_tok = tokens[pos][0] if pos < n else ""
+                _, v_end, _ = _parse_val(qual)
+                end_l = v_end
+                out.append(SymbolSpan(qual, "json_key", k_line, v_end))
+                if v_tok.startswith('"'):
+                    scalars[key] = json.loads(v_tok)
+            if pos < n and tokens[pos][0] == "}":
+                end_l = tokens[pos][1]
+                pos += 1
+            return start_l, end_l, scalars
+        if tok == "[":
+            pos += 1
+            end_l = start_l
+            while pos < n and tokens[pos][0] != "]":
+                if tokens[pos][0] == ",":
+                    pos += 1
+                    continue
+                i_start, i_end, scalars = _parse_val(prefix)
+                end_l = i_end
+                for id_field in (
+                    "id",
+                    "action",
+                    "action_name",
+                    "code",
+                    "uca_id",
+                    "control_id",
+                ):
+                    if scalars.get(id_field):
+                        ident = scalars[id_field]
+                        out.append(
+                            SymbolSpan(
+                                f"{prefix}.{ident}" if prefix else ident,
+                                "json_item",
+                                i_start,
+                                i_end,
+                            )
+                        )
+                        break
+            if pos < n and tokens[pos][0] == "]":
+                end_l = tokens[pos][1]
+                pos += 1
+            return start_l, end_l, {}
+        pos += 1
+        return start_l, start_l, {}
+
+    _parse_val("")
+    return out
+
+
+def _extract_toml_symbols(text: str) -> list[SymbolSpan]:
+    try:
+        tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
+        return []
+    lines = text.splitlines()
+    out: list[SymbolSpan] = []
+    cur_sec = ""
+    cur_sec_start = 1
+    is_array_sec = False
+    sec_entries: list[tuple[str, int, bool, dict[str, str]]] = []
+    cur_scalars: dict[str, str] = {}
+    bracket_depth = 0
+    cur_key: str | None = None
+    cur_key_start = 1
+
+    def _flush_section(end_line: int) -> None:
+        if cur_sec:
+            sec_entries.append(
+                (cur_sec, cur_sec_start, is_array_sec, dict(cur_scalars))
+            )
+            out.append(SymbolSpan(cur_sec, "toml_table", cur_sec_start, end_line))
+            if is_array_sec and "id" in cur_scalars:
+                out.append(
+                    SymbolSpan(
+                        f"{cur_sec}.{cur_scalars['id']}",
+                        "toml_item",
+                        cur_sec_start,
+                        end_line,
+                    )
+                )
+
+    for idx, raw in enumerate(lines, start=1):
+        clean = re.sub(r"#.*$", "", raw).strip()
+        if not clean:
+            continue
+        if bracket_depth == 0 and clean.startswith("["):
+            arr_m = re.match(r"^\[\[([A-Za-z0-9_.\"-]+)\]\]$", clean)
+            tbl_m = re.match(r"^\[([A-Za-z0-9_.\"-]+)\]$", clean)
+            if arr_m or tbl_m:
+                _flush_section(max(cur_sec_start, idx - 1))
+                cur_sec = (arr_m.group(1) if arr_m else tbl_m.group(1)).replace('"', "")  # type: ignore[union-attr]
+                cur_sec_start = idx
+                is_array_sec = bool(arr_m)
+                cur_scalars = {}
+                continue
+        if bracket_depth == 0:
+            km = re.match(r'^([A-Za-z0-9_"-]+)\s*=\s*(.*)$', clean)
+            if km:
+                cur_key = km.group(1).strip('"')
+                cur_key_start = idx
+                rhs = km.group(2).strip()
+                sm = re.match(r'^["\']([^"\']+)["\']$', rhs)
+                if sm:
+                    cur_scalars[cur_key] = sm.group(1)
+        bracket_depth = max(
+            0,
+            bracket_depth
+            + clean.count("[")
+            + clean.count("{")
+            - clean.count("]")
+            - clean.count("}"),
+        )
+        if cur_key is not None and bracket_depth == 0:
+            qual = f"{cur_sec}.{cur_key}" if cur_sec else cur_key
+            out.append(SymbolSpan(qual, "toml_key", cur_key_start, idx))
+            cur_key = None
+    _flush_section(max(1, len(lines)))
+    return out
+
+
+def _extract_rego_symbols(text: str) -> list[SymbolSpan]:
+    out: list[SymbolSpan] = []
+    pkg_m = re.search(r"^\s*package\s+([A-Za-z0-9_.]+)", text, re.MULTILINE)
+    if pkg_m:
+        ln = text.count("\n", 0, pkg_m.start()) + 1
+        out.append(SymbolSpan("package", "rego_pkg", ln, ln))
+        out.append(SymbolSpan(pkg_m.group(1), "rego_pkg", ln, ln))
+    rule_re = re.compile(
+        r"^(?:default\s+)?(?P<name>[A-Za-z_][A-Za-z0-9_]*)\b[^\n]*",
+        re.MULTILINE,
+    )
+    reserved = {"package", "import", "as", "some", "every", "not", "with", "else"}
+    for m in rule_re.finditer(text):
+        name = m.group("name")
+        if name in reserved:
+            continue
+        start_l = text.count("\n", 0, m.start()) + 1
+        line_str = m.group(0)
+        brace_offset = line_str.find("{")
+        end_l = (
+            _find_brace_block_end_line(text, m.start() + brace_offset)
+            if brace_offset != -1
+            else start_l
+        )
+        out.append(SymbolSpan(name, "rego_rule", start_l, end_l))
+    return out
+
+
+_SH_FUNC_RE = re.compile(
+    r"^\s*(?:function\s+(?P<fn1>[A-Za-z_][A-Za-z0-9_-]*)(?:\s*\(\s*\))?|(?P<fn2>[A-Za-z_][A-Za-z0-9_-]*)\s*\(\s*\))\s*\{",
+    re.MULTILINE,
+)
+
+
+def _extract_shell_functions(text: str) -> list[SymbolSpan]:
+    """Tier 1 shell anchors are strictly shell function definitions (never bare vars or flags)."""
+    out: list[SymbolSpan] = []
+    for m in _SH_FUNC_RE.finditer(text):
+        name = m.group("fn1") or m.group("fn2")
+        start_l = text.count("\n", 0, m.start()) + 1
+        end_l = _find_brace_block_end_line(text, m.end() - 1)
+        out.append(SymbolSpan(name, "sh_func", start_l, end_l))
+    return out
+
+
+def _extract_makefile_targets(text: str) -> list[SymbolSpan]:
+    lines = text.splitlines()
+    out: list[SymbolSpan] = []
+    starts: list[tuple[str, int]] = []
+    for idx, raw in enumerate(lines, start=1):
+        if raw.startswith("\t") or raw.lstrip().startswith("#"):
+            continue
+        m = re.match(r"^([A-Za-z0-9_.-]+)\s*:(?!=)", raw)
+        if m and m.group(1) != ".PHONY":
+            starts.append((m.group(1), idx))
+    for i, (tgt, s_line) in enumerate(starts):
+        next_start = starts[i + 1][1] - 1 if i + 1 < len(starts) else len(lines)
+        e_line = s_line
+        for ln in range(s_line + 1, next_start + 1):
+            if lines[ln - 1].startswith("\t") or lines[ln - 1].rstrip().endswith("\\"):
+                e_line = ln
+            elif lines[ln - 1].strip():
+                break
+        out.append(SymbolSpan(tgt, "make_target", s_line, e_line))
+    return out
+
+
+def _github_heading_slug(heading_title: str) -> str:
+    title = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", heading_title)
+    title = title.replace("`", "")
+    slug = title.lower()
+    slug = re.sub(r"[^\w\s-]", "", slug, flags=re.UNICODE)
+    return re.sub(r"\s", "-", slug)
+
+
+def _extract_markdown_symbols(text: str) -> list[SymbolSpan]:
+    lines = text.splitlines()
+    out: list[SymbolSpan] = []
+    headings: list[tuple[str, int, int]] = []
+    slug_counts: dict[str, int] = {}
+    in_fence = False
+    row_re = re.compile(
+        r"^\|\s*(?:\*\*)?`?((?:POAM|AI600|EU|MAS|F|UCA|H|SC)-[A-Za-z0-9_.-]+)`?(?:\*\*)?\s*\|"
+    )
+    id_in_heading_re = re.compile(
+        r"\b((?:POAM|AI600|EU|MAS|UCA|H|SC)-\d[A-Za-z0-9_.-]*)\b"
+    )
+    for idx, raw in enumerate(lines, start=1):
+        s = raw.strip()
+        if s.startswith(("```", "~~~")):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        hm = re.match(r"^(#{1,6})\s+(.+?)\s*#*$", s)
+        if hm:
+            lvl = len(hm.group(1))
+            base_slug = _github_heading_slug(hm.group(2))
+            if base_slug:
+                cnt = slug_counts.get(base_slug, 0)
+                slug_counts[base_slug] = cnt + 1
+                slug = base_slug if cnt == 0 else f"{base_slug}-{cnt}"
+                headings.append((slug, lvl, idx))
+            for id_m in id_in_heading_re.finditer(hm.group(2)):
+                out.append(SymbolSpan(id_m.group(1), "md_id_heading", idx, idx))
+            continue
+        rm = row_re.match(s)
+        if rm:
+            out.append(SymbolSpan(rm.group(1), "md_row", idx, idx))
+
+    total = max(1, len(lines))
+    for i, (slug, lvl, s_line) in enumerate(headings):
+        e_line = total
+        for _, next_lvl, next_line in headings[i + 1 :]:
+            if next_lvl <= lvl:
+                e_line = next_line - 1
+                break
+        out.append(SymbolSpan(slug, "md_heading", s_line, max(s_line, e_line)))
+    return out
+
+
+def _extract_dockerfile_symbols(text: str) -> list[SymbolSpan]:
+    lines = text.splitlines()
+    out: list[SymbolSpan] = []
+    stages: list[tuple[str, int]] = []
+    for idx, raw in enumerate(lines, start=1):
+        clean = raw.strip()
+        if not clean or clean.startswith("#"):
+            continue
+        fm = re.match(
+            r"^FROM\s+\S+(?:\s+AS\s+([A-Za-z0-9_.-]+))?", clean, re.IGNORECASE
+        )
+        if fm:
+            stage_name = fm.group(1) or f"stage-{len(stages)}"
+            stages.append((stage_name, idx))
+            continue
+        am = re.match(r"^(?:ARG|ENV)\s+([A-Za-z_][A-Za-z0-9_]*)", clean, re.IGNORECASE)
+        if am:
+            out.append(SymbolSpan(am.group(1), "docker_var", idx, idx))
+    total = max(1, len(lines))
+    for i, (st_name, s_line) in enumerate(stages):
+        e_line = stages[i + 1][1] - 1 if i + 1 < len(stages) else total
+        out.append(SymbolSpan(st_name, "docker_stage", s_line, max(s_line, e_line)))
+        out.append(
+            SymbolSpan(f"stage:{st_name}", "docker_stage", s_line, max(s_line, e_line))
+        )
+    return out
+
+
+_SQL_CREATE_RE = re.compile(
+    r"^\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:UNIQUE\s+)?"
+    r"(?:TABLE|INDEX|VIEW|MATERIALIZED\s+VIEW|FUNCTION|TRIGGER|TYPE|POLICY)"
+    r"\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:[A-Za-z_][A-Za-z0-9_]*\.)?([A-Za-z_][A-Za-z0-9_]*)",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _extract_sql_symbols(text: str) -> list[SymbolSpan]:
+    out: list[SymbolSpan] = []
+    for m in _SQL_CREATE_RE.finditer(text):
+        name = m.group(1)
+        start_l = text.count("\n", 0, m.start()) + 1
+        semi_pos = text.find(";", m.end())
+        end_l = (
+            text.count("\n", 0, semi_pos) + 1
+            if semi_pos != -1
+            else max(start_l, len(text.splitlines()))
+        )
+        out.append(SymbolSpan(name, "sql_object", start_l, end_l))
+    return out
+
+
+_TS_DECL_RE = re.compile(
+    r"^\s*(?:export\s+)?(?:default\s+)?(?:abstract\s+)?(?:async\s+)?"
+    r"(?P<kw>class|interface|type|enum|function|const|let)\s+"
+    r"(?P<name>[A-Za-z_$][A-Za-z0-9_$]*)",
+    re.MULTILINE,
+)
+
+
+def _extract_ts_symbols(text: str) -> list[SymbolSpan]:
+    out: list[SymbolSpan] = []
+    for m in _TS_DECL_RE.finditer(text):
+        name = m.group("name")
+        start_l = text.count("\n", 0, m.start()) + 1
+        brace_pos = text.find("{", m.end())
+        semi_pos = text.find(";", m.end())
+        if brace_pos != -1 and (semi_pos == -1 or brace_pos < semi_pos):
+            end_l = _find_brace_block_end_line(text, brace_pos)
+        elif semi_pos != -1:
+            end_l = text.count("\n", 0, semi_pos) + 1
+        else:
+            end_l = start_l
+        out.append(SymbolSpan(name, "ts_decl", start_l, max(start_l, end_l)))
+    return out
+
+
+# TLA+ top-level definition header: `Name == ...`, `Name(a, b) == ...`,
+# `THEOREM Name == ...` / `LEMMA Name == ...`, or a VARIABLE(S)/CONSTANT(S) list.
+TLA_DEF_PATTERN = re.compile(
+    r"^(?:(?:LOCAL\s+)?(?P<op>[A-Za-z_][A-Za-z0-9_]*)\s*(?:\([^)]*\)|\[[^\]]*\])?\s*=="
+    r"|(?:THEOREM|LEMMA|COROLLARY|PROPOSITION)\s+(?P<thm>[A-Za-z_][A-Za-z0-9_]*)\s*=="
+    r"|(?P<decl>VARIABLES?|CONSTANTS?)\s+(?P<names>.+))"
+)
+TLA_SEPARATOR_PATTERN = re.compile(r"^(?:-{4,}|={4,})")
+
+
+def _extract_tla_symbols(text: str) -> list[SymbolSpan]:
+    """Top-level TLA+ definitions, each spanning to the line before the next header."""
+    lines = text.splitlines()
+    headers: list[tuple[int, list[tuple[str, str]]]] = []
+    in_block_comment = False
+    for idx, raw in enumerate(lines, start=1):
+        if in_block_comment:
+            in_block_comment = "*)" not in raw
+            continue
+        if raw.lstrip().startswith("(*"):
+            in_block_comment = "*)" not in raw
+            continue
+        if TLA_SEPARATOR_PATTERN.match(raw):
+            headers.append((idx, []))
+            continue
+        m = TLA_DEF_PATTERN.match(raw)
+        if not m:
+            continue
+        if m.group("op"):
+            headers.append((idx, [(m.group("op"), "tla_op")]))
+        elif m.group("thm"):
+            headers.append((idx, [(m.group("thm"), "tla_theorem")]))
+        else:
+            names = re.split(r"\s*,\s*", m.group("names").split("\\*", 1)[0].strip())
+            decls = [(n, "tla_decl") for n in names if re.fullmatch(r"[A-Za-z_]\w*", n)]
+            headers.append((idx, decls))
+    out: list[SymbolSpan] = []
+    for pos, (start, symbols) in enumerate(headers):
+        end = headers[pos + 1][0] - 1 if pos + 1 < len(headers) else len(lines)
+        while end > start and not lines[end - 1].strip():
+            end -= 1
+        out.extend(SymbolSpan(name, kind, start, end) for name, kind in symbols)
+    return out
+
+
+@functools.lru_cache(maxsize=512)
+def _extract_structural_symbols_cached(
+    resolved_path: Path, mtime_ns: int, size: int
+) -> tuple[SymbolSpan, ...]:
+    del mtime_ns, size
+    try:
+        text = resolved_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ()
+    suffix = resolved_path.suffix.lower()
+    if resolved_path.name == "Makefile" or suffix == ".mk":
+        return _merge_symbol_spans(_extract_makefile_targets(text))
+    if resolved_path.name == "Dockerfile" or resolved_path.name.startswith(
+        "Dockerfile."
+    ):
+        return _merge_symbol_spans(_extract_dockerfile_symbols(text))
+    if suffix == ".py":
+        return _merge_symbol_spans(_extract_python_structural_symbols(text))
+    if suffix == ".tf":
+        return _merge_symbol_spans(
+            [
+                SymbolSpan(b.address, "tf_block", b.start_line, b.end_line)
+                for b in _parse_tf_blocks(text, resolved_path)
+            ]
+        )
+    if suffix == ".hcl":
+        return _merge_symbol_spans(_extract_hcl_test_symbols(text, resolved_path))
+    if suffix in {".tfvars", ".example"}:
+        return _merge_symbol_spans(_extract_tfvars_symbols(text))
+    if suffix in {".yaml", ".yml"}:
+        return _merge_symbol_spans(_extract_yaml_symbols(text, resolved_path))
+    if suffix == ".json":
+        return _merge_symbol_spans(_extract_json_symbols(text))
+    if suffix == ".toml":
+        return _merge_symbol_spans(_extract_toml_symbols(text))
+    if suffix == ".rego":
+        return _merge_symbol_spans(_extract_rego_symbols(text))
+    if suffix == ".sh":
+        return _merge_symbol_spans(_extract_shell_functions(text))
+    if suffix == ".sql":
+        return _merge_symbol_spans(_extract_sql_symbols(text))
+    if suffix in {".ts", ".tsx", ".js", ".mjs"}:
+        return _merge_symbol_spans(_extract_ts_symbols(text))
+    if suffix == ".md":
+        return _merge_symbol_spans(_extract_markdown_symbols(text))
+    if suffix == ".tla":
+        return _merge_symbol_spans(_extract_tla_symbols(text))
+    return ()
+
+
+def extract_structural_symbols(resolved_path: Path) -> tuple[SymbolSpan, ...]:
+    """Return Tier 1 structural symbol spans for *resolved_path*."""
+    try:
+        st = resolved_path.stat()
+    except OSError:
+        return ()
+    return _extract_structural_symbols_cached(
+        resolved_path.resolve(), st.st_mtime_ns, st.st_size
+    )
+
+
+def _strip_line_comments_outside_quotes(
+    text: str, *, allow_hash: bool, allow_slash: bool, allow_sql_dash: bool
+) -> str:
+    cleaned_lines: list[str] = []
+    for raw in text.splitlines():
+        in_q: str | None = None
+        esc = False
+        cut = len(raw)
+        i = 0
+        n = len(raw)
+        while i < n:
+            ch = raw[i]
+            if in_q is not None:
+                if esc:
+                    esc = False
+                elif ch == "\\" and in_q in {'"', "'", "`"}:
+                    esc = True
+                elif ch == in_q:
+                    in_q = None
+            elif ch in {'"', "'", "`"}:
+                in_q = ch
+            elif allow_hash and ch == "#":
+                cut = i
+                break
+            elif allow_slash and ch == "/" and i + 1 < n and raw[i + 1] == "/":
+                cut = i
+                break
+            elif allow_sql_dash and ch == "-" and i + 1 < n and raw[i + 1] == "-":
+                cut = i
+                break
+            i += 1
+        cleaned_lines.append(raw[:cut])
+    return "\n".join(cleaned_lines)
+
+
+def _strip_comments_in_span(resolved_path: Path, start_line: int, end_line: int) -> str:
+    """Return non-comment source lines in [start_line, end_line] for Tier 2 subtoken checks."""
+    try:
+        all_lines = resolved_path.read_text(
+            encoding="utf-8", errors="replace"
+        ).splitlines(keepends=True)
+    except OSError:
+        return ""
+    snippet = "".join(all_lines[max(0, start_line - 1) : end_line])
+    suffix = resolved_path.suffix.lower()
+    if suffix == ".py":
+        kept: list[str] = []
+        try:
+            for tok in tokenize.generate_tokens(io.StringIO(snippet).readline):
+                if tok.type != tokenize.COMMENT:
+                    kept.append(tok.string)
+            return " ".join(kept)
+        except tokenize.TokenError:
+            pass
+    if suffix in {".ts", ".tsx", ".js", ".mjs", ".proto"}:
+        no_block = re.sub(r"/\*.*?\*/", " ", snippet, flags=re.DOTALL)
+        return _strip_line_comments_outside_quotes(
+            no_block, allow_hash=False, allow_slash=True, allow_sql_dash=False
+        )
+    if suffix in {".tf", ".hcl", ".tfvars"}:
+        no_block = re.sub(r"/\*.*?\*/", " ", snippet, flags=re.DOTALL)
+        return _strip_line_comments_outside_quotes(
+            no_block, allow_hash=True, allow_slash=True, allow_sql_dash=False
+        )
+    if suffix == ".tla":
+        no_block = re.sub(r"\(\*.*?\*\)", " ", snippet, flags=re.DOTALL)
+        return "\n".join(line.split("\\*", 1)[0] for line in no_block.splitlines())
+    if suffix == ".sql":
+        no_block = re.sub(r"/\*.*?\*/", " ", snippet, flags=re.DOTALL)
+        return _strip_line_comments_outside_quotes(
+            no_block, allow_hash=False, allow_slash=False, allow_sql_dash=True
+        )
+    if (
+        suffix
+        in {
+            ".sh",
+            ".example",
+            ".yaml",
+            ".yml",
+            ".toml",
+            ".rego",
+        }
+        or resolved_path.name in {"Makefile", "Dockerfile"}
+        or resolved_path.name.startswith("Dockerfile.")
+    ):
+        return _strip_line_comments_outside_quotes(
+            snippet, allow_hash=True, allow_slash=False, allow_sql_dash=False
+        )
+    return snippet
+
+
+def resolve_symbol_anchor(
+    resolved_path: Path,
+    raw_anchor: str,
+    *,
+    subtoken_sep: str = ":",
+    anchor_stats: AnchorStats | None = None,
+) -> tuple[bool, str]:
+    """Resolve a Tier 1 structural anchor (or Tier 2 `<symbol><sep><subtoken>` anchor)."""
+    if not resolved_path.is_file():
+        return (
+            False,
+            f"Symbol anchor '{raw_anchor}' targets directory '{resolved_path.name}', not a file",
+        )
+    subtoken: str | None = None
+    sym_part = raw_anchor.strip()
+    if subtoken_sep == "#":
+        if "#" in sym_part:
+            sym_part, subtoken = sym_part.split("#", 1)
+    elif subtoken_sep == ":":
+        if sym_part.startswith(("uuid:", "stage:")):
+            pfx, rest = sym_part.split(":", 1)
+            if ":" in rest:
+                u_part, subtoken = rest.split(":", 1)
+                sym_part = f"{pfx}:{u_part}"
+        elif ":" in sym_part:
+            sym_part, subtoken = sym_part.split(":", 1)
+
+    sym_query = sym_part.replace("::", ".").strip()
+    if resolved_path.suffix.lower() == ".py":
+        if sym_query.endswith("()"):
+            sym_query = sym_query[:-2]
+        if "[" in sym_query and sym_query.endswith("]"):
+            sym_query = sym_query.split("[", 1)[0]
+
+    if not sym_query:
+        return False, f"Empty symbol anchor on '{resolved_path.name}'"
+
+    spans = extract_structural_symbols(resolved_path)
+    exact = [s for s in spans if s.name == sym_query]
+    if not exact and "." not in sym_query and resolved_path.suffix.lower() == ".py":
+        leaf_matches = [s for s in spans if s.name.endswith(f".{sym_query}")]
+        if len(leaf_matches) > 1:
+            cands = ", ".join(sorted(s.name for s in leaf_matches))
+            return (
+                False,
+                f"Ambiguous unqualified symbol '{sym_query}' in '{resolved_path.name}' "
+                f"(matches {cands}); qualify as Class.member",
+            )
+        exact = leaf_matches
+
+    if not exact:
+        if resolved_path.suffix.lower() == ".sh":
+            return (
+                False,
+                f"Shell anchor '{sym_query}' not found among function definitions in "
+                f"'{resolved_path.name}' (only shell functions are valid Tier 1 anchors)",
+            )
+        return (
+            False,
+            f"Symbol anchor '{sym_query}' not found in '{resolved_path.name}'",
+        )
+
+    if len(exact) > 1:
+        kinds = {s.kind for s in exact}
+        # Merge md_row + md_id_heading for the same POAM ID in a single doc
+        if kinds <= {"md_row", "md_id_heading"}:
+            target_span = SymbolSpan(
+                sym_query,
+                "md_id",
+                min(s.start_line for s in exact),
+                max(s.end_line for s in exact),
+            )
+        else:
+            lines_desc = ", ".join(f"L{s.start_line}" for s in exact)
+            return (
+                False,
+                f"Ambiguous symbol anchor '{sym_query}' in '{resolved_path.name}' ({lines_desc})",
+            )
+    else:
+        target_span = exact[0]
+
+    if subtoken is not None:
+        clean_sub = subtoken.strip()
+        if len(clean_sub) < 2:
+            return (
+                False,
+                f"Tier 2 subtoken '{clean_sub}' on '{sym_query}' in '{resolved_path.name}' must be >= 2 characters",
+            )
+        body_no_comments = _strip_comments_in_span(
+            resolved_path, target_span.start_line, target_span.end_line
+        )
+        if clean_sub not in body_no_comments:
+            return (
+                False,
+                f"Tier 2 subtoken '{clean_sub}' not found in non-comment body of "
+                f"'{sym_query}' in '{resolved_path.name}'",
+            )
+        if anchor_stats is not None:
+            anchor_stats.tier2_scoped_subtoken += 1
+        return True, ""
+
+    if anchor_stats is not None:
+        anchor_stats.tier1_structural += 1
+    return True, ""
 
 
 def verify_python_symbol(symbol_str: str) -> tuple[bool, str]:
@@ -959,7 +2041,9 @@ def _audit_line_references_and_contextual_symbols(
     ):
         line_uuids.append("g7000099-stpa-4000-8000-compiler00001")
 
-    for pm in PROSE_LINE_REF_PATTERN.finditer(line):
+    for pm in (
+        PROSE_LINE_REF_PATTERN.finditer(line) if not STRICT_SYMBOL_ANCHORS else ()
+    ):
         target = pm.group("link") or pm.group("codepath")
         spec = pm.group("spec")
         if not target or is_template_or_pattern(target):
@@ -1085,7 +2169,7 @@ def _audit_line_references_and_contextual_symbols(
             )
 
     # Check YAML UUID span when a YAML link, UUID, and `(lines A-B)` appear on the same line
-    if line_uuids and not historical_line:
+    if not STRICT_SYMBOL_ANCHORS and line_uuids and not historical_line:
         yaml_links = [
             _resolve_candidate_path(path.parent, m.group(2).strip())
             for m in MD_LINK_PATTERN.finditer(line)
@@ -1298,7 +2382,411 @@ def _audit_branch_examples(
     return cell, issues
 
 
-def audit_markdown_file(path: Path) -> list[Issue]:
+def _audit_unpinned_prose_line_numbers(
+    path: Path, line_idx: int, line: str
+) -> list[Issue]:
+    """Reject unpinned prose `line(s) <n>` and `L<n>` spans when STRICT_SYMBOL_ANCHORS is True."""
+    if not STRICT_SYMBOL_ANCHORS:
+        return []
+    issues: list[Issue] = []
+    excluded_spans: list[tuple[int, int]] = [
+        m.span(0) for m in re.finditer(r"https?://[^\s)]+", line)
+    ]
+    for lm in MD_LINK_PATTERN.finditer(line):
+        excluded_spans.append(lm.span(2))
+
+    def _is_pinned_clause(match_start: int) -> bool:
+        window = line[max(0, match_start - 140) : match_start]
+        if "|" in window:
+            window = window.rsplit("|", 1)[-1]
+        return bool(PINNED_CLAUSE_PREFIX_PATTERN.search(window))
+
+    for pat in (UNPINNED_PROSE_LINE_WORD_PATTERN, UNPINNED_PROSE_L_SPAN_PATTERN):
+        for m in pat.finditer(line):
+            if any(s <= m.start() and m.end() <= e for s, e in excluded_spans):
+                continue
+            if _is_pinned_clause(m.start()):
+                continue
+            tok = m.group(0)
+            issues.append(
+                Issue(
+                    path,
+                    line_idx,
+                    "Unpinned Line Number",
+                    tok,
+                    f"Unpinned line citation '{tok}' is forbidden on live files; "
+                    "anchor to a structural symbol (#symbol or ::symbol) or pin to '<sha>:<path>'",
+                )
+            )
+    return issues
+
+
+_PIN_CLAUSE_BREAK_PATTERN = re.compile(r";|\. |\s—\s|\s\|\s")
+# A path inside a pin-clause code span: `a/b/c`, `./run.sh`, `/etc/x`, `infra/`,
+# `10.0.0.0/20`. Anything with a `/` between, before or after a name segment.
+_PIN_SPAN_PATH_PATTERN = re.compile(
+    r"(?:\.{1,2}/|/)[\w.-]+(?:/[\w.-]+)*/?|[\w.-]+(?:/[\w.-]+)+/?|[\w.-]+/"
+)
+_PIN_TOKEN_STOPWORDS = frozenset(
+    {
+        "line",
+        "lines",
+        "true",
+        "false",
+        "none",
+        "null",
+        "in",
+        "on",
+        "to",
+        "of",
+        "or",
+        "if",
+    }
+)
+# Command words and language built-ins common across many lines: they may
+# corroborate a pinned-line citation when a specific identifier also matches,
+# but must never be the sole match proving cited lines have not drifted.
+_PIN_GENERIC_TOKENS = frozenset(
+    {
+        "cd",
+        "path",
+        "file",
+        "source",
+        "export",
+        "echo",
+        "cat",
+        "ls",
+        "cp",
+        "mv",
+        "rm",
+        "mkdir",
+        "rmdir",
+        "touch",
+        "chmod",
+        "chown",
+        "grep",
+        "rg",
+        "sed",
+        "awk",
+        "find",
+        "xargs",
+        "head",
+        "tail",
+        "sort",
+        "uniq",
+        "wc",
+        "cut",
+        "tr",
+        "tee",
+        "curl",
+        "wget",
+        "env",
+        "pwd",
+        "exit",
+        "exec",
+        "eval",
+        "set",
+        "unset",
+        "shift",
+        "trap",
+        "test",
+        "read",
+        "printf",
+        "git",
+        "uv",
+        "pip",
+        "python",
+        "python3",
+        "bash",
+        "sh",
+        "zsh",
+        "make",
+        "sudo",
+        "def",
+        "class",
+        "return",
+        "import",
+        "from",
+        "as",
+        "with",
+        "try",
+        "except",
+        "finally",
+        "raise",
+        "assert",
+        "pass",
+        "break",
+        "continue",
+        "for",
+        "while",
+        "else",
+        "elif",
+        "and",
+        "not",
+        "is",
+        "lambda",
+        "yield",
+        "async",
+        "await",
+        "global",
+        "nonlocal",
+        "del",
+        "str",
+        "int",
+        "float",
+        "bool",
+        "list",
+        "dict",
+        "tuple",
+        "frozenset",
+        "bytes",
+        "object",
+        "type",
+        "len",
+        "any",
+        "all",
+        "open",
+        "print",
+        "range",
+        "enumerate",
+        "zip",
+        "map",
+        "filter",
+        "sorted",
+        "reversed",
+        "isinstance",
+        "issubclass",
+        "hasattr",
+        "getattr",
+        "setattr",
+        "super",
+        "self",
+        "cls",
+        "exception",
+        "valueerror",
+        "typeerror",
+        "keyerror",
+        "runtimeerror",
+        "attributeerror",
+        "indexerror",
+        "var",
+        "local",
+        "locals",
+        "module",
+        "resource",
+        "data",
+        "variable",
+        "output",
+        "provider",
+        "terraform",
+        "required_version",
+        "required_providers",
+        "for_each",
+        "count",
+        "depends_on",
+        "lifecycle",
+    }
+)
+
+
+def _pin_line_spans(spec: str) -> list[tuple[int, int]]:
+    """Parse a pin suffix or prose span (`:12`, `#L3-L9`, `L40`, `lines 4, 7-9`)."""
+    cleaned = re.sub(r"(?i)^(?::|#)?|lines?\s+|L(?=\d)", "", spec.strip())
+    return (
+        _parse_line_spec(cleaned) if re.fullmatch(r"[\d,\s\-\u2013]+", cleaned) else []
+    )
+
+
+def _pin_clause_tokens(
+    line: str, clause_start: int, clause_end: int, pinned_path: str
+) -> set[str]:
+    """Lower-cased identifiers the clause itself names in backticks (pin excluded).
+
+    Code spans are paired on the whole *line*, and only spans lying entirely
+    inside ``[clause_start, clause_end)`` count. Pairing backticks inside the
+    sliced clause instead would invert every pair whenever the window starts
+    inside a span (odd backtick parity before the cut), turning prose words
+    into identifiers and dropping the real ones.
+
+    A path is not identifier evidence, so paths are cut out of each span
+    before it is read; the rest of the span still is. Discarding every span
+    that contains ``/`` would also drop `x = "10.0.0.0/20"` and
+    `./deploy.sh --target t`, which do name identifiers.
+    """
+    tokens: set[str] = set()
+    name = Path(pinned_path).name.lower()
+    for cm in INLINE_CODE_PATTERN.finditer(line):
+        if cm.start() < clause_start or cm.end() > clause_end:
+            continue
+        snippet = cm.group(1).strip()
+        if (
+            PINNED_PATH_PATTERN.match(snippet)
+            or Path(snippet).suffix in CONCRETE_EXTENSIONS
+            or re.match(
+                r"^(?:POAM-|#\d+|[0-9a-f]{7,40}\^?$|\d+$|lines?\s)",
+                snippet,
+                re.IGNORECASE,
+            )
+        ):
+            continue
+        remainder = _PIN_SPAN_PATH_PATTERN.sub(" ", snippet)
+        for ident in re.findall(r"[A-Za-z_][A-Za-z0-9_-]{1,}", remainder):
+            low = ident.lower()
+            if low not in _PIN_TOKEN_STOPWORDS and low not in name:
+                tokens.add(low)
+    return tokens
+
+
+def _check_pinned_lines(
+    blob: Path,
+    spans: list[tuple[int, int]],
+    tokens: set[str],
+    label: str,
+) -> str:
+    """Return a refusal reason for pinned line spans, or "" when they hold.
+
+    Bounds and blank-line checks run against the pinned blob. Agreement is
+    bidirectional: the clause must name at least one non-generic identifier,
+    and the cited lines (+/- 1, plus any enclosing Python definition) must
+    contain at least one non-generic clause token. Generic tokens may
+    corroborate a citation alongside a specific identifier, never alone.
+    """
+    flines = blob.read_text(encoding="utf-8", errors="replace").splitlines()
+    total = len(flines)
+    for start, end in spans:
+        if start < 1 or end < start or end > total:
+            return f"Pinned {label} exceeds the pinned blob ({total} lines)"
+        if start == end and not flines[start - 1].strip():
+            return f"Pinned {label} is a blank line in the pinned blob"
+    if not tokens:
+        return (
+            f"Pinned {label} names no identifier; cite the symbol in backticks "
+            "or use '<sha>:<path>#symbol'"
+        )
+    specific = tokens - _PIN_GENERIC_TOKENS
+    if not specific:
+        return (
+            f"Pinned {label} names only generic token(s) "
+            f"{sorted(tokens)[:4]}; cite a specific identifier in backticks "
+            "or use '<sha>:<path>#symbol'"
+        )
+    chunks = ["\n".join(flines[max(0, s - 2) : min(total, e + 1)]) for s, e in spans]
+    if blob.suffix == ".py":
+        chunks.extend(
+            name
+            for name, sym_s, sym_e in _get_python_symbol_spans(blob)
+            if any(sym_s <= e and sym_e >= s for s, e in spans)
+        )
+    window = "\n".join(chunks).lower()
+    matched = {tok for tok in tokens if tok in window}
+    if not matched:
+        return (
+            f"Pinned {label} does not contain the clause's identifier(s) "
+            f"{sorted(tokens)[:4]} in the pinned blob"
+        )
+    if not (matched - _PIN_GENERIC_TOKENS):
+        return (
+            f"Pinned {label} matches only generic token(s) "
+            f"{sorted(matched)[:4]}; none of {sorted(specific)[:4]} "
+            "appear on the cited lines"
+        )
+    return ""
+
+
+def _audit_pinned_refs(
+    path: Path,
+    line_idx: int,
+    line: str,
+    *,
+    anchor_stats: AnchorStats | None = None,
+) -> list[Issue]:
+    """Verify every `<sha>[^]:<path>` pin on *line*, backticked or parenthesized.
+
+    Always: the commit is an ancestor of HEAD and holds the path. Under
+    STRICT_SYMBOL_ANCHORS: the pin's own line / symbol suffix and the prose line
+    citations it governs (up to PIN_GOVERNANCE_WINDOW characters, stopping at
+    the next pin or clause break) are checked against the pinned blob.
+    """
+    issues: list[Issue] = []
+    matches = list(PINNED_REF_PATTERN.finditer(line))
+    for pos, m in enumerate(matches):
+        kind = "b" if m.group("b_commit") else "p"
+        commit, parent = m.group(f"{kind}_commit"), m.group(f"{kind}_parent")
+        pin_path = m.group(f"{kind}_path")
+        suffix = m.group(f"{kind}_suffix") or (
+            m.group("p_tail") if kind == "p" else None
+        )
+        token = m.group(0)
+        valid, reason = verify_pinned_path(commit, parent, pin_path)
+        if not valid:
+            issues.append(Issue(path, line_idx, "Pinned Path", token, reason))
+            continue
+        if not STRICT_SYMBOL_ANCHORS:
+            continue
+
+        limit = min(
+            len(line),
+            m.end() + PIN_GOVERNANCE_WINDOW,
+            matches[pos + 1].start() if pos + 1 < len(matches) else len(line),
+        )
+        brk = _PIN_CLAUSE_BREAK_PATTERN.search(line, m.end(), limit)
+        clause_end = brk.start() if brk else limit
+        clause_start = max(0, m.start() - PIN_GOVERNANCE_WINDOW)
+        if "|" in line[clause_start : m.start()]:
+            clause_start = line.rindex("|", clause_start, m.start()) + 1
+        tokens = _pin_clause_tokens(line, clause_start, clause_end, pin_path)
+
+        line_suffix = suffix if suffix and re.match(r"^(?::|#L\d)", suffix) else ""
+        symbol = (
+            suffix[1:] if suffix and suffix.startswith("#") and not line_suffix else ""
+        )
+        cited: list[tuple[str, list[tuple[int, int]]]] = []
+        if line_suffix:
+            spans = _pin_line_spans(line_suffix)
+            if spans:
+                cited.append((f"line(s) '{line_suffix}'", spans))
+        follow = line[m.end() : clause_end]
+        for pat in (UNPINNED_PROSE_LINE_WORD_PATTERN, UNPINNED_PROSE_L_SPAN_PATTERN):
+            for pm in pat.finditer(follow):
+                spans = _pin_line_spans(pm.group(0).strip("() "))
+                if spans:
+                    cited.append((f"line(s) '{pm.group(0).strip()}'", spans))
+        if not cited and not symbol:
+            continue
+
+        blob = _materialize_pinned_blob(REPO_ROOT, f"{commit}{parent}", pin_path)
+        if blob is None:
+            issues.append(
+                Issue(
+                    path,
+                    line_idx,
+                    "Pinned Path",
+                    token,
+                    "pinned blob could not be read",
+                )
+            )
+            continue
+        if symbol:
+            ok, why = resolve_symbol_anchor(blob, symbol, subtoken_sep=":")
+            if not ok:
+                issues.append(Issue(path, line_idx, "Pinned Symbol", token, why))
+                continue
+        for label, spans in cited:
+            why = _check_pinned_lines(blob, spans, tokens, label)
+            if why:
+                issues.append(Issue(path, line_idx, "Pinned Line", token, why))
+                break
+        else:
+            if anchor_stats is not None:
+                anchor_stats.pinned_blob += 1
+    return issues
+
+
+def audit_markdown_file(
+    path: Path,
+    *,
+    anchor_stats: AnchorStats | None = None,
+) -> list[Issue]:
     """Scan a single markdown file for broken file paths, links, and code symbols."""
     issues: list[Issue] = []
     try:
@@ -1315,7 +2803,13 @@ def audit_markdown_file(path: Path) -> list[Issue]:
             return []
         issues.append(notice_issue)
 
+    in_fence = False
     for line_idx, line in enumerate(lines, start=1):
+        stripped_fence = line.strip()
+        if stripped_fence.startswith(("```", "~~~")):
+            in_fence = not in_fence
+            continue
+
         # Collect any revision-pinned .tf addresses on this line for historical HCL lookups
         pinned_tf_addrs: set[str] = set()
         for cm in INLINE_CODE_PATTERN.finditer(line):
@@ -1340,7 +2834,12 @@ def audit_markdown_file(path: Path) -> list[Issue]:
 
             # The target is the reference; the label is display text.
             local_link_labels.append(link.span(1))
-            valid, reason = verify_file_path(path.parent, link_target)
+            valid, reason = verify_file_path(
+                path.parent,
+                link_target,
+                markdown_link=True,
+                anchor_stats=anchor_stats,
+            )
             if not valid:
                 issues.append(
                     Issue(path, line_idx, "Markdown Link", link_target, reason)
@@ -1390,37 +2889,61 @@ def audit_markdown_file(path: Path) -> list[Issue]:
             if " " in code_snippet:
                 continue
 
-            pinned = PINNED_PATH_PATTERN.match(code_snippet)
-            if pinned:
-                valid, reason = verify_pinned_path(
-                    pinned["commit"], pinned["parent"], pinned["path"]
-                )
-                if not valid:
-                    issues.append(
-                        Issue(path, line_idx, "Pinned Path", code_snippet, reason)
-                    )
-                continue
+            if PINNED_PATH_PATTERN.match(code_snippet):
+                continue  # verified by _audit_pinned_refs below
 
             clean_snippet = re.split(r"[:#]", code_snippet)[0].strip()
-            has_ext = any(clean_snippet.endswith(ext) for ext in CONCRETE_EXTENSIONS)
+            if "=" in clean_snippet:
+                continue
+            has_ext = (
+                any(clean_snippet.endswith(ext) for ext in CONCRETE_EXTENSIONS)
+                or clean_snippet == "Makefile"
+                or clean_snippet.endswith("/Makefile")
+            )
+            is_dockerfile = (
+                clean_snippet == "Dockerfile"
+                or clean_snippet.endswith("/Dockerfile")
+                or Path(clean_snippet).name.startswith("Dockerfile.")
+            )
             has_colon_spec = bool(COLON_LINE_SPEC_PATTERN.match(code_snippet))
+            has_symbol_anchor = bool(
+                HASH_SYMBOL_ANCHOR_PATTERN.search(code_snippet)
+                or DOUBLE_COLON_ANCHOR_PATTERN.match(code_snippet)
+            )
             is_explicit_path = (
-                "/" in clean_snippet
-                and (
-                    clean_snippet.startswith(
-                        ("src/", "tests/", "docs/", "compliance/", "scripts/", "infra/")
+                (
+                    "/" in clean_snippet
+                    and (
+                        clean_snippet.startswith(
+                            (
+                                "src/",
+                                "tests/",
+                                "docs/",
+                                "compliance/",
+                                "scripts/",
+                                "infra/",
+                            )
+                        )
+                        or has_ext
                     )
-                    or has_ext
                 )
-            ) or (has_ext and has_colon_spec)
+                or ((has_ext or is_dockerfile) and has_colon_spec)
+                or (
+                    (has_ext or is_dockerfile)
+                    and has_symbol_anchor
+                    and not CENSUS_ID_PATTERN.fullmatch(code_snippet)
+                    and _resolve_candidate_path(path.parent, code_snippet) is not None
+                )
+            )
 
             if is_explicit_path:
                 valid, reason = verify_file_path(
-                    path.parent, code_snippet, allow_colon_anchor=True
+                    path.parent,
+                    code_snippet,
+                    allow_colon_anchor=True,
+                    anchor_stats=anchor_stats,
                 )
-                if not valid and not any(
-                    code_snippet.startswith(p) for p in ("../..", "...")
-                ):
+                if not valid and not code_snippet.startswith("..."):
                     issues.append(
                         Issue(path, line_idx, "File Path", code_snippet, reason)
                     )
@@ -1436,7 +2959,12 @@ def audit_markdown_file(path: Path) -> list[Issue]:
                         Issue(path, line_idx, "Python Symbol", code_snippet, reason)
                     )
 
-        # 3. Prose line references, YAML UUID spans, and contextual Python symbols
+        # 3. Pinned references, prose line references, YAML UUID spans, and contextual Python symbols
+        issues.extend(
+            _audit_pinned_refs(path, line_idx, line, anchor_stats=anchor_stats)
+        )
+        if not in_fence:
+            issues.extend(_audit_unpinned_prose_line_numbers(path, line_idx, line))
         issues.extend(
             _audit_line_references_and_contextual_symbols(
                 path, line_idx, line, local_link_labels
@@ -1456,6 +2984,7 @@ CENSUS_ID_PATTERN = re.compile(
     r"(?:compliance/oscal/)?(?P<cid>(?:"
     r"system-security-plan(?:-eu-ecb|-apac-mas)?\.yaml"
     r"|(?:sp800-53-)?component-definition\.yaml"
+    r"|components/cage_client_sdk\.yaml"
     r"|common-controls-catalog\.yaml"
     r"|stpa_compiler_ssp_patch\.yaml"
     r"|eu-ai-act-profile\.yaml"
@@ -1477,6 +3006,7 @@ _OSCAL_PINNED_PATH_RE = re.compile(
 _OSCAL_REPO_PATH_RE = re.compile(
     r"(?<![A-Za-z0-9_./:-])(?P<path>(?:src|tests|infra|deployment|compliance|config|scripts|\.github|docs|proof|packages)/"
     r"(?:[A-Za-z0-9_.*{}-]+/)*(?:Dockerfile(?![.A-Za-z0-9_-])|[A-Za-z0-9_.*{}-]+\.[a-z0-9]+))"
+    r"(?P<anchor>(?:#[A-Za-z0-9_.:-]+|::[A-Za-z0-9_.:#-]+|:\d+(?:-\d+)?))?"
 )
 
 
@@ -1623,6 +3153,7 @@ def _audit_oscal_prose_paths(
     text: str,
     repo_root: Path,
     seen_checked: set[str],
+    anchor_stats: AnchorStats | None = None,
 ) -> list[Issue]:
     issues: list[Issue] = []
     pinned_spans: list[tuple[int, int]] = []
@@ -1653,24 +3184,71 @@ def _audit_oscal_prose_paths(
         if any(ps <= rm.start() and rm.end() <= pe for ps, pe in pinned_spans):
             continue
         cand = rm.group("path").rstrip(".,;:)")
+        raw_anchor = (rm.group("anchor") or "").rstrip(".,;:)")
+        full_cand = f"{cand}{raw_anchor}"
         if is_template_or_pattern(cand):
             continue
         if cand != "Dockerfile" and not cand.endswith("/Dockerfile"):
             if Path(cand).suffix not in CONCRETE_EXTENSIONS:
                 continue
-        if cand in seen_checked:
+        if full_cand in seen_checked:
             continue
-        seen_checked.add(cand)
-        if not (repo_root / cand).exists():
+        seen_checked.add(full_cand)
+        resolved_cand = (repo_root / cand).resolve()
+        if not resolved_cand.exists():
             issues.append(
                 Issue(
                     y_file,
-                    _find_line_1(raw_lines, cand),
+                    _find_line_1(raw_lines, full_cand),
                     "OSCAL File Path",
-                    cand,
+                    full_cand,
                     f"OSCAL narrative path '{cand}' does not exist on disk",
                 )
             )
+            continue
+        if raw_anchor and not CENSUS_ID_PATTERN.fullmatch(full_cand):
+            anc_ok, anc_reason = _validate_resolved_path_anchors(
+                resolved_cand,
+                cand,
+                full_cand,
+                allow_colon_anchor=True,
+                anchor_stats=anchor_stats,
+            )
+            if not anc_ok:
+                issues.append(
+                    Issue(
+                        y_file,
+                        _find_line_1(raw_lines, full_cand),
+                        "OSCAL File Path",
+                        full_cand,
+                        anc_reason,
+                    )
+                )
+
+    if STRICT_SYMBOL_ANCHORS:
+        for pat in (UNPINNED_PROSE_LINE_WORD_PATTERN, UNPINNED_PROSE_L_SPAN_PATTERN):
+            for pm in pat.finditer(text):
+                if any(ps <= pm.start() and pm.end() <= pe for ps, pe in pinned_spans):
+                    continue
+                window_before = text[max(0, pm.start() - 140) : pm.start()]
+                window_after = text[pm.end() : min(len(text), pm.end() + 90)]
+                if PINNED_CLAUSE_PREFIX_PATTERN.search(
+                    window_before
+                ) or PINNED_CLAUSE_PREFIX_PATTERN.search(window_after):
+                    continue
+                token_str = pm.group(0)
+                if f"unpinned:{token_str}" in seen_checked:
+                    continue
+                seen_checked.add(f"unpinned:{token_str}")
+                issues.append(
+                    Issue(
+                        y_file,
+                        _find_line_1(raw_lines, token_str),
+                        "OSCAL Unpinned Line Number",
+                        token_str,
+                        "Unpinned line-number citation in OSCAL narrative; use a structural symbol anchor or pin to '<sha>:<path>'",
+                    )
+                )
     return issues
 
 
@@ -1682,6 +3260,7 @@ def _walk_oscal_node(
     seen_paths: set[str],
     root: Path,
     issues: list[Issue],
+    anchor_stats: AnchorStats | None = None,
 ) -> None:
     if isinstance(node, dict):
         for k, v in node.items():
@@ -1722,22 +3301,47 @@ def _walk_oscal_node(
                                 f"OSCAL local href '{clean_href}' does not exist on disk",
                             )
                         )
-            elif k in {"description", "remarks"} and isinstance(v, str):
+            elif k in {"description", "remarks", "value"} and isinstance(v, str):
                 issues.extend(
-                    _audit_oscal_prose_paths(y_file, raw_lines, v, root, seen_paths)
+                    _audit_oscal_prose_paths(
+                        y_file,
+                        raw_lines,
+                        v,
+                        root,
+                        seen_paths,
+                        anchor_stats=anchor_stats,
+                    )
                 )
             else:
                 _walk_oscal_node(
-                    v, y_file, raw_lines, bm_uuids, seen_paths, root, issues
+                    v,
+                    y_file,
+                    raw_lines,
+                    bm_uuids,
+                    seen_paths,
+                    root,
+                    issues,
+                    anchor_stats=anchor_stats,
                 )
     elif isinstance(node, list):
         for item in node:
             _walk_oscal_node(
-                item, y_file, raw_lines, bm_uuids, seen_paths, root, issues
+                item,
+                y_file,
+                raw_lines,
+                bm_uuids,
+                seen_paths,
+                root,
+                issues,
+                anchor_stats=anchor_stats,
             )
 
 
-def _audit_census_holds_paths(census_file: Path, repo_root: Path) -> list[Issue]:
+def _audit_census_holds_paths(
+    census_file: Path,
+    repo_root: Path,
+    anchor_stats: AnchorStats | None = None,
+) -> list[Issue]:
     """Verify read_back.check and evidence_named paths on all HOLDS census rows (including non-implemented)."""
     issues: list[Issue] = []
     raw_lines = census_file.read_text(encoding="utf-8").splitlines()
@@ -1760,7 +3364,12 @@ def _audit_census_holds_paths(census_file: Path, repo_root: Path) -> list[Issue]
         seen_row: set[str] = set()
         for blob in blobs:
             for iss in _audit_oscal_prose_paths(
-                census_file, [raw_line], blob, repo_root, seen_row
+                census_file,
+                [raw_line],
+                blob,
+                repo_root,
+                seen_row,
+                anchor_stats=anchor_stats,
             ):
                 issues.append(
                     Issue(
@@ -1777,6 +3386,8 @@ def _audit_census_holds_paths(census_file: Path, repo_root: Path) -> list[Issue]
 def audit_oscal_and_lula_yaml(
     repo_root: Path | None = None,
     scoped_files: list[Path] | None = None,
+    *,
+    anchor_stats: AnchorStats | None = None,
 ) -> list[Issue]:
     """Validate duplicate-key-free YAML syntax, #uuid hrefs, local hrefs, and narrative paths
     across `compliance/oscal/*.yaml`, `compliance/lula/*.yaml`, and HOLDS census rows."""
@@ -1827,7 +3438,12 @@ def audit_oscal_and_lula_yaml(
         if isinstance(meta, dict) and isinstance(meta.get("remarks"), str):
             issues.extend(
                 _audit_oscal_prose_paths(
-                    y_file, raw_lines, meta["remarks"], root, lula_seen_paths
+                    y_file,
+                    raw_lines,
+                    meta["remarks"],
+                    root,
+                    lula_seen_paths,
+                    anchor_stats=anchor_stats,
                 )
             )
         bm = comp_def.get("back-matter")
@@ -1910,13 +3526,26 @@ def audit_oscal_and_lula_yaml(
                             bm_uuids.add(str(res["uuid"]))
 
         seen_paths: set[str] = set()
-        _walk_oscal_node(doc, y_file, raw_lines, bm_uuids, seen_paths, root, issues)
+        _walk_oscal_node(
+            doc,
+            y_file,
+            raw_lines,
+            bm_uuids,
+            seen_paths,
+            root,
+            issues,
+            anchor_stats=anchor_stats,
+        )
 
     census_file = oscal_dir / "evidence_claim_census.jsonl"
     if census_file.is_file() and (
         scope_set is None or census_file.resolve() in scope_set
     ):
-        issues.extend(_audit_census_holds_paths(census_file.resolve(), root))
+        issues.extend(
+            _audit_census_holds_paths(
+                census_file.resolve(), root, anchor_stats=anchor_stats
+            )
+        )
 
     return issues
 
@@ -2272,6 +3901,7 @@ def main(argv: list[str] | None = None) -> int:
         scoped_yaml = None
 
     all_issues: list[Issue] = []
+    anchor_stats = AnchorStats()
 
     print(f"Auditing {len(files)} documentation files...")
     if len(files) == 0 and not run_yaml:
@@ -2284,18 +3914,24 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     for f in files:
-        file_issues = audit_markdown_file(f)
+        file_issues = audit_markdown_file(f, anchor_stats=anchor_stats)
         all_issues.extend(file_issues)
 
     if run_yaml:
         all_issues.extend(
-            audit_oscal_and_lula_yaml(REPO_ROOT, scoped_files=scoped_yaml)
+            audit_oscal_and_lula_yaml(
+                REPO_ROOT, scoped_files=scoped_yaml, anchor_stats=anchor_stats
+            )
         )
 
     if not args.path:
         all_issues.extend(audit_version_hygiene(REPO_ROOT))
 
-    out_lines: list[str] = []
+    out_lines: list[str] = [
+        f"Anchor accounting: structural_anchors={anchor_stats.tier1_structural}, "
+        f"scoped_subtoken_anchors={anchor_stats.tier2_scoped_subtoken}, "
+        f"pinned_blob_anchors={anchor_stats.pinned_blob}"
+    ]
     if not all_issues:
         out_lines.append(
             "All documentation references, file paths, and symbols are valid."

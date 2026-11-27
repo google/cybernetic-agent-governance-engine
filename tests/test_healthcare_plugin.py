@@ -116,6 +116,7 @@ class TestHealthcarePlugin:
             patient_id="P12345",
             medication="warfarin",
             dose_mg=5.0,
+            idempotency_key="11111111-1111-4111-8111-111111111111",
             route="oral",
             indication="anticoagulation",
         )
@@ -364,6 +365,9 @@ class TestHealthcarePlugin:
         import src.gateway.governance.kms_signer as ks
         from src.cage_healthcare.tools.dose_order import DoseOrder
         from src.cage_healthcare.tools.tool_provider import administer_dose_action
+        from src.gateway.governance.commit_outcome import CommitOutcome, CommitStatus
+        from src.gateway.governance.execution_idempotency import ExecutionLedger
+        from src.gateway.governance.governor.sealing import SealedAction
         from src.gateway.governance.routing_seal import (
             SymbolicGovernorViolation,
             generate_seal,
@@ -372,9 +376,14 @@ class TestHealthcarePlugin:
         provider = ks.SoftwareEd25519Provider(key_id="hc-plugin-test-k1")
         monkeypatch.setattr(ks, "_signer", ks.KMSGovernanceSigner(provider=provider))
         monkeypatch.setattr(jwks_mod, "_global_jwks", None)
+        dose_key = "22222222-2222-4222-8222-222222222222"
+        replay_key = "33333333-3333-4333-8333-333333333333"
         dose_params = {
             **DoseOrder(
-                patient_id="P001", medication="vancomycin", dose_mg=2.0
+                patient_id="P001",
+                medication="vancomycin",
+                dose_mg=2.0,
+                idempotency_key=dose_key,
             ).model_dump(),
             "confidence": 0.99,
         }
@@ -384,11 +393,16 @@ class TestHealthcarePlugin:
 
         governor = MagicMock()
         governor.settle = AsyncMock(return_value=[])
+        governor.components.execution_ledger = ExecutionLedger(None)
 
         with (
             patch(
                 "src.cage_healthcare.tools.tool_provider.enforce_governance",
-                AsyncMock(return_value=minted_seal),
+                AsyncMock(
+                    return_value=SealedAction(
+                        "administer_dose", minted_seal, dict(dose_params)
+                    )
+                ),
             ) as mock_enforce,
             patch(
                 "src.cage_healthcare.tools.tool_provider.verify_and_consume_seal",
@@ -399,15 +413,19 @@ class TestHealthcarePlugin:
                 patient_id="P001",
                 medication="vancomycin",
                 dose_mg=2.0,
+                idempotency_key=dose_key,
                 governor=governor,
             )
 
-        assert res["status"] == "GOVERNED"
-        assert res["patient_id"] == "P001"
-        assert res["dose_mg"] == 2.0
-        assert res.get("receipt_id") is not None
+        assert isinstance(res, CommitOutcome)
+        assert res.status is CommitStatus.EXECUTED
+        assert "P001" in res.message
+        assert "2.0mg" in res.message
+        assert "Receipt ID:" in res.message
         mock_enforce.assert_awaited_once()
-        mock_verify_seal.assert_awaited_once()
+        mock_verify_seal.assert_awaited_once_with(
+            minted_seal, "administer_dose", dose_params
+        )
         governor.settle.assert_awaited_once_with(minted_seal, executed=True)
 
         # Replay / invalid seal blocks execution and settles with executed=False
@@ -415,7 +433,11 @@ class TestHealthcarePlugin:
         with (
             patch(
                 "src.cage_healthcare.tools.tool_provider.enforce_governance",
-                AsyncMock(return_value="seal-hc-replay"),
+                AsyncMock(
+                    return_value=SealedAction(
+                        "administer_dose", "seal-hc-replay", dict(dose_params)
+                    )
+                ),
             ),
             patch(
                 "src.cage_healthcare.tools.tool_provider.verify_and_consume_seal",
@@ -430,8 +452,11 @@ class TestHealthcarePlugin:
                 patient_id="P001",
                 medication="vancomycin",
                 dose_mg=2.0,
+                idempotency_key=replay_key,
                 governor=governor,
             )
 
-        assert blocked["status"] == "BLOCKED"
+        assert isinstance(blocked, CommitOutcome)
+        assert blocked.status is CommitStatus.REFUSED
+        assert "BLOCKED:" in blocked.message
         governor.settle.assert_awaited_once_with("seal-hc-replay", executed=False)

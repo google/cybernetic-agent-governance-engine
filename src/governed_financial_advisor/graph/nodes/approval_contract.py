@@ -14,7 +14,10 @@
 
 """Approval contract for human-in-the-loop decisions."""
 
-from pydantic import BaseModel, model_validator
+import math
+from typing import Any
+
+from pydantic import BaseModel, field_validator, model_validator
 
 
 class ApprovalDecision(BaseModel):
@@ -39,6 +42,25 @@ class ApprovalDecision(BaseModel):
     rationale: str  # mandatory — cannot be empty string
     comment: str = ""  # kept for backwards compatibility
     max_slippage_pct: float = 2.0  # reviewer's execution price tolerance (%)
+
+    @field_validator("max_slippage_pct", mode="before")
+    @classmethod
+    def _validate_max_slippage_pct(cls, value: Any) -> float:
+        if isinstance(value, bool) or value is None:
+            raise ValueError(
+                "max_slippage_pct must be a finite number between 0.0 and 100.0."
+            )
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "max_slippage_pct must be a finite number between 0.0 and 100.0."
+            ) from exc
+        if not math.isfinite(parsed) or parsed < 0.0 or parsed > 100.0:
+            raise ValueError(
+                "max_slippage_pct must be a finite number between 0.0 and 100.0."
+            )
+        return parsed
 
     @staticmethod
     def _validate_rationale(value: str) -> str:

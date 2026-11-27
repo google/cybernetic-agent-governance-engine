@@ -33,13 +33,20 @@ from src.cage_finance.tools.tool_provider import (
     execute_trade_action,
 )
 from src.gateway.governance.execution_actuator import dispatch_actuation
+from src.gateway.governance.execution_idempotency import (
+    SHARED_CALLER,
+    ExecutionLedger,
+    actuation_attempt_scope,
+)
 from src.gateway.governance.routing_seal import SymbolicGovernorViolation
 from src.gateway.governance.seams.actuation import (
+    ActuationError,
     ActuationOutcome,
     ActuationReceipt,
+    ActuationRejectedError,
     ExecutionClearance,
 )
-from tests.fixtures.trade_inputs import trade_governor
+from tests.fixtures.trade_inputs import sealed_governance, trade_governor
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
@@ -76,11 +83,18 @@ class TestDispatchActuation:
         actuator.actuate = AsyncMock(
             return_value=_receipt(accepted=True, outcome=ActuationOutcome.ACCEPTED)
         )
-        with patch(
-            "src.gateway.governance.execution_actuator.ingest_actuation_receipt",
-            new_callable=AsyncMock,
-        ) as ingest:
-            receipt = await dispatch_actuation(actuator, self._clearance())
+        clearance = self._clearance()
+        with (
+            patch(
+                "src.gateway.governance.execution_actuator.ingest_actuation_receipt",
+                new_callable=AsyncMock,
+            ) as ingest,
+            actuation_attempt_scope(),
+        ):
+            await ExecutionLedger(None).claim(
+                clearance.action, SHARED_CALLER, clearance.thread_id
+            )
+            receipt = await dispatch_actuation(actuator, clearance)
         assert receipt.outcome is ActuationOutcome.ACCEPTED
         ingest.assert_awaited_once()
         assert ingest.await_args.kwargs["actuator_id"] == "stub"
@@ -89,11 +103,18 @@ class TestDispatchActuation:
     async def test_actuator_exception_becomes_recorded_unknown_receipt(self) -> None:
         actuator = MagicMock(actuator_id="stub")
         actuator.actuate = AsyncMock(side_effect=TimeoutError("venue"))
-        with patch(
-            "src.gateway.governance.execution_actuator.ingest_actuation_receipt",
-            new_callable=AsyncMock,
-        ) as ingest:
-            receipt = await dispatch_actuation(actuator, self._clearance())
+        clearance = self._clearance()
+        with (
+            patch(
+                "src.gateway.governance.execution_actuator.ingest_actuation_receipt",
+                new_callable=AsyncMock,
+            ) as ingest,
+            actuation_attempt_scope(),
+        ):
+            await ExecutionLedger(None).claim(
+                clearance.action, SHARED_CALLER, clearance.thread_id
+            )
+            receipt = await dispatch_actuation(actuator, clearance)
         assert receipt.outcome is ActuationOutcome.UNKNOWN
         assert receipt.retryable is False
         assert receipt.findings[0]["code"] == "ACTUATOR_EXCEPTION"
@@ -165,7 +186,7 @@ async def _run_trade(actuate_mock: AsyncMock) -> tuple[MagicMock, object]:
         patch(
             "src.cage_finance.tools.tool_provider.enforce_governance",
             new_callable=AsyncMock,
-            return_value=_SEAL,
+            side_effect=sealed_governance(_SEAL),
         ),
         patch(
             "src.gateway.governance.routing_seal.verify_and_consume_seal",
@@ -180,13 +201,13 @@ async def _run_trade(actuate_mock: AsyncMock) -> tuple[MagicMock, object]:
         try:
             outcome: object = await execute_trade_action(
                 governor=governor,
-                transaction_id=str(uuid.uuid4()),
+                idempotency_key=str(uuid.uuid4()),
                 symbol="AAPL",
                 amount=100.0,
                 currency="USD",
                 confidence=0.99,
             )
-        except SymbolicGovernorViolation as exc:
+        except (ActuationError, SymbolicGovernorViolation) as exc:
             outcome = exc
     return governor, outcome
 
@@ -198,6 +219,7 @@ class TestSettlementDirection:
             AsyncMock(return_value=_receipt(outcome=ActuationOutcome.UNKNOWN))
         )
         assert isinstance(result, ActuationIndeterminateError)
+        assert not isinstance(result, SymbolicGovernorViolation)
         assert "indeterminate" in str(result)
         governor.settle.assert_awaited_once_with(_SEAL, executed=True)
 
@@ -206,7 +228,8 @@ class TestSettlementDirection:
         governor, result = await _run_trade(
             AsyncMock(return_value=_receipt(outcome=ActuationOutcome.REJECTED))
         )
-        assert isinstance(result, SymbolicGovernorViolation)
+        assert isinstance(result, ActuationRejectedError)
+        assert not isinstance(result, SymbolicGovernorViolation)
         assert not isinstance(result, ActuationIndeterminateError)
         assert "Actuation rejected" in str(result)
         governor.settle.assert_awaited_once_with(_SEAL, executed=False)
@@ -218,5 +241,6 @@ class TestSettlementDirection:
             AsyncMock(side_effect=RuntimeError("venue socket died"))
         )
         assert isinstance(result, ActuationIndeterminateError)
+        assert not isinstance(result, SymbolicGovernorViolation)
         assert "ACTUATOR_EXCEPTION" in str(result)
         governor.settle.assert_awaited_once_with(_SEAL, executed=True)

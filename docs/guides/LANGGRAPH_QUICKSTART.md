@@ -1,173 +1,27 @@
-# LangGraph Integration Quickstart
+# LangGraph Integration Guide
 
-5-minute guide to integrating CAGE governance into your LangGraph application using the `cage-client` SDK.
+Status of integrating LangGraph applications with the CAGE governance gateway via [`packages/cage-client/`](../../packages/cage-client/).
 
-## Prerequisites
+## Current Surface (`cage-client` `0.5.0`)
 
-- Python 3.10+
-- Docker & Docker Compose (for CAGE services)
+- **Preview (`POST /governance/validate-action` via `CageClient.validate_action()` / `CageClient.preview()`):** Evaluates policy and safety tiers in dry-run preview mode and returns a JWKS-verified `GovernanceEnvelope` (or, via `preview()`, a non-raising `PreviewResult` over the five `GovernanceDecision` outcomes: `ALLOWED`, `NARROWED`, `DENIED`, `DEFERRED`, `UNAVAILABLE`). **Preview is preview-only:** it reserves no budget, mints no routing seal, and attests to no side effect. Do not wrap a side-effecting function behind a preview `ALLOW` check.
+- **Committing execution (`POST /tools/execute` via `CageClient.execute_tool()` and MCP `/mcp/`):** Committing runs execute on the gateway (`enforce_governance()` / `enforce_approved_governance()` -> single-use routing seal verification -> `ExecutionLedger` idempotency claim/settlement -> `ActuatorRegistry` dispatch) and return a structured `CommitOutcome` (`src/gateway/governance/commit_outcome.py`, parsed client-side by `cage_client.outcomes.CommitOutcome`). `CageClient.execute_tool()` enforces out-of-band `kid` JWKS/PEM signature and binding verification (`tool_name`, `idempotency_key`, `request_hash`) on every `200`, `202`, and `403` response via `enforce_verification_posture()`, rejecting opt-outs in enforcing postures and emitting a `WARNING` log when permitted under `dev`/`test`. Deterministic plan-step keys can be derived with `derive_plan_step_key()` / `derive_idempotency_key()`.
+- **LangGraph SDK node factories (`cage_client.langgraph`, `langgraph>=1.0.0`, `langchain-core>=1.0.0`):** The earlier `@cage_guard` node decorator (`a71d6a6b:packages/cage-client/src/cage_client/adapters/langgraph.py`) was removed in `cage-client` `0.5.0` because it gated arbitrary node bodies behind preview-only `validate_action()`, raised exceptions across `DEFER` before LangGraph could checkpoint `deferred_id`, and silently fabricated `"unknown"` principals / `{}` parameters when state keys were absent. Three composable replacement factories live in [`packages/cage-client/src/cage_client/langgraph.py`](../../packages/cage-client/src/cage_client/langgraph.py):
+  - `governed_node` — single-action preview or committing mediation over `CageClient.preview()` / `CageClient.execute_tool()` with explicit `principal_extractor` and `action_extractor` and `Command(goto=...)` routing.
+  - `approval_park_node` — checkpoints `deferred_id` before invoking `interrupt()`, validates reviewer resume payloads, and routes approved/rejected resumes.
+  - `governed_tool_node` — `1..N` batch `AIMessage.tool_calls` mediation with deterministic `derive_plan_step_key()` idempotency keys, stripping of model-supplied `deferred_id` / `approval_token` fields, retryable vs. terminal `ApprovalRedemptionRefusal` handling, and guaranteed `ToolMessage(tool_call_id=...)` pairing on every exit.
 
-## Step 1: Install Client SDK
+## Worked Reference Application (`POAM-2026-251` Advisor Migration Pending)
 
-```bash
-pip install "cage-client[langgraph] @ git+https://github.com/google/cybernetic-agent-governance-engine.git#subdirectory=packages/cage-client"
-```
+Migration of [`src/governed_financial_advisor/`](../../src/governed_financial_advisor/) onto `cage_client.langgraph` remains tracked under [`POAM-2026-251`](../POAM.md). Until that pass completes, the worked reference modules in [`src/governed_financial_advisor/`](../../src/governed_financial_advisor/) remain:
 
-Or with `uv`:
+- **Verified gateway client:** [`gateway_client.py`](../../src/governed_financial_advisor/infrastructure/gateway_client.py) (uses `CageClient` from the built `cage-client` wheel).
+- **Committing tool guard, idempotency keys & HITL redemption:** [`tool_guard.py`](../../src/governed_financial_advisor/graph/governance/tool_guard.py) (derives deterministic plan-step idempotency keys, strips model-supplied `deferred_id` handles, dispatches committing tool calls to the gateway, and handles `EXECUTED`, `REFUSED`, retryable vs. terminal `ApprovalRedemptionRefusal`, `UNAVAILABLE`, and `INDETERMINATE` outcomes).
+- **Two-node HITL checkpointing & post-approval TOCTOU revalidation:** [`governed_trader_graph.py`](../../src/governed_financial_advisor/graph/subgraphs/governed_trader_graph.py) (`approval_node` parks via `interrupt()` only after `deferred_id` is durably checkpointed, followed by `post_hitl_rehydrate` -> `post_hitl_revalidate` before redeeming the ticket on the gateway).
 
-```bash
-uv add "cage-client[langgraph] @ git+https://github.com/google/cybernetic-agent-governance-engine.git#subdirectory=packages/cage-client"
-```
+## Related References
 
-## Step 2: Start CAGE Services
-
-```bash
-# Clone the repository (one-time setup)
-git clone https://github.com/google/cybernetic-agent-governance-engine.git
-cd cybernetic-agent-governance-engine
-
-# Start governance infrastructure
-docker compose up -d
-
-# Verify gateway is ready
-curl http://localhost:8080/health
-# Expected: {"status":"healthy"}
-```
-
-This starts:
-- **Gateway** (`:8080`) — Policy enforcement endpoint
-- **OPA** (`:8181`) — Policy engine
-- **Redis** (`:6379`) — State & CBF storage
-- **NeMo Guardrails** — Input/output rails (embedded in gateway)
-
-## Step 3: Minimal Working Example
-
-```python
-from typing import TypedDict
-from langgraph.graph import StateGraph, START, END
-from cage_client import CageClient
-from cage_client.adapters.langgraph import cage_guard
-
-# Initialize governance client (once at app startup)
-cage = CageClient(
-    gateway_url="http://localhost:8080",
-)
-
-
-# Define your state
-class AgentState(TypedDict):
-    query: str
-    proposed_action: dict
-    agent_id: str
-    result: str
-
-
-# Decorate high-stakes nodes with governance
-@cage_guard(client=cage, action="execute_trade")
-async def execute_trade_node(state: AgentState) -> AgentState:
-    """This node ONLY executes if CAGE returns ALLOW."""
-    trade = state["proposed_action"]
-    # Your business logic here
-    return {"result": f"Executed: {trade}"}
-
-
-# Build your graph
-def planner(state: AgentState) -> AgentState:
-    return {"proposed_action": {"symbol": "AAPL", "amount": 1000}}
-
-
-graph = StateGraph(AgentState)
-graph.add_node("planner", planner)
-graph.add_node("execute_trade", execute_trade_node)  # ← Governed node
-graph.add_edge(START, "planner")
-graph.add_edge("planner", "execute_trade")
-graph.add_edge("execute_trade", END)
-
-app = graph.compile()
-
-# Run it
-result = await app.ainvoke({"query": "Buy AAPL", "agent_id": "advisor-v1"})
-print(result["result"])
-```
-
-## What Happens at Runtime
-
-1. LangGraph reaches `execute_trade_node`
-2. `@cage_guard` intercepts and calls `http://localhost:8080/governance/validate-action`
-3. CAGE Gateway evaluates the action through its STERA 8-tier admissibility pipeline:
-   - **Tier 0:** STPA/UCA validation
-   - **Tier 1:** Agent confidence threshold (4-State AARM):
-     - $\text{Conf} \ge 0.95$: **ALLOW / DENY** (autonomous clearance via `system_authz.rego`)
-     - $0.70 \le \text{Conf} < 0.95$: **MANUAL_REVIEW** (requires human sign-off $\to$ parked in `DeferQueue` $\to$ Two-Node HITL via `approval_node`)
-     - $\text{Conf} < 0.70$: **DEFER** (data starvation / missing context $\to$ automated hydration loop in Redis `db=1` to prevent operator fatigue)
-   - **Tier 2:** OPA policy evaluation (explicit UCA/CBF/policy violations $\to$ **DENY**)
-   - **Tier 3:** Control Barrier Function (CBF)
-   - **Tier 4:** Fiscal limit pre-reservation
-   - **Tier 5:** Multi-model consensus
-   - **Tier 6:** Causal gatekeeper
-4. Decision returned:
-   - **ALLOW** → Node executes (autonomous execution permitted)
-   - **DENY** → Raises `PolicyViolationException` (explicit UCA/CBF/policy violations)
-   - **MANUAL_REVIEW** → Raises `DeferralPending` (parked in `DeferQueue` for human sign-off via Two-Node HITL `approval_node`)
-   - **DEFER** → Routed to automated data-hydration loop in Redis `db=1` (context starvation)
-
-## Handling MANUAL_REVIEW Decisions (Two-Node HITL Pattern)
-
-In CAGE v3.0.1 (Decoupled PEP Architecture), checkpointing and execution suspension must happen at the state-machine boundary, not within the enforcement wrapper. The architectural decoupling ensures that `@cage_guard` validates out-of-process and raises `DeferralPending`. Therefore, the LangGraph dynamic `interrupt()` primitive belongs strictly in `approval_node`, not within the decorator.
-
-The canonical way to handle `MANUAL_REVIEW` is the **Two-Node HITL Pattern**, consisting of a 4-phase lifecycle:
-
-1. `@cage_guard` validates out-of-process and raises `DeferralPending` when the gateway returns a `MANUAL_REVIEW` decision.
-2. A graph conditional edge catches the exception (or checks state) and routes to an `approval_node`.
-3. The `approval_node` calls `interrupt(...)` to suspend the thread to the checkpointer.
-4. An external caller (e.g., UI or admin script) invokes `app.ainvoke(Command(resume=...), config=config)` to resume execution once approved.
-
-> **Example:** See [`examples/langgraph_cage_guard_demo.py`](../../examples/langgraph_cage_guard_demo.py) as the canonical reference implementation currently running in HEAD.
-
-## Error Handling
-
-```python
-from cage_client.exceptions import PolicyViolationException, DeferralPending
-
-try:
-    result = await app.ainvoke({"query": "..."})
-except PolicyViolationException as e:
-    print(f"Action denied: {e.reason_code}")
-    print(f"Details: {e.violation_details}")
-except DeferralPending as e:
-    print(f"HITL required, ticket: {e.ticket_id}")
-    print(f"Expires at: {e.expires_at}")
-```
-
-## Next Steps
-
-- **Define Your Policy:** Edit `config/opa/trade_policy.rego` or use STPA compiler
-- **HITL Workflow:** See [`docs/security/HITL_TOCTOU_REMEDIATION.md`](../security/HITL_TOCTOU_REMEDIATION.md)
-- **Production Deployment:** See [`infra/DEPLOYMENT_GUIDE.md`](../../infra/DEPLOYMENT_GUIDE.md)
-- **Full Example:** Governed Financial Advisor at [`src/governed_financial_advisor/`](../../src/governed_financial_advisor/)
-- **Local Development Postures:** See [`LOCAL_DEVELOPMENT_POSTURES.md`](LOCAL_DEVELOPMENT_POSTURES.md) for running the LangGraph SDK server locally with hot-reload and host Ollama.
-- **Client SDK Reference:** [`packages/cage-client/README.md`](../../packages/cage-client/README.md)
-
-## Troubleshooting
-
-**Gateway not responding:**
-```bash
-docker compose ps  # Check all services are running
-docker compose logs gateway  # Check gateway logs
-```
-
-**Policy violations:**
-```bash
-# Check OPA policy evaluation
-curl -X POST http://localhost:8181/v1/data/trade/governance \
-  -H "Content-Type: application/json" \
-  -d '{"input": {"action": "execute_trade", "amount": 1000}}'
-```
-
-**Import errors:**
-```bash
-# Verify installation
-pip show cage-client
-# Reinstall with LangGraph support
-pip install --force-reinstall "cage-client[langgraph] @ git+https://..."
-```
+- **Client SDK package & verification contract:** [`packages/cage-client/README.md`](../../packages/cage-client/README.md)
+- **In-monorepo kernel node factories (domain plugins only):** [`src/gateway/governance/langgraph_harness/`](../../src/gateway/governance/langgraph_harness/)
+- **HITL TOCTOU architecture:** [`docs/security/HITL_TOCTOU_REMEDIATION.md`](../security/HITL_TOCTOU_REMEDIATION.md)
+- **Local development postures:** [`docs/guides/LOCAL_DEVELOPMENT_POSTURES.md`](LOCAL_DEVELOPMENT_POSTURES.md)

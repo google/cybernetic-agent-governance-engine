@@ -12,18 +12,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Server-side trade inputs for tests that drive ``execute_trade_action``.
+"""Server-side trade inputs and governor stand-ins for ``execute_trade_action`` tests.
 
-The trade tool binds ``latency_ms`` / ``drawdown`` / ``portfolio_total`` and the
-trader (``trader_role`` / ``trader_id``) through the governor's
-``execute_trade`` server-input resolver. Tests that stand in a ``MagicMock``
-governor give it a real resolver over simulated sources, and a real execution
-ledger (process-local under the test posture).
+The trade tool binds nothing itself: the governor's committing run
+(``SymbolicGovernor.govern`` / ``revalidate_post_hitl``) binds
+``latency_ms`` / ``drawdown`` / ``portfolio_total`` and the trader
+(``trader_role`` / ``trader_id``) exactly once through its ``execute_trade``
+server-input resolver, and returns the evaluated params it sealed as
+``SealedAction.params``, which the tool verifies and actuates.
+
+* :func:`trade_server_inputs` is that resolver over simulated sources, as the
+  finance plugin wires it.
+* :func:`trade_governor` is a ``MagicMock`` governor for tests that replace
+  the governance call (``enforce_governance`` / ``enforce_approved_governance``)
+  and so only need its execution ledger and ``settle``.
+* :func:`sealed_governance` is such a replacement: it seals the params the
+  tool hands it, as a committing run whose resolvers bind nothing does.
+* :func:`committing_trade_governor` is a real governor whose committing run
+  binds the trade inputs, for tests that observe the kernel binding.
 """
 
 from __future__ import annotations
 
-from typing import Any
+import dataclasses
+from collections.abc import Callable, Mapping
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock
 
 from src.cage_finance.simulated_feeds import (
@@ -37,6 +50,10 @@ from src.cage_finance.tools.trade_inputs import (
 )
 from src.cage_finance.tools.trader_binding import TraderRoleBindings
 from src.gateway.governance.execution_idempotency import ExecutionLedger
+from src.gateway.governance.governor.sealing import SealedAction
+
+if TYPE_CHECKING:
+    from src.gateway.governance.governor.governor import SymbolicGovernor
 
 
 def trade_server_inputs(
@@ -76,10 +93,62 @@ def trade_server_inputs(
 
 
 def trade_governor(server_inputs: dict[str, Any] | None = None) -> MagicMock:
-    """A governor stand-in: settles nothing, binds real server-side inputs."""
+    """A governor stand-in: settles nothing, with a real execution ledger.
+
+    ``components.server_inputs`` carries the real trade resolver so a test
+    can bind with it, but nothing binds through this stand-in: tests that
+    use it replace the governance call (see :func:`sealed_governance`).
+    """
     governor = MagicMock(settle=AsyncMock(return_value=[]))
     governor.components.server_inputs = (
         trade_server_inputs() if server_inputs is None else server_inputs
     )
     governor.components.execution_ledger = ExecutionLedger(None)
+    return governor
+
+
+def sealed_governance(seal: str) -> Callable[..., SealedAction]:
+    """A governance stand-in sealing the params it is handed, as ``seal``.
+
+    Use it as the ``side_effect`` of an ``AsyncMock`` that replaces
+    ``enforce_governance`` or ``enforce_approved_governance``: the returned
+    ``SealedAction`` carries a copy of the params the tool passed, as a
+    committing run whose resolvers bind nothing returns them.
+    """
+
+    def _seal(
+        _governor: Any, action: str, params: dict[str, Any], **_kwargs: Any
+    ) -> SealedAction:
+        return SealedAction(action, seal, dict(params))
+
+    return _seal
+
+
+def committing_trade_governor(
+    server_inputs: dict[str, Any] | None = None,
+    *,
+    ground_truth_providers: Mapping[str, object] | None = None,
+) -> SymbolicGovernor:
+    """A real governor whose committing run binds the trade's server inputs.
+
+    ``SymbolicGovernor.govern`` binds ``server_inputs`` (default:
+    :func:`trade_server_inputs`) exactly once, as in production; an
+    unavailable source blocks the run on infrastructure before any stage
+    runs. The stages are ``make_governor``'s permissive defaults and the
+    execution ledger is the process-local one.
+    """
+    from src.gateway.governance.governor.governor import SymbolicGovernor
+    from tests.fixtures.governor import make_governor
+
+    governor = make_governor(
+        server_inputs=trade_server_inputs() if server_inputs is None else server_inputs,
+        execution_ledger=ExecutionLedger(None),
+    )
+    if ground_truth_providers:
+        governor = SymbolicGovernor(
+            dataclasses.replace(
+                governor.components,
+                ground_truth_providers=dict(ground_truth_providers),
+            )
+        )
     return governor

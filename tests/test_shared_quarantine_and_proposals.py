@@ -34,7 +34,7 @@ from src.gateway.governance.quarantine_actuator import (
     bind_quarantine_redis,
     clear_local_quarantine_state,
     dispatch_quarantine,
-    is_workload_quarantined,
+    probe_workload_quarantine,
 )
 from src.gateway.governance.seams.actuation import ActuationOutcome
 
@@ -91,43 +91,41 @@ async def test_quarantine_set_on_replica_a_enforced_on_replica_b():
     # Replica B (with its own client connection and empty local process memory) sees the quarantine
     clear_local_quarantine_state()
     assert (
-        await is_workload_quarantined(
+        await probe_workload_quarantine(
             thread_id="thread-cross-1",
             agent_svid=None,
             redis_client=redis_b,
         )
-        is True
-    )
+    ).quarantined is True
     assert (
-        await is_workload_quarantined(
+        await probe_workload_quarantine(
             thread_id=None,
             agent_svid="spiffe://cluster.local/ns/default/sa/compromised-agent",
             redis_client=redis_b,
         )
-        is True
+    ).quarantined is True
+    clean_probe = await probe_workload_quarantine(
+        thread_id="clean-thread",
+        agent_svid="spiffe://cluster.local/ns/default/sa/clean-agent",
+        redis_client=redis_b,
     )
-    assert (
-        await is_workload_quarantined(
-            thread_id="clean-thread",
-            agent_svid="spiffe://cluster.local/ns/default/sa/clean-agent",
-            redis_client=redis_b,
-        )
-        is False
-    )
+    assert clean_probe.quarantined is False
+    assert clean_probe.unavailable_code is None
 
 
 @pytest.mark.asyncio
-async def test_is_workload_quarantined_executes_single_exists_command():
-    """is_workload_quarantined checks both thread and SVID keys in one EXISTS call."""
+async def test_probe_workload_quarantine_executes_single_exists_command():
+    """probe_workload_quarantine checks both thread and SVID keys in one EXISTS call."""
     mock_redis = AsyncMock()
     mock_redis.exists = AsyncMock(return_value=1)
 
-    quarantined = await is_workload_quarantined(
+    probe = await probe_workload_quarantine(
         thread_id="t-100",
         agent_svid="spiffe://cluster.local/ns/default/sa/agent-1",
         redis_client=mock_redis,
     )
-    assert quarantined is True
+    assert probe.quarantined is True
+    assert probe.unavailable_code is None
     mock_redis.exists.assert_awaited_once_with(
         "quarantine:thread:t-100",
         "quarantine:svid:spiffe://cluster.local/ns/default/sa/agent-1",
@@ -135,36 +133,38 @@ async def test_is_workload_quarantined_executes_single_exists_command():
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    "src.gateway.governance.quarantine_actuator:probe_workload_quarantine#Shared Redis client unavailable in enforcing posture — failing closed",
+    "src.gateway.governance.quarantine_actuator:probe_workload_quarantine#Redis EXISTS check failed",
+)
 async def test_quarantine_fails_closed_when_redis_missing_or_errors_in_enforcing_posture(
     monkeypatch,
 ):
-    """In enforcing postures, missing Redis or Redis errors fail closed."""
+    """In enforcing postures, missing Redis or Redis errors report REDIS_QUARANTINE_UNAVAILABLE."""
     monkeypatch.setattr(
         "src.gateway.governance.quarantine_actuator.resolve_posture",
         lambda: DeploymentPosture.PRODUCTION,
     )
 
-    # 1. Missing Redis -> is_workload_quarantined returns True (fail-closed)
-    assert (
-        await is_workload_quarantined(
-            thread_id="t-prod",
-            agent_svid="spiffe://cluster.local/ns/default/sa/prod-agent",
-            redis_client=None,
-        )
-        is True
+    # 1. Missing Redis -> probe reports REDIS_QUARANTINE_UNAVAILABLE (not quarantined=True)
+    missing_probe = await probe_workload_quarantine(
+        thread_id="t-prod",
+        agent_svid="spiffe://cluster.local/ns/default/sa/prod-agent",
+        redis_client=None,
     )
+    assert missing_probe.quarantined is False
+    assert missing_probe.unavailable_code == "REDIS_QUARANTINE_UNAVAILABLE"
 
-    # 2. Redis error on EXISTS -> returns True (fail-closed)
+    # 2. Redis error on EXISTS -> probe reports REDIS_QUARANTINE_UNAVAILABLE
     broken_redis = AsyncMock()
     broken_redis.exists = AsyncMock(side_effect=RuntimeError("redis connection lost"))
-    assert (
-        await is_workload_quarantined(
-            thread_id="t-prod",
-            agent_svid=None,
-            redis_client=broken_redis,
-        )
-        is True
+    error_probe = await probe_workload_quarantine(
+        thread_id="t-prod",
+        agent_svid=None,
+        redis_client=broken_redis,
     )
+    assert error_probe.quarantined is False
+    assert error_probe.unavailable_code == "REDIS_QUARANTINE_UNAVAILABLE"
 
     # 3. Missing Redis on actuator -> quarantined=False, UNKNOWN
     actuator = InferenceProxySvidQuarantineActuator(redis_client=None)
@@ -357,6 +357,11 @@ async def test_nemo_proposal_staged_on_replica_a_approved_on_replica_b_and_pubsu
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    "src.gateway.server.hybrid_server:_save_refinement_proposal#Shared Redis backend unavailable for NeMo refinement proposals.",
+    "src.gateway.server.hybrid_server:list_pending_nemo_proposals#Shared Redis backend unavailable for NeMo refinement proposals.",
+    "src.gateway.server.hybrid_server:approve_nemo_refinement#Shared Redis backend unavailable for NeMo refinement proposals.",
+)
 async def test_nemo_proposal_routes_fail_closed_with_503_when_redis_unavailable(
     monkeypatch,
 ):

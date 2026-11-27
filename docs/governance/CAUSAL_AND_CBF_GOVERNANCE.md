@@ -61,7 +61,7 @@ The following module-level constants in [`src/gateway/governance/causal/gatekeep
 |----------|---------|----------|
 | `CAUSAL_LOCK_P_VALUE_THRESHOLD` | `0.05` | `CAUSAL_LOCK_P_VALUE_THRESHOLD` env var |
 | `CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE` | `0.2` | `CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE` env var |
-| `CAUSAL_LOCK_RISK_BOUNDARY` | `0.95` | `CAUSAL_LOCK_RISK_BOUNDARY` env var |
+| `CAUSAL_LOCK_RISK_BOUNDARY` | `0.45` | `CAUSAL_LOCK_RISK_BOUNDARY` env var |
 
 Additional configuration constants:
 
@@ -81,15 +81,15 @@ Additional configuration constants:
    - the simulated placebo effects have zero spread — `placebo_degenerate`. A constant placebo distribution carries no evidence, and dowhy's significance test cannot show it: from 100 simulations on, its bootstrap test returns a finite p-value of 1.0 when every effect is 0.0;
    - the refuter detects a statistically significant effect (`p_value < CAUSAL_LOCK_P_VALUE_THRESHOLD` = `0.05`): dowhy tests a null effect of 0 against the placebo distribution, so the null hypothesis (no spurious effect) is rejected at the 5% significance level — the world-model's causal assumptions cannot be trusted (`p_value_threshold`);
    - the absolute mean placebo effect exceeds `CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE` = `0.2`, regardless of p-value (`placebo_effect_magnitude`). The effect is a change in `risk_score` per normalised unit of treatment, i.e. per `normalization_scale` units of trade amount ($10,000 for finance). This catches cases where the refuter finds a large spurious effect that is not statistically significant due to high variance.
-3. **Safety Boundary Constraint (`CTRL_MRM_004`) — Marginal Risk Boundary:** The estimated marginal effect of the specific trade amount is added to a baseline risk of 0.5 (neutral market state). If the predicted risk score exceeds `CAUSAL_LOCK_RISK_BOUNDARY` (0.95), the action is rejected:
+3. **Safety Boundary Constraint (`CTRL_MRM_004`) — Marginal Risk Boundary:** The estimated marginal causal risk effect of the specific trade amount is bounded directly (with zero hardcoded `0.5` baseline under `POAM-2026-117`). If the estimated marginal causal effect exceeds `CAUSAL_LOCK_RISK_BOUNDARY` (0.45), the action is rejected:
 
    ```
-   (0.5 + β × amount / normalization_scale) > CAUSAL_LOCK_RISK_BOUNDARY
+   (β × amount / normalization_scale) > CAUSAL_LOCK_RISK_BOUNDARY
    ```
 
-   β is estimated on `trade_amount / normalization_scale`, so it is the change in `risk_score` per normalised unit of treatment ($10,000 for finance) and `β × amount / normalization_scale` is the predicted change in `risk_score` for this trade. The scale cancels: it does not move the amount at which the boundary trips. On the finance synthetic telemetry (β ≈ 0.49 per $10,000) the boundary trips at about **$9,144**; with live telemetry the trip point is `0.45 × normalization_scale / β` for the live β. The refusal is a HARD violation (DENY): no approval can override it.
+   β is estimated on `trade_amount / normalization_scale`, so it is the change in `risk_score` per normalised unit of treatment ($10,000 for finance) and `β × amount / normalization_scale` is the predicted change in `risk_score` for this trade. The scale cancels: it does not move the amount at which the boundary trips. On the finance synthetic telemetry (β ≈ 0.49 per $10,000) the boundary trips at about **$9,144** (`$9,143.93`); with live telemetry the trip point is `CAUSAL_LOCK_RISK_BOUNDARY × normalization_scale / β` for the live β. The refusal is a HARD violation (DENY): no approval can override it.
 
-   The 0.95 boundary leaves a 5% safety margin below the maximum risk score of 1.0, consistent with the CBF γ=0.5 decay factor.
+   The 0.45 effect budget preserves the intended marginal-risk envelope (previously `0.95 - 0.5`) without inventing an uncalibrated 0.5 baseline risk score, consistent with the CBF γ=0.5 decay factor.
 
 ### Telemetry Wiring and Violation Codes
 
@@ -114,7 +114,7 @@ Before Phase 2 placebo refutation, the most-recent observation timestamp in `cur
 Only the **world-model verdict** is cached — never the final allow/deny decision. [`CausalGatekeeper`](../../src/gateway/governance/causal/gatekeeper.py) splits each check in two:
 
 1. **World-model validation** (params-independent): sample count, the regression's rounding-error bound (≤ 1e-6), causal slope β (> 0 and finite, per normalised unit of treatment), telemetry freshness, and placebo refutation (result present and finite, non-zero spread, p-value and effect magnitude). The result is a frozen [`WorldModelVerdict`](../../src/gateway/governance/causal/gatekeeper.py) `(trusted, beta, reason)`. This is the expensive DoWhy step and the only thing written to Redis.
-2. **Marginal risk boundary** (per request): `0.5 + β × treatment_value / normalization_scale` is compared with `CAUSAL_LOCK_RISK_BOUNDARY` on **every** call, using β from the cached or freshly computed verdict. It is never cached, so a verdict warmed by a small trade cannot admit a large one, and a denial for a large trade cannot deny a small one.
+2. **Marginal risk boundary** (per request): `β × treatment_value / normalization_scale` is compared with `CAUSAL_LOCK_RISK_BOUNDARY` (`0.45`) on **every** call, using β from the cached or freshly computed verdict. It is never cached, so a verdict warmed by a small trade cannot admit a large one, and a denial for a large trade cannot deny a small one.
 
 Treatment-value validation (missing, non-numeric, NaN/∞, or ≤ 0 → fail closed) runs before any cache lookup.
 

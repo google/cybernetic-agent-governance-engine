@@ -42,14 +42,19 @@ import logging
 import os
 import re
 import threading
-from collections.abc import Mapping
+import weakref
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import unquote, urlparse
 
 from cachetools import TTLCache
 
-from src.gateway.governance.env_posture import is_enforcing, resolve_posture
+from src.gateway.governance.env_posture import (
+    is_enforcing,
+    resolve_deployment_region,
+    resolve_posture,
+)
 from src.gateway.governance.evidence.cold_store import EvidenceColdStore
 from src.gateway.governance.evidence.factory import get_cold_store
 
@@ -60,7 +65,13 @@ from .evidence_custodian import (
     assert_citable,
 )
 from .infra_custody import DEFAULT_INFRA_STREAM_KEY, INFRA_STREAM_KEY_ENV
-from .types import ComplianceMetrics
+from .types import (
+    CONTROL_EVALUATION_EVENT_TYPES,
+    STATISTICAL_TRACE_LULA_SPECS,
+    Cm6ThresholdsPosture,
+    ComplianceMetrics,
+    derive_min_sample_size,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +82,58 @@ _LANGFUSE_CONCURRENCY = _EVIDENCE_CONCURRENCY
 
 _EVIDENCE_ARCHIVE_PREFIX = "evidence-stream"
 _MAX_DATE_PREFIX_SCAN_DAYS = 14
+_DEFAULT_COLD_STORE_READ_CONCURRENCY = 16
+_DEFAULT_BATCH_CACHE_MAX_ENTRIES = 32768
+_DEFAULT_BATCH_CACHE_TTL_SECONDS = 604800
+
+
+def _resolve_min_sample_size(control_id: str = "A.5.3") -> int:
+    """Return the threshold-derived minimum population floor (or explicit env override)."""
+    derived = derive_min_sample_size(control_id)
+    raw = os.environ.get("COMPLIANCE_MIN_SAMPLE_SIZE", "").strip()
+    if not raw:
+        return derived
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        logger.warning(
+            "[metrics] Invalid COMPLIANCE_MIN_SAMPLE_SIZE=%r for %s; using derived floor %d.",
+            raw,
+            control_id,
+            derived,
+        )
+        return derived
+
+
+def _resolve_cold_store_read_concurrency() -> int:
+    """Return bounded concurrent batch download parallelism for WORM cold store."""
+    raw = os.environ.get("EVIDENCE_COLD_STORE_READ_CONCURRENCY", "").strip()
+    if not raw:
+        return _DEFAULT_COLD_STORE_READ_CONCURRENCY
+    try:
+        return max(1, min(64, int(raw)))
+    except ValueError:
+        return _DEFAULT_COLD_STORE_READ_CONCURRENCY
+
+
+def _resolve_batch_cache_ttl() -> int:
+    raw = os.environ.get("EVIDENCE_BATCH_CACHE_TTL_SECONDS", "").strip()
+    if not raw:
+        return _DEFAULT_BATCH_CACHE_TTL_SECONDS
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return _DEFAULT_BATCH_CACHE_TTL_SECONDS
+
+
+def _resolve_batch_cache_maxsize() -> int:
+    raw = os.environ.get("EVIDENCE_BATCH_CACHE_MAX_ENTRIES", "").strip()
+    if not raw:
+        return _DEFAULT_BATCH_CACHE_MAX_ENTRIES
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return _DEFAULT_BATCH_CACHE_MAX_ENTRIES
 
 
 # ---------------------------------------------------------------------------
@@ -132,23 +195,72 @@ def _get_grace_status() -> dict[str, float | bool]:
 
 
 # ---------------------------------------------------------------------------
-# TTL cache — key: "<control_id>:<window_hours>"  value: ComplianceMetrics
-# 5-minute TTL prevents repeated full custody scans on every Lula poll.
+# TTL caches:
+#   - _metrics_cache: per-(control_id, window_hours) aggregated ComplianceMetrics
+#   - _raw_custody_cache: 30s snapshot of merged WORM + Redis stream records
+#   - _verified_batch_cache: verified, KMS-attested, immutable WORM `.ndjson`
+#     batches (keyed by store identity, posture, and object key) so unchanged
+#     historical batches are not re-downloaded on every poll. Tampered/unsigned
+#     objects and integrity failures are NEVER cached; `CustodyVerifier` performs
+#     independent uncached read-back verification.
+#   - _cold_store_cache: process-scoped cold-store client reuse to prevent TLS/
+#     OAuth metadata contention under concurrent scans.
 # ---------------------------------------------------------------------------
 
 _metrics_cache: TTLCache[str, ComplianceMetrics] = TTLCache(maxsize=32, ttl=300)
-_raw_custody_cache: TTLCache[tuple[int, str, str, str], list[dict[str, Any]]] = (
-    TTLCache(maxsize=8, ttl=30)
+_raw_custody_cache: TTLCache[tuple[Any, ...], list[dict[str, Any]]] = TTLCache(
+    maxsize=16, ttl=30
 )
 _raw_custody_lock = threading.Lock()
+_inflight_fetch_guard = threading.Lock()
+_inflight_fetch_locks: dict[tuple[Any, ...], threading.Lock] = {}
+
+_verified_batch_cache: TTLCache[
+    tuple[int, str, str, str], tuple[dict[str, Any], ...]
+] = TTLCache(
+    maxsize=_resolve_batch_cache_maxsize(),
+    ttl=_resolve_batch_cache_ttl(),
+)
+_verified_batch_lock = threading.Lock()
+
+_cold_store_cache: dict[tuple[int, str, str, str, str], EvidenceColdStore] = {}
+_cold_store_lock = threading.Lock()
+
+
+def _get_inflight_lock(cache_key: tuple[Any, ...]) -> threading.Lock:
+    """Return a single-flight lock for `cache_key` to prevent duplicate scans."""
+    with _inflight_fetch_guard:
+        if len(_inflight_fetch_locks) > 64:
+            # Drop uncontended entries only so active waiters keep the same lock.
+            stale_keys = [
+                k for k, lk in _inflight_fetch_locks.items() if not lk.locked()
+            ]
+            for k in stale_keys:
+                _inflight_fetch_locks.pop(k, None)
+        lock = _inflight_fetch_locks.get(cache_key)
+        if lock is None:
+            lock = threading.Lock()
+            _inflight_fetch_locks[cache_key] = lock
+        return lock
 
 
 def invalidate_compliance_metrics_cache(control_id: str | None = None) -> None:
-    """Invalidate cached compliance metrics globally or for a single control."""
+    """Invalidate cached compliance metrics globally or for a single control.
+
+    When called with `control_id=None`, resets every cache including the
+    immutable verified-batch cache and process-scoped cold-store client cache.
+    When called for a single control (e.g. after ingesting one new INFRA event),
+    invalidates the short-lived snapshot/metrics caches while retaining already
+    verified immutable WORM `.ndjson` batches.
+    """
     with _raw_custody_lock:
         _raw_custody_cache.clear()
     if control_id is None:
         _metrics_cache.clear()
+        with _verified_batch_lock:
+            _verified_batch_cache.clear()
+        with _cold_store_lock:
+            _cold_store_cache.clear()
         return
     prefix = f"{_normalize_control_id(control_id)}:"
     for key in list(_metrics_cache.keys()):
@@ -396,11 +508,208 @@ def _record_matches_control(record: Mapping[str, Any] | Any, control_id: str) ->
     return False
 
 
-from .types import STATISTICAL_TRACE_LULA_SPECS
+_CONTROL_TOKEN_PUNCT_RE = re.compile(r"[^a-z0-9]+")
+_EVALUATION_RECORD_ROLES: frozenset[str] = frozenset(
+    {"control_evaluation", "control_assessment", "assessment_result"}
+)
+
+
+def _canonical_control_token(raw: Any) -> str:
+    """Normalize any control ID or Lula manifest stem to a canonical comparison token.
+
+    Maps e.g. ``"A.5.3"``, ``"control:A.5.3"``, ``"lula-validation-a53"``, and
+    ``"lula-validation-a53.yaml"`` uniformly to ``"a53"``; ``"CM-6"`` and
+    ``"lula-validation-cm6"`` to ``"cm6"``; ``"SC-7"`` and ``"lula-validation-sc7"``
+    to ``"sc7"``.
+    """
+    if not isinstance(raw, str):
+        return ""
+    cleaned = _normalize_control_id(raw).lower()
+    if not cleaned:
+        return ""
+    if cleaned.endswith((".yaml", ".yml")):
+        cleaned = cleaned.rsplit(".", 1)[0]
+    if cleaned.startswith("lula-validation-"):
+        cleaned = cleaned[len("lula-validation-") :]
+    return _CONTROL_TOKEN_PUNCT_RE.sub("", cleaned)
+
+
+def _expand_control_tokens(value: Any, out: set[str]) -> None:
+    """Add canonical tokens for a scalar/sequence control identifier or spec stem."""
+    if value is None:
+        return
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return
+        if stripped.startswith("["):
+            try:
+                parsed = json.loads(stripped)
+            except ValueError:
+                parsed = None
+            if isinstance(parsed, list):
+                for item in parsed:
+                    _expand_control_tokens(item, out)
+                return
+        norm = _normalize_control_id(stripped)
+        token = _canonical_control_token(norm)
+        if token:
+            out.add(token)
+        mapped = _INTERNAL_CONTROL_TO_FRAMEWORKS.get(norm)
+        if mapped:
+            for fw_cid in mapped:
+                fw_tok = _canonical_control_token(fw_cid)
+                if fw_tok:
+                    out.add(fw_tok)
+        return
+    if isinstance(value, (list, tuple, set, frozenset)):
+        for item in value:
+            _expand_control_tokens(item, out)
+
+
+def _is_control_evaluation_record(
+    record: Mapping[str, Any] | Any,
+    payload: Mapping[str, Any] | None = None,
+) -> bool:
+    """Return True when `record` is the output of evaluating a control (meta-level).
+
+    Applies generally to any assessment/validation emitter — not hard-coded to a
+    single control ID. Ordinary governed runtime telemetry (`GOVERNANCE_DECISION`,
+    `GOVERNANCE_REFUSAL`, `CBF_COMMIT`, `INFERENCE_PROXY_*`, `agentsight_*`,
+    `cilium_l7_flow`, etc.) returns False.
+    """
+    resolved_payload = (
+        payload if payload is not None else _parse_evidence_payload(record)
+    )
+    raw_event_type = str(
+        _get_record_field(record, "event_type")
+        or _get_record_field(record, "type")
+        or resolved_payload.get("event_type")
+        or resolved_payload.get("type")
+        or ""
+    ).strip()
+    if raw_event_type.lower() in CONTROL_EVALUATION_EVENT_TYPES:
+        return True
+
+    for role_key in ("record_role", "evidence_role", "producer_role"):
+        role_val = resolved_payload.get(role_key)
+        if role_val is None:
+            role_val = _get_record_field(record, role_key)
+        if (
+            isinstance(role_val, str)
+            and role_val.strip().lower() in _EVALUATION_RECORD_ROLES
+        ):
+            return True
+
+    for explicit_key in (
+        "evaluated_control_id",
+        "evaluated_controls",
+        "target_control_id",
+        "target_controls",
+    ):
+        val = resolved_payload.get(explicit_key)
+        if val is None:
+            val = _get_record_field(record, explicit_key)
+        if isinstance(val, str) and val.strip():
+            return True
+        if isinstance(val, (list, tuple, set, frozenset)) and len(val) > 0:
+            return True
+
+    return False
+
+
+def _extract_evaluated_control_tokens(
+    record: Mapping[str, Any] | Any,
+    payload: Mapping[str, Any] | None = None,
+) -> frozenset[str]:
+    """Return canonical tokens of every control whose evaluation produced `record`."""
+    resolved_payload = (
+        payload if payload is not None else _parse_evidence_payload(record)
+    )
+    tokens: set[str] = set()
+    has_explicit_target = False
+
+    for explicit_key in (
+        "evaluated_control_id",
+        "evaluated_controls",
+        "target_control_id",
+        "target_controls",
+    ):
+        for candidate in (
+            resolved_payload.get(explicit_key),
+            _get_record_field(record, explicit_key),
+        ):
+            before = len(tokens)
+            _expand_control_tokens(candidate, tokens)
+            if len(tokens) > before:
+                has_explicit_target = True
+
+    for spec_list_key in (
+        "failed_controls",
+        "satisfied_controls",
+        "insufficient_traffic_controls",
+        "insufficient_sample_controls",
+        "startup_grace_controls",
+    ):
+        _expand_control_tokens(resolved_payload.get(spec_list_key), tokens)
+        _expand_control_tokens(_get_record_field(record, spec_list_key), tokens)
+
+    raw_event_type = str(
+        _get_record_field(record, "event_type")
+        or _get_record_field(record, "type")
+        or resolved_payload.get("event_type")
+        or resolved_payload.get("type")
+        or ""
+    ).strip()
+
+    # Suite-wide `lula_audit` records always cover the control under which they are
+    # sealed (`control_id` / `control_hint`). Generic `control_assessment` records
+    # without an explicit `evaluated_control*` / `target_control*` list fall back
+    # to their own attribution fields so self-evaluation is blocked uniformly.
+    if raw_event_type.lower() == "lula_audit" or not has_explicit_target:
+        for attr_key in (
+            "control_id",
+            "controlId",
+            "control_hint",
+            "iso_42001_control",
+            "oscal_control_ref",
+        ):
+            _expand_control_tokens(resolved_payload.get(attr_key), tokens)
+            _expand_control_tokens(_get_record_field(record, attr_key), tokens)
+
+    return frozenset(tokens)
+
+
+def _is_self_evaluation_record(
+    record: Mapping[str, Any] | Any,
+    target_control_id: str,
+    payload: Mapping[str, Any] | None = None,
+) -> bool:
+    """Return True when `record` is a control-evaluation output produced for `target_control_id`.
+
+    Structural anti-latch invariant (`POAM-2026-201` / `POAM-2026-244`):
+    records emitted by evaluating control `X` (e.g. a Lula validation outcome or
+    control-assessment receipt for `X`) must never enter `X`'s own input
+    population (`total_traces`, `passed_traces`, `blocked_traces`, `safety_rate`,
+    or `last_event_date`). Applied uniformly to every control `X`.
+    """
+    target_token = _canonical_control_token(target_control_id)
+    if not target_token:
+        return False
+    resolved_payload = (
+        payload if payload is not None else _parse_evidence_payload(record)
+    )
+    if not _is_control_evaluation_record(record, resolved_payload):
+        return False
+    return target_token in _extract_evaluated_control_tokens(record, resolved_payload)
+
 
 _LULA_PASS_PREFIX_RE = re.compile(r"\blula_audit\s+pass\s*:", re.IGNORECASE)
 _LULA_INSUFFICIENT_PREFIX_RE = re.compile(
     r"\blula_audit\s+insufficient_traffic\s*:", re.IGNORECASE
+)
+_LULA_INSUFFICIENT_SAMPLE_PREFIX_RE = re.compile(
+    r"\blula_audit\s+insufficient_sample\s*:", re.IGNORECASE
 )
 _LULA_FAIL_PREFIX_RE = re.compile(r"\blula_audit\s+fail\b", re.IGNORECASE)
 _LULA_RATIO_RE = re.compile(
@@ -583,6 +892,136 @@ def _is_insufficient_traffic_lula_audit(
     return saw_insuff_prefix
 
 
+def _is_insufficient_evidence_only_lula_audit(
+    record: Mapping[str, Any] | Any,
+    payload: dict[str, Any],
+) -> bool:
+    """Return True iff `record` is an auditor-healthy `lula_audit` run whose sole non-satisfied specs are statistical `insufficient_traffic` / `insufficient_sample` controls (`a52`/`a53`/`a92`).
+
+    Answers the auditor-liveness question (separate from statistical satisfaction):
+    `evaluated_count >= LULA_AUDIT_MIN_MANIFESTS`, zero `failed_count` /
+    `not_satisfied_count` / `failed_controls`, disjoint subset of
+    `STATISTICAL_TRACE_LULA_SPECS`, exact count conservation, and an
+    `INSUFFICIENT_TRAFFIC` or `INSUFFICIENT_SAMPLE` summary with zero `FAIL`.
+    """
+    raw_failed = payload.get("failed_count")
+    if raw_failed is None:
+        raw_failed = _get_record_field(record, "failed_count")
+    ok_failed, failed_count = _coerce_optional_int(raw_failed)
+    if not ok_failed or (failed_count is not None and failed_count != 0):
+        return False
+
+    raw_not_sat = payload.get("not_satisfied_count")
+    if raw_not_sat is None:
+        raw_not_sat = _get_record_field(record, "not_satisfied_count")
+    ok_not_sat, not_satisfied_count = _coerce_optional_int(raw_not_sat)
+    if not ok_not_sat or (not_satisfied_count is not None and not_satisfied_count != 0):
+        return False
+
+    raw_failed_controls = payload.get("failed_controls")
+    if raw_failed_controls is None:
+        raw_failed_controls = _get_record_field(record, "failed_controls")
+    if _has_nonempty_failed_controls(raw_failed_controls):
+        return False
+
+    raw_insuff_controls = payload.get("insufficient_traffic_controls")
+    if raw_insuff_controls is None:
+        raw_insuff_controls = _get_record_field(record, "insufficient_traffic_controls")
+    if raw_insuff_controls is None:
+        insuff_controls: list[str] = []
+    else:
+        ok_insuff_list, insuff_controls = _parse_control_list(raw_insuff_controls)
+        if not ok_insuff_list:
+            return False
+
+    raw_sample_controls = payload.get("insufficient_sample_controls")
+    if raw_sample_controls is None:
+        raw_sample_controls = _get_record_field(record, "insufficient_sample_controls")
+    if raw_sample_controls is None:
+        sample_controls: list[str] = []
+    else:
+        ok_sample_list, sample_controls = _parse_control_list(raw_sample_controls)
+        if not ok_sample_list:
+            return False
+
+    if not insuff_controls and not sample_controls:
+        return False
+    if any(c not in STATISTICAL_TRACE_LULA_SPECS for c in insuff_controls):
+        return False
+    if any(c not in STATISTICAL_TRACE_LULA_SPECS for c in sample_controls):
+        return False
+    if set(insuff_controls) & set(sample_controls):
+        return False
+
+    raw_insuff_count = payload.get("insufficient_traffic_count")
+    if raw_insuff_count is None:
+        raw_insuff_count = _get_record_field(record, "insufficient_traffic_count")
+    ok_insuff_cnt, insuff_count = _coerce_optional_int(raw_insuff_count)
+    if not ok_insuff_cnt or (
+        insuff_count is not None and insuff_count != len(insuff_controls)
+    ):
+        return False
+
+    raw_sample_count = payload.get("insufficient_sample_count")
+    if raw_sample_count is None:
+        raw_sample_count = _get_record_field(record, "insufficient_sample_count")
+    ok_sample_cnt, sample_count = _coerce_optional_int(raw_sample_count)
+    if not ok_sample_cnt or (
+        sample_count is not None and sample_count != len(sample_controls)
+    ):
+        return False
+
+    raw_eval = payload.get("evaluated_count")
+    if raw_eval is None:
+        raw_eval = _get_record_field(record, "evaluated_count")
+    ok_eval, evaluated_count = _coerce_optional_int(raw_eval)
+    min_manifests = _lula_min_manifests_floor()
+    if not ok_eval or evaluated_count is None or evaluated_count < min_manifests:
+        return False
+
+    raw_sat = payload.get("satisfied_count")
+    if raw_sat is None:
+        raw_sat = _get_record_field(record, "satisfied_count")
+    ok_sat, satisfied_count = _coerce_optional_int(raw_sat)
+    if (
+        not ok_sat
+        or satisfied_count is None
+        or satisfied_count < 0
+        or satisfied_count + len(insuff_controls) + len(sample_controls)
+        != evaluated_count
+    ):
+        return False
+
+    summaries = [
+        cand.strip()
+        for cand in (
+            _get_record_field(record, "scrubbed_summary"),
+            _get_record_field(record, "summary"),
+            payload.get("summary"),
+        )
+        if isinstance(cand, str) and cand.strip()
+    ]
+    if not summaries:
+        return False
+
+    expected_prefix_re = (
+        _LULA_INSUFFICIENT_SAMPLE_PREFIX_RE
+        if sample_controls
+        else _LULA_INSUFFICIENT_PREFIX_RE
+    )
+    saw_expected_prefix = False
+    for text in summaries:
+        if _LULA_FAIL_PREFIX_RE.search(text):
+            return False
+        for m_fc in _LULA_FAILED_COUNT_RE.finditer(text):
+            if int(m_fc.group(1)) > 0:
+                return False
+        if expected_prefix_re.search(text):
+            saw_expected_prefix = True
+
+    return saw_expected_prefix
+
+
 def _is_passing_lula_audit(
     record: Mapping[str, Any] | Any,
     payload: dict[str, Any],
@@ -606,6 +1045,19 @@ def _is_passing_lula_audit(
     if raw_insuff_controls is None:
         raw_insuff_controls = _get_record_field(record, "insufficient_traffic_controls")
     if _has_nonempty_failed_controls(raw_insuff_controls):
+        return False
+
+    raw_sample_count = payload.get("insufficient_sample_count")
+    if raw_sample_count is None:
+        raw_sample_count = _get_record_field(record, "insufficient_sample_count")
+    ok_sample, sample_count = _coerce_optional_int(raw_sample_count)
+    if not ok_sample or (sample_count is not None and sample_count != 0):
+        return False
+
+    raw_sample_controls = payload.get("insufficient_sample_controls")
+    if raw_sample_controls is None:
+        raw_sample_controls = _get_record_field(record, "insufficient_sample_controls")
+    if _has_nonempty_failed_controls(raw_sample_controls):
         return False
 
     raw_not_sat = payload.get("not_satisfied_count")
@@ -659,7 +1111,11 @@ def _is_passing_lula_audit(
 
     saw_pass_prefix = False
     for text in summaries:
-        if _LULA_FAIL_PREFIX_RE.search(text):
+        if (
+            _LULA_FAIL_PREFIX_RE.search(text)
+            or _LULA_INSUFFICIENT_PREFIX_RE.search(text)
+            or _LULA_INSUFFICIENT_SAMPLE_PREFIX_RE.search(text)
+        ):
             return False
         for m_fc in _LULA_FAILED_COUNT_RE.finditer(text):
             if int(m_fc.group(1)) > 0:
@@ -693,6 +1149,70 @@ def _is_passing_lula_audit(
         return False
 
     return True
+
+
+_OCSF_HEX64_RE = re.compile(r"^[0-9a-f]{64}\Z")
+_OCSF_ALLOW_DISPOSITIONS: frozenset[str] = frozenset({"allowed", "logged", "observed"})
+_OCSF_CONTAINMENT_DISPOSITIONS: frozenset[str] = frozenset(
+    {"blocked", "denied", "dropped", "rejected"}
+)
+_OCSF_ALLOW_ACTIONS: frozenset[str] = frozenset({"observed", "allowed", "logged"})
+_OCSF_CONTAINMENT_ACTIONS: frozenset[str] = frozenset(
+    {"observed", "blocked", "denied", "dropped", "rejected"}
+)
+
+
+def _classify_sandbox_ocsf_telemetry(
+    record: Mapping[str, Any] | Any,
+    payload: dict[str, Any],
+) -> tuple[bool, bool]:
+    """Classify `SANDBOX_OCSF_TELEMETRY` into `(is_passing, is_control_effective)`."""
+    raw_digest = payload.get("governance_decision_digest")
+    if raw_digest is None:
+        raw_digest = _get_record_field(record, "governance_decision_digest")
+    if not isinstance(raw_digest, str) or not _OCSF_HEX64_RE.fullmatch(
+        raw_digest.strip()
+    ):
+        return False, False
+
+    raw_disp = payload.get("ocsf_disposition")
+    if raw_disp is None:
+        raw_disp = _get_record_field(record, "ocsf_disposition")
+    if not isinstance(raw_disp, str) or not raw_disp.strip():
+        return False, False
+    disposition = raw_disp.strip().lower()
+
+    raw_action = payload.get("ocsf_action")
+    if raw_action is None:
+        raw_action = _get_record_field(record, "ocsf_action")
+    if raw_action is None:
+        action = "observed"
+    elif isinstance(raw_action, str) and raw_action.strip():
+        action = raw_action.strip().lower()
+    else:
+        return False, False
+
+    raw_sev = payload.get("ocsf_severity_id")
+    if raw_sev is None:
+        raw_sev = _get_record_field(record, "ocsf_severity_id")
+    ok_sev, parsed_sev = _coerce_optional_int(raw_sev)
+    if not ok_sev:
+        return False, False
+    severity_id = 1 if parsed_sev is None else parsed_sev
+    if severity_id < 0 or severity_id > 6:
+        return False, False
+
+    if disposition in _OCSF_ALLOW_DISPOSITIONS:
+        if action in _OCSF_ALLOW_ACTIONS and 1 <= severity_id <= 3:
+            return True, True
+        return False, False
+
+    if disposition in _OCSF_CONTAINMENT_DISPOSITIONS:
+        if action in _OCSF_CONTAINMENT_ACTIONS and 1 <= severity_id <= 5:
+            return False, True
+        return False, False
+
+    return False, False
 
 
 def _is_passing_evidence_record(record: Mapping[str, Any] | Any) -> bool:
@@ -732,6 +1252,13 @@ def _is_passing_evidence_record(record: Mapping[str, Any] | Any) -> bool:
         return _is_passing_lula_audit(record, payload)
 
     event_type = raw_event_type.upper()
+    if event_type == "GOVERNANCE_INFRASTRUCTURE_BLOCK":
+        return False
+
+    if event_type == "SANDBOX_OCSF_TELEMETRY":
+        is_passing, _ = _classify_sandbox_ocsf_telemetry(record, payload)
+        return is_passing
+
     if event_type in BLOCKING_EVIDENCE_EVENT_TYPES or any(
         token in event_type for token in _BLOCKING_EVENT_TOKENS
     ):
@@ -832,6 +1359,13 @@ def _is_control_effective_record(record: Mapping[str, Any] | Any) -> bool:
         return False
 
     event_type = raw_event_type.upper()
+    if event_type == "GOVERNANCE_INFRASTRUCTURE_BLOCK":
+        return False
+
+    if event_type == "SANDBOX_OCSF_TELEMETRY":
+        _, is_effective = _classify_sandbox_ocsf_telemetry(record, payload)
+        return is_effective
+
     if event_type in {
         "CBF_ROLLBACK",
         "WORKLOAD_QUARANTINE_RECEIPT",
@@ -870,30 +1404,85 @@ def _is_control_effective_record(record: Mapping[str, Any] | Any) -> bool:
 # ---------------------------------------------------------------------------
 
 
+def _run_with_io_pool(coro: Any) -> Any:
+    """Execute `coro` in an isolated event loop with an I/O-sized thread pool.
+
+    Python's default `ThreadPoolExecutor` caps concurrency at `min(32, cpu + 4)`,
+    which leaves 1-2 vCPU containers limited to 5-6 parallel `asyncio.to_thread`
+    downloads. Sizing a dedicated loop executor to the configured cold-store read
+    concurrency ensures concurrent `.ndjson` + `.attestation.json` reads proceed in
+    parallel without exhausting the host process's default pool.
+    """
+    workers = max(8, _resolve_cold_store_read_concurrency() * 2)
+    loop = asyncio.new_event_loop()
+    io_pool = concurrent.futures.ThreadPoolExecutor(
+        max_workers=workers, thread_name_prefix="cage-cold-store"
+    )
+    loop.set_default_executor(io_pool)
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        try:
+            loop.run_until_complete(loop.shutdown_asyncgens())
+        finally:
+            loop.close()
+            io_pool.shutdown(wait=True)
+
+
 def _run_coro_sync(coro: Any) -> Any:
     """Run an async coroutine from synchronous code even if a loop is active."""
     try:
         asyncio.get_running_loop()
     except RuntimeError:
-        return asyncio.run(coro)
+        return _run_with_io_pool(coro)
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(asyncio.run, coro).result()
+        return pool.submit(_run_with_io_pool, coro).result()
 
 
 def _resolve_metrics_cold_store() -> EvidenceColdStore | None:
-    """Resolve the WORM cold store used for archived custody batches, or None."""
+    """Resolve a process-scoped WORM cold store for archived custody batches, or None.
+
+    Reuses the constructed :class:`EvidenceColdStore` instance per backend/bucket
+    configuration key so underlying `google-cloud-storage` HTTPS keep-alive pools
+    and OAuth token caches stay warm across concurrent scrapes rather than opening
+    fresh clients (which triggered `google-auth` TLS contention under load).
+    """
     raw_backend = os.environ.get("EVIDENCE_COLD_STORE", "").strip().lower()
     archive_bucket = os.environ.get("EVIDENCE_ARCHIVE_BUCKET", "").strip()
     s3_endpoint = os.environ.get("EVIDENCE_COLD_STORE_S3_ENDPOINT", "").strip()
+    gcs_project = (
+        os.environ.get("GOOGLE_CLOUD_PROJECT", "").strip()
+        or os.environ.get("GCS_PROJECT_ID", "").strip()
+    )
 
+    backend_arg: str | None = None
+    bucket_arg: str | None = None
     if raw_backend in ("gcs", "s3"):
-        return get_cold_store(backend=raw_backend, bucket=archive_bucket or None)
-    if raw_backend not in ("", "null"):
-        return get_cold_store(backend=raw_backend, bucket=archive_bucket or None)
-    if archive_bucket:
-        inferred = "s3" if s3_endpoint else "gcs"
-        return get_cold_store(backend=inferred, bucket=archive_bucket)
-    return None
+        backend_arg = raw_backend
+        bucket_arg = archive_bucket or None
+    elif raw_backend not in ("", "null"):
+        backend_arg = raw_backend
+        bucket_arg = archive_bucket or None
+    elif archive_bucket:
+        backend_arg = "s3" if s3_endpoint else "gcs"
+        bucket_arg = archive_bucket
+    else:
+        return None
+
+    cache_key = (
+        id(get_cold_store),
+        backend_arg,
+        bucket_arg or "",
+        s3_endpoint,
+        gcs_project,
+    )
+    with _cold_store_lock:
+        existing = _cold_store_cache.get(cache_key)
+        if existing is not None:
+            return existing
+        store = get_cold_store(backend=backend_arg, bucket=bucket_arg)
+        _cold_store_cache[cache_key] = store
+        return store
 
 
 def _date_prefixes_for_window(window_start: datetime, now: datetime) -> list[str]:
@@ -914,27 +1503,89 @@ def _date_prefixes_for_window(window_start: datetime, now: datetime) -> list[str
     return prefixes
 
 
+_tracked_store_finalizers: set[int] = set()
+
+
+def _evict_store_batches(store_id: int) -> None:
+    """Remove `_verified_batch_cache` entries owned by a garbage-collected store."""
+    with _verified_batch_lock:
+        _tracked_store_finalizers.discard(store_id)
+        for key in [k for k in _verified_batch_cache.keys() if k[0] == store_id]:
+            _verified_batch_cache.pop(key, None)
+
+
+def _track_cold_store_for_batch_cache(cold_store: EvidenceColdStore) -> bool:
+    """Ensure cached batches are evicted if `cold_store` is GC'd (blocks `id()` reuse)."""
+    store_id = id(cold_store)
+    with _verified_batch_lock:
+        if store_id in _tracked_store_finalizers:
+            return True
+    try:
+        weakref.finalize(cold_store, _evict_store_batches, store_id)
+    except TypeError:
+        return False
+    with _verified_batch_lock:
+        _tracked_store_finalizers.add(store_id)
+    return True
+
+
+def _cold_store_bucket_id(cold_store: EvidenceColdStore) -> str:
+    return str(
+        getattr(
+            cold_store,
+            "_bucket_name",
+            getattr(
+                cold_store, "bucket", os.environ.get("EVIDENCE_ARCHIVE_BUCKET", "")
+            ),
+        )
+    )
+
+
 async def _read_cold_store_records_async(
     cold_store: EvidenceColdStore,
     window_start: datetime,
     now: datetime,
 ) -> list[dict[str, Any]]:
-    """Read `.ndjson` custody batches from WORM cold storage across `[window_start, now]`."""
+    """Read `.ndjson` custody batches from WORM cold storage across `[window_start, now]`.
+
+    Fetches UTC date-prefix listings and uncached `(batch, attestation)` pairs
+    with bounded concurrency (`EVIDENCE_COLD_STORE_READ_CONCURRENCY`, default 16).
+    Signed, KMS-attested batches whose SHA-256 and posture verified cleanly are
+    retained in `_verified_batch_cache` (bounded TTL) so historical immutable
+    WORM objects are not re-downloaded on every scrape. Unsigned or tampered
+    objects are never cached and always fail closed immediately.
+    """
     posture = resolve_posture()
     enforcing = is_enforcing(posture)
+    prefixes = _date_prefixes_for_window(window_start, now)
+
     listed_keys: set[str] = set()
-    for prefix in _date_prefixes_for_window(window_start, now):
-        keys = await cold_store.list_keys(prefix)
-        listed_keys.update(keys)
+    if len(prefixes) == 1:
+        listed_keys.update(await cold_store.list_keys(prefixes[0]))
+    elif prefixes:
+        prefix_batches = await asyncio.gather(
+            *(cold_store.list_keys(prefix) for prefix in prefixes)
+        )
+        for keys in prefix_batches:
+            listed_keys.update(keys)
 
     ndjson_keys = sorted(k for k in listed_keys if k.endswith(".ndjson"))
-    records: list[dict[str, Any]] = []
+    if not ndjson_keys:
+        return []
 
-    for data_key in ndjson_keys:
+    can_cache_store = _track_cold_store_for_batch_cache(cold_store)
+    store_id = id(cold_store)
+    bucket_id = _cold_store_bucket_id(cold_store)
+    posture_val = posture.value
+    batch_results: list[tuple[dict[str, Any], ...]] = [() for _ in ndjson_keys]
+    pending: list[tuple[int, str, str, bool]] = []
+
+    for idx, data_key in enumerate(ndjson_keys):
         base = data_key[: -len(".ndjson")]
         signed_att_key = f"{base}.attestation.json"
+        has_signed_att = signed_att_key in listed_keys
 
-        if enforcing and signed_att_key not in listed_keys:
+        if enforcing and not has_signed_att:
             unsigned_att_key = f"{base}.attestation.unsigned.json"
             if unsigned_att_key in listed_keys:
                 raise NonEvidentiaryAttestationError(
@@ -944,44 +1595,82 @@ async def _read_cold_store_records_async(
             # those entries remain readable from Redis DB 1 until cursor advance.
             continue
 
-        ndjson_bytes = await cold_store.get(data_key)
-
-        if signed_att_key in listed_keys:
-            att_bytes = await cold_store.get(signed_att_key)
-            try:
-                attestation = json.loads(att_bytes.decode("utf-8"))
-            except (UnicodeDecodeError, ValueError) as exc:
-                raise EvidenceCustodyIntegrityError(
-                    f"Malformed custody attestation JSON at {signed_att_key!r}: {exc}"
-                ) from exc
-            if not isinstance(attestation, dict):
-                raise EvidenceCustodyIntegrityError(
-                    f"Custody attestation at {signed_att_key!r} must be a JSON object."
-                )
-            assert_citable(attestation)
-            if (
-                enforcing
-                and attestation.get("schema") == ATTESTATION_SCHEMA_V2
-                and attestation.get("deployment_posture") != posture.value
-            ):
-                raise NonEvidentiaryAttestationError(
-                    f"Custody batch {data_key!r} carries deployment_posture="
-                    f"{attestation.get('deployment_posture')!r}, expected {posture.value!r}."
-                )
-            actual_sha = hashlib.sha256(ndjson_bytes).hexdigest()
-            if attestation.get("content_sha256") != actual_sha:
-                raise EvidenceCustodyIntegrityError(
-                    f"Custody batch {data_key!r} SHA-256 mismatch against {signed_att_key!r}."
-                )
-
-        for raw_line in ndjson_bytes.decode("utf-8").splitlines():
-            line = raw_line.strip()
-            if not line:
+        if has_signed_att and can_cache_store:
+            batch_cache_key = (store_id, bucket_id, posture_val, data_key)
+            with _verified_batch_lock:
+                cached_batch = _verified_batch_cache.get(batch_cache_key)
+            if cached_batch is not None:
+                batch_results[idx] = cached_batch
                 continue
-            parsed = json.loads(line)
-            if isinstance(parsed, dict):
-                records.append(parsed)
 
+        pending.append((idx, data_key, signed_att_key, has_signed_att))
+
+    if pending:
+        sem = asyncio.Semaphore(_resolve_cold_store_read_concurrency())
+
+        async def _load_and_verify(
+            slot: int, data_key: str, signed_att_key: str, has_signed_att: bool
+        ) -> None:
+            async with sem:
+                if has_signed_att:
+                    ndjson_bytes, att_bytes = await asyncio.gather(
+                        cold_store.get(data_key),
+                        cold_store.get(signed_att_key),
+                    )
+                    try:
+                        attestation = json.loads(att_bytes.decode("utf-8"))
+                    except (UnicodeDecodeError, ValueError) as exc:
+                        raise EvidenceCustodyIntegrityError(
+                            f"Malformed custody attestation JSON at {signed_att_key!r}: {exc}"
+                        ) from exc
+                    if not isinstance(attestation, dict):
+                        raise EvidenceCustodyIntegrityError(
+                            f"Custody attestation at {signed_att_key!r} must be a JSON object."
+                        )
+                    assert_citable(attestation)
+                    if (
+                        enforcing
+                        and attestation.get("schema") == ATTESTATION_SCHEMA_V2
+                        and attestation.get("deployment_posture") != posture_val
+                    ):
+                        raise NonEvidentiaryAttestationError(
+                            f"Custody batch {data_key!r} carries deployment_posture="
+                            f"{attestation.get('deployment_posture')!r}, expected {posture_val!r}."
+                        )
+                    actual_sha = hashlib.sha256(ndjson_bytes).hexdigest()
+                    if attestation.get("content_sha256") != actual_sha:
+                        raise EvidenceCustodyIntegrityError(
+                            f"Custody batch {data_key!r} SHA-256 mismatch against {signed_att_key!r}."
+                        )
+                else:
+                    ndjson_bytes = await cold_store.get(data_key)
+
+                parsed_records: list[dict[str, Any]] = []
+                for raw_line in ndjson_bytes.decode("utf-8").splitlines():
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+                    parsed = json.loads(line)
+                    if isinstance(parsed, dict):
+                        parsed_records.append(parsed)
+                frozen = tuple(parsed_records)
+                batch_results[slot] = frozen
+                if has_signed_att and can_cache_store:
+                    batch_cache_key = (store_id, bucket_id, posture_val, data_key)
+                    with _verified_batch_lock:
+                        _verified_batch_cache[batch_cache_key] = frozen
+
+        await asyncio.gather(
+            *(
+                _load_and_verify(slot, data_key, signed_att_key, has_signed_att)
+                for slot, data_key, signed_att_key, has_signed_att in pending
+            )
+        )
+
+    records: list[dict[str, Any]] = []
+    for batch in batch_results:
+        for rec in batch:
+            records.append(dict(rec))
     return records
 
 
@@ -1103,6 +1792,34 @@ def _record_dedup_key(record: Mapping[str, Any]) -> tuple[str, ...]:
     )
 
 
+def _build_snapshot_cache_key(
+    scope: str,
+    window_hours: int,
+    *,
+    enforcing: bool,
+    cold_store: EvidenceColdStore | None,
+    redis_url: str,
+    stream_keys: tuple[str, ...],
+) -> tuple[Any, ...]:
+    """Return a structural cache key for the raw custody snapshot window."""
+    bucket_id = (
+        _cold_store_bucket_id(cold_store)
+        if cold_store is not None
+        else os.environ.get("EVIDENCE_ARCHIVE_BUCKET", "")
+    )
+    return (
+        scope,
+        window_hours,
+        enforcing,
+        id(cold_store) if cold_store is not None else 0,
+        bucket_id,
+        redis_url,
+        stream_keys,
+        id(globals().get("_read_cold_store_records_async")),
+        id(globals().get("_build_evidence_sync_redis")),
+    )
+
+
 def _query_cage_evidence_records(
     control_id: str,
     window_hours: int,
@@ -1138,75 +1855,84 @@ def _query_cage_evidence_records(
             )
         return []
 
-    store_mod = type(cold_store).__module__ if cold_store is not None else ""
-    use_snapshot_cache = (
-        not store_mod.startswith("tests.")
-        and not store_mod.startswith("unittest.")
-        and not getattr(_build_evidence_sync_redis, "__module__", "").startswith(
-            "unittest."
-        )
-    )
-    bucket_id = str(
-        getattr(
-            cold_store,
-            "_bucket_name",
-            getattr(
-                cold_store, "bucket", os.environ.get("EVIDENCE_ARCHIVE_BUCKET", "")
-            ),
-        )
-    )
-    raw_cache_key = (
+    raw_cache_key = _build_snapshot_cache_key(
+        "metrics",
         window_hours,
-        type(cold_store).__qualname__ if cold_store is not None else "none",
-        bucket_id,
-        redis_url,
+        enforcing=enforcing,
+        cold_store=cold_store,
+        redis_url=redis_url,
+        stream_keys=(
+            os.environ.get("EVIDENCE_STREAM_KEY", "cage:evidence:stream").strip(),
+            os.environ.get(INFRA_STREAM_KEY_ENV, DEFAULT_INFRA_STREAM_KEY).strip(),
+        ),
     )
 
     combined_raw: list[dict[str, Any]] | None = None
-    if use_snapshot_cache:
-        with _raw_custody_lock:
-            cached_raw = _raw_custody_cache.get(raw_cache_key)
-            if cached_raw is not None:
-                combined_raw = list(cached_raw)
+    with _raw_custody_lock:
+        cached_raw = _raw_custody_cache.get(raw_cache_key)
+        if cached_raw is not None:
+            combined_raw = list(cached_raw)
 
     if combined_raw is None:
-        fetched_raw: list[dict[str, Any]] = []
-        if cold_store is not None:
-            try:
-                archived = _run_coro_sync(
-                    _read_cold_store_records_async(cold_store, window_start, now)
-                )
-                fetched_raw.extend(archived)
-            except Exception as exc:
-                if enforcing:
-                    raise
-                logger.warning(
-                    "[metrics] Failed to read WORM custody archive for control %s: %s",
-                    control_id,
-                    exc,
-                )
-
-        if redis_url:
-            try:
-                hot_records = _read_redis_stream_records(
-                    redis_url=redis_url,
-                    window_start=window_start,
-                    limit=limit,
-                )
-                fetched_raw.extend(hot_records)
-            except Exception as exc:
-                if enforcing:
-                    raise
-                logger.warning(
-                    "[metrics] Failed to read Redis DB 1 custody stream for control %s: %s",
-                    control_id,
-                    exc,
-                )
-
-        combined_raw = fetched_raw
-        if use_snapshot_cache and fetched_raw:
+        flight_lock = _get_inflight_lock(raw_cache_key)
+        with flight_lock:
             with _raw_custody_lock:
-                _raw_custody_cache[raw_cache_key] = list(fetched_raw)
+                cached_raw = _raw_custody_cache.get(raw_cache_key)
+                if cached_raw is not None:
+                    combined_raw = list(cached_raw)
+
+            if combined_raw is None:
+                fetched_raw: list[dict[str, Any]] = []
+                if cold_store is not None:
+                    try:
+                        archived = _run_coro_sync(
+                            _read_cold_store_records_async(
+                                cold_store, window_start, now
+                            )
+                        )
+                        fetched_raw.extend(archived)
+                    except Exception as exc:
+                        if enforcing or isinstance(
+                            exc,
+                            (
+                                EvidenceCustodyIntegrityError,
+                                NonEvidentiaryAttestationError,
+                            ),
+                        ):
+                            raise
+                        logger.warning(
+                            "[metrics] Failed to read WORM custody archive for control %s: %s",
+                            control_id,
+                            exc,
+                        )
+
+                if redis_url:
+                    try:
+                        hot_records = _read_redis_stream_records(
+                            redis_url=redis_url,
+                            window_start=window_start,
+                            limit=limit,
+                        )
+                        fetched_raw.extend(hot_records)
+                    except Exception as exc:
+                        if enforcing or isinstance(
+                            exc,
+                            (
+                                EvidenceCustodyIntegrityError,
+                                NonEvidentiaryAttestationError,
+                            ),
+                        ):
+                            raise
+                        logger.warning(
+                            "[metrics] Failed to read Redis DB 1 custody stream for control %s: %s",
+                            control_id,
+                            exc,
+                        )
+
+                combined_raw = fetched_raw
+                if fetched_raw:
+                    with _raw_custody_lock:
+                        _raw_custody_cache[raw_cache_key] = list(fetched_raw)
 
     seen_keys: set[tuple[str, ...]] = set()
     matched: list[tuple[datetime, dict[str, Any]]] = []
@@ -1264,6 +1990,8 @@ def _fetch_from_evidence_stream_sync(
 
     total_traces = 0
     passed_traces = 0
+    infrastructure_blocks = 0
+    self_evaluation_records_excluded = 0
     last_event_date = datetime.fromtimestamp(0, tz=timezone.utc)
 
     for record in records:
@@ -1284,15 +2012,23 @@ def _fetch_from_evidence_stream_sync(
             or record_payload.get("type")
             or ""
         ).strip()
-        # Idle-cluster `lula_audit` runs whose sole non-satisfied specs are
-        # statistical `insufficient_traffic` controls (`a52`, `a53`, `a92`) are
-        # observer-schedule records, neither governed AI traffic (`passed`) nor
-        # control violations (`blocked`). Excluding them keeps `A.5.3` at
-        # `total_traces == 0` (`safety_rate is None`) throughout quiet periods.
-        if (
-            rec_event_type.lower() == "lula_audit"
-            and _is_insufficient_traffic_lula_audit(record, record_payload)
-        ):
+        # Gateway 503 infrastructure blocks (`GOVERNANCE_INFRASTRUCTURE_BLOCK`)
+        # measure dependency availability rather than control effectiveness:
+        # partition them into `infrastructure_blocks` without polluting
+        # `total_traces`, `passed_traces`, `safety_rate`, or `last_event_date`.
+        if rec_event_type.upper() == "GOVERNANCE_INFRASTRUCTURE_BLOCK":
+            infrastructure_blocks += 1
+            continue
+        # Structural anti-latch invariant (`POAM-2026-201` / `POAM-2026-244`):
+        # Exclude any control-evaluation output record (`lula_audit`,
+        # `control_assessment`, `assessment_result`, or `record_role="control_evaluation"`)
+        # emitted by evaluating `control_id` from `control_id`'s own input population.
+        # Applies uniformly to every control `X` (not an A.5.3 special case). Evaluation
+        # records remain sealed in WORM custody and are counted explicitly in
+        # `self_evaluation_records_excluded`; `lula_audit` alerting, Prometheus gauges,
+        # and the dead-man's switch stay authoritative for audit outcomes.
+        if _is_self_evaluation_record(record, control_id, record_payload):
+            self_evaluation_records_excluded += 1
             continue
 
         total_traces += 1
@@ -1305,6 +2041,7 @@ def _fetch_from_evidence_stream_sync(
                 last_event_date = record_date
 
     blocked_traces = total_traces - passed_traces
+    min_sample_size = _resolve_min_sample_size(control_id)
     # Return None when no evidence records exist — 1.0 would be a false-positive score
     safety_rate = (passed_traces / total_traces) if total_traces > 0 else None
     now = datetime.now(tz=timezone.utc)
@@ -1324,6 +2061,10 @@ def _fetch_from_evidence_stream_sync(
         total_traces=total_traces,
         blocked_traces=blocked_traces,
         passed_traces=passed_traces,
+        infrastructure_blocks=infrastructure_blocks,
+        self_evaluation_records_excluded=self_evaluation_records_excluded,
+        min_sample_size=min_sample_size,
+        sample_sufficient=total_traces >= min_sample_size,
         window_hours=float(window_hours),
         last_event_utc=last_event_utc,
         evidence_age_seconds=max(0.0, evidence_age_seconds),
@@ -1383,15 +2124,19 @@ async def get_compliance_metrics(
 def get_last_passing_lula_audit_age_seconds(
     window_hours: int = 24,
 ) -> tuple[float | None, str | None]:
-    """Return `(age_seconds, last_pass_iso_utc)` of the newest healthy `lula_audit` record.
+    """Return `(age_seconds, last_pass_iso_utc)` of the newest statistically clean (`26/26 satisfied`) `lula_audit` record.
 
-    Scans `A.5.3` custody records over `window_hours` and considers only
+    Answers **Question 2 (statistical satisfaction attestation, `POAM-2026-234`)**:
+    scans `A.5.3` custody records over `window_hours` and considers **strictly**
     `event_type == "lula_audit"` records where `_is_passing_evidence_record(rec)`
-    or `_is_insufficient_traffic_lula_audit(rec, payload)` is `True` (proving the
-    auditor evaluated `>= LULA_AUDIT_MIN_MANIFESTS` specs with zero violations).
-    Failing or corpus-floor-breaching `lula_audit` runs never reset this age,
-    preventing metric poisoning from silencing the dead-man's switch.
-    Returns `(None, None)` when no healthy `lula_audit` exists in the window.
+    is `True` (proving `>= LULA_AUDIT_MIN_MANIFESTS` specs were evaluated and
+    **all** satisfied with zero failures, zero `insufficient_traffic`, and zero
+    `insufficient_sample`).
+
+    Auditor-liveness dead-man monitoring uses
+    :func:`get_last_healthy_lula_audit_age_seconds` instead so quiet clusters do
+    not conflate statistical sample size with CronJob execution liveness.
+    Returns `(None, None)` when no clean `26/26` passing `lula_audit` exists in the window.
     """
     records = _query_cage_evidence_records("A.5.3", window_hours=window_hours)
     latest_pass_ts: datetime | None = None
@@ -1407,10 +2152,7 @@ def get_last_passing_lula_audit_age_seconds(
         ).strip()
         if raw_event_type.lower() != "lula_audit":
             continue
-        if not (
-            _is_passing_evidence_record(rec)
-            or _is_insufficient_traffic_lula_audit(rec, payload)
-        ):
+        if not _is_passing_evidence_record(rec):
             continue
         rec_ts = _parse_evidence_timestamp(rec)
         if rec_ts is None:
@@ -1424,3 +2166,375 @@ def get_last_passing_lula_audit_age_seconds(
     now = datetime.now(tz=timezone.utc)
     age_seconds = max(0.0, (now - latest_pass_ts).total_seconds())
     return (age_seconds, latest_pass_ts.isoformat())
+
+
+def get_last_healthy_lula_audit_age_seconds(
+    window_hours: int = 24,
+) -> tuple[float | None, str | None]:
+    """Return `(age_seconds, last_healthy_iso_utc)` of the newest auditor-healthy `lula_audit` record.
+
+    Answers **Question 1 (auditor & structural liveness)** for the `2 x schedule`
+    dead-man's switch: did `CronJob/lula-audit` execute `>= LULA_AUDIT_MIN_MANIFESTS`
+    manifests, seal its receipt into WORM custody, and observe `failed_count == 0`
+    (`_is_passing_evidence_record(rec)` or
+    `_is_insufficient_evidence_only_lula_audit(rec, payload)`)?
+
+    Suspended CronJobs, `< 26` corpus-floor breaches, structural control failures,
+    and spoofed non-statistical `insufficient_*` claims never advance this timer.
+    """
+    records = _query_cage_evidence_records("A.5.3", window_hours=window_hours)
+    latest_healthy_ts: datetime | None = None
+
+    for rec in records:
+        payload = _parse_evidence_payload(rec)
+        raw_event_type = str(
+            _get_record_field(rec, "event_type")
+            or _get_record_field(rec, "type")
+            or payload.get("event_type")
+            or payload.get("type")
+            or ""
+        ).strip()
+        if raw_event_type.lower() != "lula_audit":
+            continue
+        if not (
+            _is_passing_evidence_record(rec)
+            or _is_insufficient_evidence_only_lula_audit(rec, payload)
+        ):
+            continue
+        rec_ts = _parse_evidence_timestamp(rec)
+        if rec_ts is None:
+            continue
+        if latest_healthy_ts is None or rec_ts > latest_healthy_ts:
+            latest_healthy_ts = rec_ts
+
+    if latest_healthy_ts is None:
+        return (None, None)
+
+    now = datetime.now(tz=timezone.utc)
+    age_seconds = max(0.0, (now - latest_healthy_ts).total_seconds())
+    return (age_seconds, latest_healthy_ts.isoformat())
+
+
+def _read_primary_evidence_stream_records(
+    redis_url: str,
+    limit: int = 5000,
+) -> list[dict[str, Any]]:
+    """Read hot records from the primary `cage:evidence:stream` key on Redis DB 1."""
+    primary_stream = (
+        os.environ.get("EVIDENCE_STREAM_KEY", "cage:evidence:stream").strip()
+        or "cage:evidence:stream"
+    )
+    client = _build_evidence_sync_redis(redis_url)
+    records: list[dict[str, Any]] = []
+    try:
+        entries = client.xrevrange(primary_stream, "+", "-", count=limit)
+        for entry_id, fields in entries or []:
+            if not isinstance(fields, Mapping):
+                continue
+            rec = dict(fields)
+            rec.setdefault("stream_id", entry_id)
+            records.append(rec)
+    finally:
+        if hasattr(client, "close"):
+            try:
+                client.close()
+            except Exception as close_exc:
+                logger.debug(
+                    "[metrics] Ignoring Redis client close error: %s", close_exc
+                )
+    return records
+
+
+def _query_cm6_stream_records(
+    window_hours: int = 168,
+    limit: int = 5000,
+) -> list[dict[str, Any]]:
+    """Read custody-verified records from WORM cold store and `cage:evidence:stream` for CM-6."""
+    now = datetime.now(tz=timezone.utc)
+    window_start = now - timedelta(hours=window_hours)
+    enforcing = is_enforcing()
+
+    cold_store = _resolve_metrics_cold_store()
+    redis_url = (
+        os.environ.get("EVIDENCE_STREAM_REDIS_URL", "").strip()
+        or os.environ.get("REDIS_URL", "").strip()
+    )
+
+    if cold_store is None and not redis_url:
+        if enforcing:
+            raise RuntimeError(
+                "No authoritative custody-chain store is configured "
+                "(set EVIDENCE_COLD_STORE/EVIDENCE_ARCHIVE_BUCKET and/or "
+                "EVIDENCE_STREAM_REDIS_URL) under enforcing posture."
+            )
+        return []
+
+    raw_cache_key = _build_snapshot_cache_key(
+        "cm6",
+        window_hours,
+        enforcing=enforcing,
+        cold_store=cold_store,
+        redis_url=redis_url,
+        stream_keys=(
+            os.environ.get("EVIDENCE_STREAM_KEY", "cage:evidence:stream").strip(),
+        ),
+    )
+
+    with _raw_custody_lock:
+        cached_raw = _raw_custody_cache.get(raw_cache_key)
+        if cached_raw is not None:
+            return list(cached_raw)
+
+    flight_lock = _get_inflight_lock(raw_cache_key)
+    with flight_lock:
+        with _raw_custody_lock:
+            cached_raw = _raw_custody_cache.get(raw_cache_key)
+            if cached_raw is not None:
+                return list(cached_raw)
+
+        fetched_raw: list[dict[str, Any]] = []
+        if cold_store is not None:
+            try:
+                archived = _run_coro_sync(
+                    _read_cold_store_records_async(cold_store, window_start, now)
+                )
+                fetched_raw.extend(archived)
+            except Exception as exc:
+                if enforcing or isinstance(
+                    exc, (EvidenceCustodyIntegrityError, NonEvidentiaryAttestationError)
+                ):
+                    raise
+                logger.warning(
+                    "[metrics] Failed to read WORM custody archive for CM-6: %s", exc
+                )
+
+        if redis_url:
+            try:
+                hot_records = _read_primary_evidence_stream_records(
+                    redis_url=redis_url,
+                    limit=limit,
+                )
+                fetched_raw.extend(hot_records)
+            except Exception as exc:
+                if enforcing or isinstance(
+                    exc, (EvidenceCustodyIntegrityError, NonEvidentiaryAttestationError)
+                ):
+                    raise
+                logger.warning(
+                    "[metrics] Failed to read Redis DB 1 stream for CM-6: %s", exc
+                )
+
+        if fetched_raw:
+            with _raw_custody_lock:
+                _raw_custody_cache[raw_cache_key] = list(fetched_raw)
+        return fetched_raw
+
+
+def _extract_record_event_type(record: Mapping[str, Any]) -> str:
+    payload = _parse_evidence_payload(record)
+    return (
+        str(
+            _get_record_field(record, "event_type")
+            or _get_record_field(record, "type")
+            or payload.get("event_type")
+            or payload.get("type")
+            or ""
+        )
+        .strip()
+        .upper()
+    )
+
+
+def _extract_decision_thresholds_digest(record: Mapping[str, Any]) -> Any:
+    payload = _parse_evidence_payload(record)
+    val = payload.get("thresholds_digest")
+    if val is None:
+        val = _get_record_field(record, "thresholds_digest")
+    return val
+
+
+def evaluate_cm6_thresholds_records(
+    records: Sequence[Mapping[str, Any]],
+    active_region: str,
+) -> Cm6ThresholdsPosture:
+    """Evaluate NIST SP 800-53 CM-6 thresholds-digest posture over stream records."""
+    seen_keys: set[tuple[str, ...]] = set()
+    deduped: list[tuple[int, dict[str, Any]]] = []
+    for idx, rec in enumerate(records):
+        if not isinstance(rec, Mapping):
+            continue
+        rec_dict = dict(rec)
+        dedup_key = _record_dedup_key(rec_dict)
+        if dedup_key in seen_keys:
+            continue
+        seen_keys.add(dedup_key)
+        if _is_canary_evidence_record(rec_dict):
+            continue
+        deduped.append((idx, rec_dict))
+
+    load_candidates: list[tuple[int, dict[str, Any]]] = []
+    decision_candidates: list[tuple[int, dict[str, Any]]] = []
+    for pos, rec_dict in deduped:
+        ev_type = _extract_record_event_type(rec_dict)
+        if ev_type == "GOVERNANCE_THRESHOLDS_LOADED" and _record_matches_control(
+            rec_dict, "CM-6"
+        ):
+            load_candidates.append((pos, rec_dict))
+        elif ev_type == "GOVERNANCE_DECISION":
+            decision_candidates.append((pos, rec_dict))
+
+    if not load_candidates:
+        return Cm6ThresholdsPosture(
+            assessment_status="not_satisfied",
+            active_region=active_region,
+        )
+
+    def _load_order_key(item: tuple[int, dict[str, Any]]) -> tuple[float, int, int]:
+        pos, rec_dict = item
+        ts = _parse_evidence_timestamp(rec_dict)
+        ts_val = ts.timestamp() if ts is not None else -1.0
+        ok_seq, seq_val = _coerce_optional_int(rec_dict.get("sequence"))
+        eff_seq = seq_val if (ok_seq and seq_val is not None) else -1
+        return (ts_val, eff_seq, pos)
+
+    # When all candidates share one non-empty chain_id with valid sequences, sequence order wins.
+    chains = {
+        str(r.get("chain_id") or "").strip()
+        for _, r in load_candidates
+        if str(r.get("chain_id") or "").strip()
+    }
+    if len(chains) == 1 and all(
+        _coerce_optional_int(r.get("sequence"))[1] is not None
+        for _, r in load_candidates
+    ):
+        load_pos, latest_load = max(
+            load_candidates,
+            key=lambda it: (
+                int(_coerce_optional_int(it[1].get("sequence"))[1] or 0),
+                it[0],
+            ),
+        )
+    else:
+        load_pos, latest_load = max(load_candidates, key=_load_order_key)
+
+    payload = _parse_evidence_payload(latest_load)
+    raw_digest = payload.get("thresholds_digest")
+    if raw_digest is None:
+        raw_digest = _get_record_field(latest_load, "thresholds_digest")
+    digest_str = raw_digest.strip() if isinstance(raw_digest, str) else ""
+    digest_valid = bool(_OCSF_HEX64_RE.fullmatch(digest_str))
+
+    raw_region = payload.get("region")
+    if raw_region is None:
+        raw_region = _get_record_field(latest_load, "region")
+    region_str = raw_region.strip().upper() if isinstance(raw_region, str) else ""
+    region_valid = bool(region_str) and region_str == active_region.upper()
+
+    raw_schema = payload.get("schema_version")
+    if raw_schema is None:
+        raw_schema = _get_record_field(latest_load, "schema_version")
+    ok_schema, parsed_schema = _coerce_optional_int(raw_schema)
+    schema_version = (
+        parsed_schema
+        if (ok_schema and parsed_schema is not None and parsed_schema >= 1)
+        else 0
+    )
+    schema_valid = schema_version >= 1
+
+    raw_domains = payload.get("domain_sections")
+    if raw_domains is None:
+        raw_domains = _get_record_field(latest_load, "domain_sections")
+    domains_valid = (
+        isinstance(raw_domains, list)
+        and len(raw_domains) > 0
+        and all(isinstance(d, str) and bool(d.strip()) for d in raw_domains)
+    )
+    domain_sections = [d.strip() for d in raw_domains] if domains_valid else []
+
+    load_ts = _parse_evidence_timestamp(latest_load)
+    raw_ts = payload.get("timestamp_utc") or _get_record_field(
+        latest_load, "timestamp_utc"
+    )
+    loaded_at_utc = (
+        raw_ts.strip()
+        if isinstance(raw_ts, str) and raw_ts.strip()
+        else (load_ts.isoformat() if load_ts is not None else None)
+    )
+
+    load_chain = str(latest_load.get("chain_id") or "").strip()
+    _, load_seq = _coerce_optional_int(latest_load.get("sequence"))
+
+    decisions_checked = 0
+    digest_mismatches = 0
+    for dec_pos, dec_rec in decision_candidates:
+        dec_chain = str(dec_rec.get("chain_id") or "").strip()
+        _, dec_seq = _coerce_optional_int(dec_rec.get("sequence"))
+        dec_ts = _parse_evidence_timestamp(dec_rec)
+
+        if (
+            load_chain
+            and dec_chain
+            and dec_chain == load_chain
+            and load_seq is not None
+            and dec_seq is not None
+        ):
+            is_since = dec_seq > load_seq
+        elif (
+            not load_chain
+            and not dec_chain
+            and load_seq is not None
+            and dec_seq is not None
+        ):
+            is_since = dec_seq > load_seq
+        elif load_ts is not None and dec_ts is not None:
+            is_since = dec_ts >= load_ts
+        else:
+            is_since = dec_pos > load_pos
+
+        if not is_since:
+            continue
+
+        decisions_checked += 1
+        dec_digest = _extract_decision_thresholds_digest(dec_rec)
+        if (
+            not digest_valid
+            or not isinstance(dec_digest, str)
+            or dec_digest.strip() != digest_str
+        ):
+            digest_mismatches += 1
+
+    satisfied = (
+        digest_valid
+        and region_valid
+        and schema_valid
+        and domains_valid
+        and digest_mismatches == 0
+    )
+    return Cm6ThresholdsPosture(
+        control_id="CM-6",
+        assessment_status="satisfied" if satisfied else "not_satisfied",
+        thresholds_digest=digest_str if digest_valid else "",
+        region=region_str,
+        active_region=active_region,
+        schema_version=schema_version,
+        domain_sections=domain_sections,
+        decisions_checked=decisions_checked,
+        digest_mismatches=digest_mismatches,
+        loaded_at_utc=loaded_at_utc,
+    )
+
+
+def _fetch_cm6_thresholds_posture_sync(
+    window_hours: int = 168,
+) -> Cm6ThresholdsPosture:
+    active_region = resolve_deployment_region()
+    records = _query_cm6_stream_records(window_hours=window_hours)
+    return evaluate_cm6_thresholds_records(records, active_region=active_region)
+
+
+async def get_cm6_thresholds_posture(
+    window_hours: int = 168,
+) -> Cm6ThresholdsPosture:
+    """Return NIST SP 800-53 CM-6 thresholds-digest posture over the custody chain."""
+    async with _EVIDENCE_CONCURRENCY:
+        return await asyncio.to_thread(_fetch_cm6_thresholds_posture_sync, window_hours)

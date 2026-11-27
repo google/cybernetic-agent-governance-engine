@@ -162,7 +162,8 @@ resource "kubernetes_secret" "compliance_alerts" {
   }
 
   data = {
-    "webhook-url" = ""
+    "webhook-url"           = var.compliance_alert_webhook_url
+    "pagerduty-routing-key" = var.pagerduty_routing_key
   }
 }
 
@@ -173,7 +174,7 @@ resource "kubernetes_secret" "compliance_alert_channel" {
   }
 
   data = {
-    "channel" = "console"
+    "channel" = var.compliance_alert_channel
   }
 }
 

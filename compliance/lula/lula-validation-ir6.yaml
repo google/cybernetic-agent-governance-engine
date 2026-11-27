@@ -17,9 +17,11 @@
 #
 # Asserts that the compliance-bridge service is running and ready in the cluster.
 # The compliance-bridge (src/compliance_bridge/) handles incident notification
-# via audit_workflow.py and notifier.py — it is the primary incident reporting
-# mechanism for this system, sending alerts to Slack/PagerDuty on critical
-# compliance failures (ISO 42001 A.9.2, SC-4, AU-12 violations).
+# via audit_workflow.py, sla_monitor.py, and notifier.py — in CAGE's reference
+# architecture it publishes critical compliance alerts to GCP Cloud Pub/Sub
+# (PubSubNotifier, verified terminal sink; POAM-2026-230), with optional
+# Slack/Webhook/PagerDuty downstream fan-out, and refuses to start in enforcing
+# postures if ALERT_CHANNEL is unset or set to console/mock.
 #
 # Domain: kubernetes → compliance-bridge Deployment
 # Provider: opa (inline Rego)
@@ -36,15 +38,15 @@ component-definition:
   uuid: af8c8932-9540-5dda-8799-2696a2adf618
   metadata:
     title: CAGE Validation — IR6
-    last-modified: '2026-07-01T13:18:54Z'
-    version: 1.0.0
+    last-modified: '2026-11-22T21:45:00Z'
+    version: 1.0.1
     oscal-version: 1.1.2
     remarks: |-
       Auto-converted from standalone lula validation format.
       Region: US_FED. Posture: nist-sp800-53.
       Notes: NIST SP 800-53 Rev 5 IR-6: Incident Reporting. Namespace: governance-stack (confirmed from live cluster deployment snapshot). Automated verification that the compliance-bridge incident reporting service is live and operational. The compliance-bridge (src/compliance_bridge/) provides:
-        - Real-time Slack/PagerDuty alerting via notifier.py
-        - Compliance audit workflow with critical-failure alerting via audit_workflow.py
+        - Verified GCP Cloud Pub/Sub alert publishing (reference-architecture terminal sink) plus optional Slack/Webhook/PagerDuty fan-out via notifier.py, enforced fail-closed at pod startup in enforcing postures (POAM-2026-230)
+        - Compliance audit workflow with observed-delivery critical-failure alerting via audit_workflow.py
         - The /v1/metrics/* API endpoints consumed by other Lula validations
       IR-6 requires that security incidents be reported to appropriate organizational officials and external authorities within defined timeframes — the compliance-bridge is the automated first-responder for this requirement. See: compliance/continuous-monitoring/ISCM_STRATEGY.md — IR-6 monitoring cadence. See: docs/operations/JURISDICTION_INVENTORY.md — ISSO/ISSM incident response chain.
   components:

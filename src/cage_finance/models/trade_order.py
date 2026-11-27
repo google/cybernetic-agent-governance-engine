@@ -22,16 +22,7 @@ import uuid
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-#: A trade's idempotency key: a canonical UUID of version 4 (random) or 5
-#: (name-based, e.g. derived from a tool call).
-_TRANSACTION_ID_RE = re.compile(
-    r"^[0-9a-f]{8}-[0-9a-f]{4}-[45][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
-)
-
-
-def is_valid_transaction_id(value: object) -> bool:
-    """Whether ``value`` is an accepted transaction id (UUIDv4 or UUIDv5)."""
-    return isinstance(value, str) and bool(_TRANSACTION_ID_RE.fullmatch(value.lower()))
+from src.gateway.governance.execution_idempotency import is_valid_idempotency_key
 
 
 class TradeOrder(BaseModel):
@@ -66,9 +57,9 @@ class TradeOrder(BaseModel):
     )
 
     # System-generated fields with defaults
-    transaction_id: str = Field(
+    idempotency_key: str = Field(
         default_factory=lambda: str(uuid.uuid4()),
-        description="Unique UUID for the transaction",
+        description="Unique UUIDv4/UUIDv5 idempotency key for the trade",
     )
     # trader_id and trader_role are optional to allow unit test construction without
     # a full agent identity context. On the governed path the gateway binds both from
@@ -129,12 +120,12 @@ class TradeOrder(BaseModel):
 
         return self
 
-    @field_validator("transaction_id")
+    @field_validator("idempotency_key")
     @classmethod
     def validate_uuid(cls, v):  # type: ignore[no-untyped-def]
-        if not is_valid_transaction_id(v):
+        if not is_valid_idempotency_key(v):
             raise ValueError(
-                "Invalid transaction_id format. Must be a valid UUID v4 or v5."
+                "Invalid idempotency_key format. Must be a valid UUID v4 or v5."
             )
         return v
 

@@ -216,7 +216,7 @@ def canonical_trade_digest(source: Mapping[str, Any]) -> str:
     (:data:`TRADE_PARAM_KEYS`) plus the ``tool_name`` and ``action`` keys
     ``gateway_tool_guard`` adds, and its ``action``, if any, must be
     :data:`TRADE_ACTION`. Any other field (``limit_price``, ``account_id``,
-    ``transaction_id``, ...) could change the order without changing the
+    ``idempotency_key``, ...) could change the order without changing the
     digest, so a payload carrying one has no digest. So does a payload that
     still names ``trader_role`` or ``trader_id``.
 

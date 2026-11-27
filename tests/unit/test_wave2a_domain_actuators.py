@@ -61,7 +61,7 @@ from src.gateway.governance.seams.actuation import (
     ActuationOutcome,
     ExecutionClearance,
 )
-from tests.fixtures.trade_inputs import trade_governor
+from tests.fixtures.trade_inputs import sealed_governance, trade_governor
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
@@ -86,7 +86,7 @@ async def _make_trade_clearance(
         "currency": "USD",
         "side": "buy",
         "confidence": 0.99,
-        "transaction_id": txn_id,
+        "idempotency_key": txn_id,
     }
     minted_seal = (
         seal
@@ -152,7 +152,7 @@ class TestDA01BrokerWirePhaseAndSettlement:
             currency="USD",
             side="buy",
             confidence=0.99,
-            transaction_id=str(uuid.uuid4()),
+            idempotency_key=str(uuid.uuid4()),
         )
         seal = await generate_seal(
             "execute_trade", order.model_dump(exclude_none=True), record_hash="e" * 64
@@ -232,7 +232,7 @@ class TestDA01BrokerWirePhaseAndSettlement:
             currency="USD",
             side="buy",
             confidence=0.99,
-            transaction_id=str(uuid.uuid4()),
+            idempotency_key=str(uuid.uuid4()),
         )
         seal = await generate_seal(
             "execute_trade", order.model_dump(exclude_none=True), record_hash="e" * 64
@@ -296,7 +296,7 @@ class TestDA01BrokerWirePhaseAndSettlement:
         with (
             patch(
                 "src.cage_finance.tools.tool_provider.enforce_governance",
-                AsyncMock(return_value=seal),
+                AsyncMock(side_effect=sealed_governance(seal)),
             ),
             patch(
                 "src.gateway.governance.routing_seal.verify_and_consume_seal",
@@ -311,7 +311,7 @@ class TestDA01BrokerWirePhaseAndSettlement:
             with pytest.raises(asyncio.CancelledError):
                 await execute_trade_action(
                     governor=governor,
-                    transaction_id=txn_id,
+                    idempotency_key=txn_id,
                     symbol="AAPL",
                     amount=100.0,
                     currency="USD",
@@ -319,7 +319,7 @@ class TestDA01BrokerWirePhaseAndSettlement:
 
         # Reservation MUST be confirmed (executed=True), never released on mid-flight cancel!
         governor.settle.assert_awaited_once_with(seal, executed=True)
-        # Re-claiming the same transaction_id must return Duplicate(status=UNKNOWN)
+        # Re-claiming the same idempotency_key must return Duplicate(status=UNKNOWN)
         from src.gateway.governance.execution_idempotency import Duplicate
 
         dup = await ledger.claim("execute_trade", SHARED_CALLER, txn_id)

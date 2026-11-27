@@ -22,13 +22,15 @@ The committing run decides first and spends second
 * DEFER (only ``RELIANCE_INELIGIBLE`` findings) spends nothing.
 * DENY spends it, then refuses (unchanged behaviour).
 
-Queue level: ``DeferQueue.redeemable_approval`` checks without spending and
-``consume_approval`` spends exactly once, also under concurrency.
+Queue level: ``DeferQueue.redeemable_token`` checks without spending (token
+state only; takes no ``covers``) and ``consume_approval`` spends exactly
+once, only when its mandatory ``covers`` holds, also under concurrency.
 """
 
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -179,10 +181,13 @@ async def test_allow_spends_once_before_the_seal_is_minted() -> None:
         return "seal-ok"
 
     with patch(_MINT, side_effect=_mint):
-        seal = await governor.revalidate_post_hitl(
+        sealed = await governor.revalidate_post_hitl(
             _ACTION, dict(_TRADE), approval=granted_approval("PASS", counter=counter)
         )
-    assert seal == "seal-ok"
+    assert sealed.seal == "seal-ok"
+    assert sealed.params == _TRADE  # no server input is bound for this action
+    # Checked before any stage ran, then spent, on the evaluated params.
+    assert counter.covered == counter.params == [_TRADE]
     assert counter.results == [True]
     assert spent_at_mint == [True]  # spent before the seal existed
     assert barrier.commits == [_ACTION]
@@ -325,6 +330,9 @@ async def test_barrier_drift_spends_the_approval() -> None:
     mint.assert_not_called()
 
 
+@pytest.mark.covers(
+    "src.gateway.governance.governor.governor:SymbolicGovernor.revalidate_post_hitl#unrecognised approval snapshot"
+)
 async def test_unrecognised_snapshot_spends_and_refuses_before_running() -> None:
     source = StaticWarrantSource.eligible()
     governor, barrier = _governor(source)
@@ -356,7 +364,8 @@ async def test_concurrent_redemptions_of_one_approval_seal_once() -> None:
             ),
             return_exceptions=True,
         )
-    assert results.count("seal-ok") == 1, results
+    sealed = [r.seal for r in results if not isinstance(r, BaseException)]
+    assert sealed == ["seal-ok"], results
     refused = [r for r in results if isinstance(r, GovernanceError)]
     assert len(refused) == 4
     assert all("APPROVAL_NOT_REDEEMABLE" in str(r) for r in refused)
@@ -367,10 +376,15 @@ async def test_concurrent_redemptions_of_one_approval_seal_once() -> None:
 async def test_spend_that_raises_seals_nothing() -> None:
     governor, barrier = _governor(StaticWarrantSource.eligible())
 
-    async def _boom() -> bool:
+    async def _boom(_evaluated: Mapping[str, Any]) -> bool:
         raise ConnectionError("queue down")
 
-    approval = PostHitlApproval(approval_id="a", barrier_preview="PASS", spend=_boom)
+    approval = PostHitlApproval(
+        approval_id="a",
+        barrier_preview="PASS",
+        spend=_boom,
+        covers=lambda _evaluated: True,
+    )
     with patch(_MINT) as mint:
         with pytest.raises(ConnectionError):
             await governor.revalidate_post_hitl(
@@ -387,6 +401,7 @@ def test_revalidate_post_hitl_requires_an_approval() -> None:
     sig = inspect.signature(governor_module.SymbolicGovernor.revalidate_post_hitl)
     assert sig.parameters["approval"].default is inspect.Parameter.empty
     assert "approved_barrier_preview" not in sig.parameters
+    assert "rebind_inputs" not in sig.parameters  # inputs are always bound once
 
 
 # ── OPA's manual review is answered only by an approval given against it ────
@@ -407,14 +422,14 @@ async def test_approved_opa_manual_review_seals() -> None:
     )
     counter = SpendCounter()
     with patch(_MINT, return_value="seal-ok"):
-        seal = await governor.revalidate_post_hitl(
+        sealed = await governor.revalidate_post_hitl(
             _ACTION,
             dict(_TRADE),
             approval=granted_approval(
                 "PASS", counter=counter, approved_holds=frozenset({_OPA_HOLD})
             ),
         )
-    assert seal == "seal-ok"
+    assert sealed.seal == "seal-ok"
     assert counter.results == [True]
     assert barrier.commits == [_ACTION]
 
@@ -461,12 +476,16 @@ def _approval_record(who: str) -> ApprovalRecord:
     )
 
 
-async def _approved(queue: DeferQueue) -> str:
+async def _approved(queue: DeferQueue, snapshot: dict[str, Any] | None = None) -> str:
     token = DeferToken(
         thread_id="thread-spend",
         defer_reason=DeferReason.HITL_REQUIRED,
         ttl_seconds=300,
-        opa_input_snapshot={"action": _ACTION, "params": {"amount": 10.0}},
+        opa_input_snapshot=(
+            {"action": _ACTION, "params": {"amount": 10.0}}
+            if snapshot is None
+            else snapshot
+        ),
     )
     await queue.park(token)
     await queue.approve(token.defer_id, _approval_record("alice"))
@@ -482,12 +501,10 @@ def _covers(approved: dict[str, Any]) -> bool:
     return True
 
 
-async def test_redeemable_approval_checks_without_spending(queue: DeferQueue) -> None:
+async def test_redeemable_token_checks_without_spending(queue: DeferQueue) -> None:
     defer_id = await _approved(queue)
     for _ in range(3):
-        token = await queue.redeemable_approval(
-            defer_id, action=_ACTION, covers=_covers
-        )
+        token = await queue.redeemable_token(defer_id, action=_ACTION)
         assert token is not None and token.defer_id == defer_id
     assert await _status(queue, defer_id) == "RESOLVED"
 
@@ -501,10 +518,7 @@ async def test_consume_spends_once_then_nothing_is_redeemable(
     assert (
         await queue.consume_approval(defer_id, action=_ACTION, covers=_covers) is None
     )
-    assert (
-        await queue.redeemable_approval(defer_id, action=_ACTION, covers=_covers)
-        is None
-    )
+    assert await queue.redeemable_token(defer_id, action=_ACTION) is None
 
 
 async def test_concurrent_consumes_yield_one_token(queue: DeferQueue) -> None:
@@ -539,10 +553,7 @@ async def test_an_expired_approval_is_neither_redeemable_nor_spendable(
 ) -> None:
     defer_id = await _approved(queue)
     await queue._redis.expire(f"{_KEY_PREFIX}{defer_id}", 0)
-    assert (
-        await queue.redeemable_approval(defer_id, action=_ACTION, covers=_covers)
-        is None
-    )
+    assert await queue.redeemable_token(defer_id, action=_ACTION) is None
     assert (
         await queue.consume_approval(defer_id, action=_ACTION, covers=_covers) is None
     )
@@ -557,10 +568,68 @@ async def test_unapproved_token_is_not_redeemable(queue: DeferQueue) -> None:
     )
     await queue.park(token)
     await queue.approve(token.defer_id, _approval_record("alice"))  # 1 of 2
+    assert await queue.redeemable_token(token.defer_id, action=_ACTION) is None
+
+
+async def test_redeemable_token_checks_token_state_only(
+    queue: DeferQueue,
+) -> None:
+    """The gateway's pre-check uses ``redeemable_token``: token state alone decides.
+
+    Coverage stays with the committing run: ``redeemable_token`` accepts no
+    ``covers`` parameter (and ``redeemable_approval`` is removed), while
+    ``consume_approval`` keeps a mandatory ``covers`` and spends nothing unless
+    it holds for the approved params.
+    """
+    import inspect
+
+    assert not hasattr(DeferQueue, "redeemable_approval")
+    assert "covers" not in inspect.signature(DeferQueue.redeemable_token).parameters
+
+    defer_id = await _approved(queue)
+    token = await queue.redeemable_token(defer_id, action=_ACTION)
+    assert token is not None and token.defer_id == defer_id
+    assert await queue.redeemable_token(defer_id, action="other_action") is None
+
+    covers = inspect.signature(DeferQueue.consume_approval).parameters["covers"]
+    assert covers.default is inspect.Parameter.empty  # no state-only spend
+    seen: list[dict[str, Any]] = []
+
+    def _refuses(approved: dict[str, Any]) -> bool:
+        seen.append(dict(approved))
+        return False
+
     assert (
-        await queue.redeemable_approval(token.defer_id, action=_ACTION, covers=_covers)
-        is None
+        await queue.consume_approval(defer_id, action=_ACTION, covers=_refuses) is None
     )
+    assert seen == [{"amount": 10.0}]  # matched against the approved params
+    assert await _status(queue, defer_id) == "RESOLVED"  # nothing spent
+    assert await queue.consume_approval(defer_id, action=_ACTION, covers=_covers)
+    assert await _status(queue, defer_id) == "CONSUMED"
+    assert await queue.redeemable_token(defer_id, action=_ACTION) is None
+
+
+@pytest.mark.parametrize(
+    "snapshot",
+    [
+        {"action": _ACTION},
+        {"action": _ACTION, "params": None},
+        {"action": _ACTION, "params": [["amount", 10.0]]},
+    ],
+    ids=["missing", "none", "not_a_dict"],
+)
+async def test_an_approval_without_approved_params_is_never_redeemable(
+    queue: DeferQueue, snapshot: dict[str, Any]
+) -> None:
+    """With no dict of approved params there is nothing to cover: refused
+    even by the state-only check, and never spent."""
+    defer_id = await _approved(queue, snapshot)
+    assert await _status(queue, defer_id) == "RESOLVED"  # quorum reached
+    assert await queue.redeemable_token(defer_id, action=_ACTION) is None
+    assert (
+        await queue.consume_approval(defer_id, action=_ACTION, covers=_covers) is None
+    )
+    assert await _status(queue, defer_id) == "RESOLVED"
 
 
 # ── The plain committing run: a warrant failure is a DEFER, never a DENY ─────

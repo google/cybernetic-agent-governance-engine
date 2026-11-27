@@ -171,7 +171,7 @@ async def test_broker_actuator_success_path(monkeypatch):
         "amount": 100.0,
         "currency": "USD",
         "confidence": 0.99,
-        "transaction_id": str(uuid.uuid4()),
+        "idempotency_key": str(uuid.uuid4()),
         "trader_id": "agent_001",
         "trader_role": "junior",
         "side": "buy",  # Required by TradeOrder validation
@@ -181,7 +181,7 @@ async def test_broker_actuator_success_path(monkeypatch):
     )
 
     clearance = ExecutionClearance(
-        thread_id=trade_params["transaction_id"],
+        thread_id=trade_params["idempotency_key"],
         decision="ALLOW",
         decision_path="DIRECT",
         action="execute_trade",
@@ -189,7 +189,7 @@ async def test_broker_actuator_success_path(monkeypatch):
         operator_urn=trade_params["trader_id"],
         issued_at=int(time.time()),
         issued_at_provenance="CONSTRUCTION_TIME",
-        correlation_id=trade_params["transaction_id"],
+        correlation_id=trade_params["idempotency_key"],
         correlation_id_source="THREAD_DERIVED",
         governance_decision_digest=seal_digest(minted_seal),
         opa_input_digest=hashlib.sha256(
@@ -348,7 +348,7 @@ class TestBrokerActuatorV3SecurityGates:
             "amount": 100.0,
             "currency": "USD",
             "confidence": 0.99,
-            "transaction_id": str(uuid.uuid4()),
+            "idempotency_key": str(uuid.uuid4()),
             "trader_id": "agent_001",
             "trader_role": "junior",
             "side": "buy",
@@ -358,7 +358,7 @@ class TestBrokerActuatorV3SecurityGates:
         )
 
         clearance = ExecutionClearance(
-            thread_id=trade_params["transaction_id"],
+            thread_id=trade_params["idempotency_key"],
             decision="ALLOW",
             decision_path="DIRECT",
             action="execute_trade",
@@ -366,7 +366,7 @@ class TestBrokerActuatorV3SecurityGates:
             operator_urn=trade_params["trader_id"],
             issued_at=int(time.time()),
             issued_at_provenance="CONSTRUCTION_TIME",
-            correlation_id=trade_params["transaction_id"],
+            correlation_id=trade_params["idempotency_key"],
             correlation_id_source="THREAD_DERIVED",
             governance_decision_digest=seal_digest(minted_seal),
             opa_input_digest=hashlib.sha256(
@@ -407,7 +407,7 @@ class TestBrokerActuatorV3SecurityGates:
             "amount": 100.0,
             "currency": "USD",
             "confidence": 0.99,
-            "transaction_id": str(uuid.uuid4()),
+            "idempotency_key": str(uuid.uuid4()),
             "trader_id": "agent_001",
             "trader_role": "junior",
             "side": "buy",
@@ -417,7 +417,7 @@ class TestBrokerActuatorV3SecurityGates:
         )
 
         clearance = ExecutionClearance(
-            thread_id=trade_params["transaction_id"],
+            thread_id=trade_params["idempotency_key"],
             decision="ALLOW",
             decision_path="DIRECT",
             action="execute_trade",
@@ -425,7 +425,7 @@ class TestBrokerActuatorV3SecurityGates:
             operator_urn=trade_params["trader_id"],
             issued_at=int(time.time()),
             issued_at_provenance="CONSTRUCTION_TIME",
-            correlation_id=trade_params["transaction_id"],
+            correlation_id=trade_params["idempotency_key"],
             correlation_id_source="THREAD_DERIVED",
             governance_decision_digest=seal_digest(minted_seal),
             opa_input_digest=hashlib.sha256(

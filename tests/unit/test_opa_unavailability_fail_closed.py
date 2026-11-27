@@ -429,6 +429,10 @@ async def test_phase2_infra_failure_rolls_back_earlier_commit_and_blocks() -> No
     ] == ["GOVERNANCE_INFRASTRUCTURE_BLOCK"]
 
 
+@pytest.mark.covers(
+    "src.gateway.server.governance_middleware:validate_action_endpoint#_infrastructure_block_response(exc)",
+    "src.gateway.server.governance_middleware:_infrastructure_block_response",
+)
 def test_validate_action_endpoint_returns_typed_503_without_proof_hash_when_opa_down() -> (
     None
 ):
@@ -670,13 +674,18 @@ async def test_revalidate_post_hitl_preserves_approval_when_opa_unavailable() ->
     governor = make_governor(opa=opa, domain_tiers=[spy_barrier])
     sink = _MemoryEvidenceSink()
     spend_mock = AsyncMock(return_value=True)
+    covers_mock = MagicMock(return_value=True)
     approval = PostHitlApproval(
         approval_id="appr-233",
         barrier_preview="PASS",
         spend=spend_mock,
+        covers=covers_mock,
         thread_id="thread-233",
         approved_holds=frozenset({("governance", "OPA_MANUAL_REVIEW")}),
     )
+    # No server input binds anything for execute_trade here, so the evaluated
+    # params the approval is checked and spent against are the request.
+    evaluated = {"symbol": "AAPL", "quantity": 10, "confidence": 0.99}
 
     with (
         patch(
@@ -699,6 +708,8 @@ async def test_revalidate_post_hitl_preserves_approval_when_opa_unavailable() ->
         assert exc_info.value.dependency == "opa"
         assert exc_info.value.failure_code == "OPA_UNAVAILABLE"
         assert spend_mock.await_count == 0
+        # Coverage was checked (side-effect free) before any stage ran.
+        covers_mock.assert_called_once_with(evaluated)
         assert spy_barrier.commit_calls == 0
         assert not any(e.get("type") == "GOVERNANCE_REFUSAL" for e in sink.events)
         assert any(
@@ -709,17 +720,23 @@ async def test_revalidate_post_hitl_preserves_approval_when_opa_unavailable() ->
         opa._get_client = lambda: _make_mock_http_client(  # type: ignore[method-assign]
             status_code=200, json_body={"result": "ALLOW"}
         )
-        seal = await governor.revalidate_post_hitl(
+        governed = await governor.revalidate_post_hitl(
             "execute_trade",
             {"symbol": "AAPL", "quantity": 10, "confidence": 0.99},
             approval=approval,
         )
-        assert seal == "seal-233"
+        assert governed.seal == "seal-233"
+        assert governed.params == evaluated
         assert spend_mock.await_count == 1
+        # Spent exactly for the evaluated params the seal commits to.
+        spend_mock.assert_awaited_once_with(evaluated)
         assert spy_barrier.commit_calls == 1
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    "src.gateway.server.mcp_tool_server:execute_tool_endpoint#Governance infrastructure unavailable during /tools/execute"
+)
 async def test_mcp_execute_tool_returns_503_on_governance_infrastructure_error() -> (
     None
 ):

@@ -64,6 +64,7 @@ async def commit_state_endpoint(
     request: Request, body: StateCommitmentRequest
 ) -> dict[str, Any] | JSONResponse:
     """Sanitize, hash and retain ``body.snapshot``; return the receipt."""
+    from src.gateway.server.quarantine_guard import refuse_if_quarantined
     from src.gateway.server.rate_limit import get_shared_rate_limiter
 
     try:
@@ -87,8 +88,20 @@ async def commit_state_endpoint(
             },
         )
 
+    if q_resp := await refuse_if_quarantined(
+        request,
+        action_id="state_commitment",
+        surface="state_commitment_api",
+        body_params=body.linkage,
+        verified_agent_id=caller_identity,
+    ):
+        return q_resp
+
+    app_obj = request.scope.get("app")
     try:
-        service = state_commitment_service_of(request.app)
+        service = state_commitment_service_of(
+            app_obj if app_obj is not None else request.app
+        )
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 

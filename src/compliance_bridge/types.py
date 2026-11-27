@@ -59,15 +59,74 @@ its own TradingKnowledgeGraph.get_control_map(region) for short-form event mappi
 
 from __future__ import annotations
 
+import math
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 # ---------------------------------------------------------------------------
 # ComplianceMetrics — the JSON response shape returned by GET /v1/metrics/:control_id
 # This is the exact object that Lula's OPA Rego provider receives as `input`.
 # ---------------------------------------------------------------------------
+
+# Authoritative safety-rate thresholds per statistical trace-rate control.
+CONTROL_SAFETY_THRESHOLDS: dict[str, float] = {
+    "A.5.2": 0.99,
+    "A.5.3": 0.98,
+    "A.9.2": 1.0,
+}
+
+# Minimum tolerated failure count `k` before a rate control (`threshold < 1.0`)
+# can breach its threshold `tau`: `n >= ceil(k / (1 - tau))`. With `k = 3`
+# (matching the Poisson/binomial 95% Rule-of-Three bound `-ln(0.05) ~= 3.00`),
+# single- or two-event Poisson noise does not breach the threshold:
+#   - A.5.3 (tau = 0.98, 1 - tau = 0.02): ceil(3 / 0.02) = 150
+#     (1..3 failures -> >= 0.9800 satisfied; 4 failures -> 0.9733 breaches)
+#   - A.5.2 (tau = 0.99, 1 - tau = 0.01): ceil(3 / 0.01) = 300
+#     (1..3 failures -> >= 0.9900 satisfied; 4 failures -> 0.9867 breaches)
+# For zero-tolerance controls (`tau == 1.0`, e.g. A.9.2 PII scrub), any single
+# failure (`safety_rate < 1.0`) breaches immediately at `n = 1` as
+# `threshold_violation`; on the zero-failure `satisfied` side (`1 - tau == 0`),
+# Rule-of-Three at 95% one-sided confidence against a 1% unobserved defect rate
+# (`ZERO_TOLERANCE_RESIDUAL_RISK_BOUND = 0.01`) yields `ceil(3 / 0.01) = 300`.
+# Overridable explicitly via `COMPLIANCE_MIN_SAMPLE_SIZE`.
+MIN_TOLERATED_FAILURES_FOR_RATE_STABILITY: int = 3
+ZERO_TOLERANCE_RESIDUAL_RISK_BOUND: float = 0.01
+
+
+def derive_min_sample_size(
+    control_id: str,
+    *,
+    threshold: float | None = None,
+) -> int:
+    """Derive the minimum sample size for `control_id` from its safety threshold."""
+    resolved_threshold = (
+        threshold
+        if threshold is not None
+        else CONTROL_SAFETY_THRESHOLDS.get(control_id, 1.0)
+    )
+    defect_budget = round(1.0 - resolved_threshold, 9)
+    if defect_budget <= 0.0:
+        return math.ceil(
+            MIN_TOLERATED_FAILURES_FOR_RATE_STABILITY
+            / ZERO_TOLERANCE_RESIDUAL_RISK_BOUND
+        )
+    return math.ceil(MIN_TOLERATED_FAILURES_FOR_RATE_STABILITY / defect_budget)
+
+
+# Canonical event types produced by evaluating a control (meta-level assessment
+# output rather than object-level governed telemetry). Records of these types
+# emitted for control X are structurally excluded from X's input population so
+# a failing assessment can never feed back into the metric it validates
+# (POAM-2026-201 / POAM-2026-244).
+CONTROL_EVALUATION_EVENT_TYPES: frozenset[str] = frozenset(
+    {
+        "lula_audit",
+        "control_assessment",
+        "assessment_result",
+    }
+)
 
 
 class ComplianceMetrics(BaseModel):
@@ -77,6 +136,10 @@ class ComplianceMetrics(BaseModel):
     total_traces: int = Field(ge=0)
     blocked_traces: int = Field(ge=0)
     passed_traces: int = Field(ge=0)
+    infrastructure_blocks: int = Field(default=0, ge=0)
+    self_evaluation_records_excluded: int = Field(default=0, ge=0)
+    min_sample_size: int = Field(default=150, ge=1)
+    sample_sufficient: bool = Field(default=False)
     window_hours: float = Field(gt=0)
     last_event_utc: str  # ISO 8601 datetime string
     evidence_age_seconds: float = Field(ge=0)
@@ -88,6 +151,34 @@ class ComplianceMetrics(BaseModel):
     # when total_traces > 0; None otherwise.
     confabulation_rate: float | None = Field(default=None, ge=0.0, le=1.0)
     confabulation_blocked_traces: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def _derive_sample_sufficiency(self) -> ComplianceMetrics:
+        """Default `min_sample_size` from `control_id`'s threshold and compute `sample_sufficient`."""
+        if "min_sample_size" not in self.model_fields_set:
+            object.__setattr__(
+                self, "min_sample_size", derive_min_sample_size(self.control_id)
+            )
+        if "sample_sufficient" not in self.model_fields_set:
+            object.__setattr__(
+                self, "sample_sufficient", self.total_traces >= self.min_sample_size
+            )
+        return self
+
+
+class Cm6ThresholdsPosture(BaseModel):
+    """Read-only NIST SP 800-53 CM-6 thresholds-digest posture from `cage:evidence:stream`."""
+
+    control_id: str = "CM-6"
+    assessment_status: Literal["satisfied", "not_satisfied"]
+    thresholds_digest: str = ""
+    region: str = ""
+    active_region: str
+    schema_version: int = Field(default=0, ge=0)
+    domain_sections: list[str] = Field(default_factory=list)
+    decisions_checked: int = Field(default=0, ge=0)
+    digest_mismatches: int = Field(default=0, ge=0)
+    loaded_at_utc: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -102,15 +193,20 @@ OscalResult = Literal[
     "NOT_APPLICABLE",
     "ERROR",
 ]
-# Result semantics (per NIST SP 800-53A §3.2 assessment procedures & POAM-2026-215):
-#   PASS                  — evidence meets the assessment objective (OSCAL: satisfied)
+# Result semantics (per NIST SP 800-53A §3.2 assessment procedures & POAM-2026-215/244):
+#   PASS                  — evidence meets the assessment objective with sufficient
+#                           sample size (`total_traces >= min_sample_size`, OSCAL: satisfied)
 #   FAIL                  — evidence fails the assessment objective (OSCAL: not-satisfied)
-#   INSUFFICIENT_EVIDENCE — the control applies to this system, but zero governed traces
-#                           were observed in the look-back window (`total_traces == 0`,
-#                           `safety_rate is None`). Exported as OSCAL `not-satisfied` with
-#                           explicit `assessment_status=insufficient_traffic` remarks —
-#                           NEVER `not-applicable` (which falsely claims the control is
-#                           out of scope, POAM-2026-215) and NEVER `satisfied`.
+#   INSUFFICIENT_EVIDENCE — the control applies to this system, but either zero governed traces
+#                           were observed (`total_traces == 0`, `safety_rate is None`,
+#                           `assessment_status=insufficient_traffic`) or the observed trace
+#                           population is below `min_sample_size` (`0 < total_traces < min_sample_size`,
+#                           `assessment_status=insufficient_sample`, POAM-2026-244). Exported
+#                           as OSCAL `not-satisfied` — NEVER `not-applicable`, NEVER `satisfied`,
+#                           and NEVER resets the `lula_audit` dead-man's switch timer. Note:
+#                           zero-tolerance controls (`threshold == 1.0`, e.g. A.9.2 PII leak)
+#                           with any concrete violation (`safety_rate < 1.0`) emit `FAIL`
+#                           immediately regardless of sample size.
 #   NOT_APPLICABLE        — the control does not apply to this system component
 #                           (e.g. a wireless control on a wired-only system)
 #   ERROR                 — the control applies but the scanner/collector failed to
@@ -120,9 +216,9 @@ OscalResult = Literal[
 #                           security blind spot is visible.  (NIST SP 800-53A §3.2)
 
 # Statistical trace-rate Lula manifests whose `not-satisfied` verdict may carry
-# `lula.assessment_remark: assessment_status=insufficient_traffic` when
-# `total_traces == 0` outside startup grace. Structural/Kubernetes/config specs
-# are NEVER eligible for `insufficient_traffic` classification.
+# `lula.assessment_remark: assessment_status=insufficient_traffic` (`total_traces == 0`)
+# or `assessment_status=insufficient_sample` (`0 < total_traces < min_sample_size`).
+# Structural/Kubernetes/config specs are NEVER eligible for either classification.
 STATISTICAL_TRACE_LULA_SPECS: frozenset[str] = frozenset(
     {
         "lula-validation-a52",
@@ -619,16 +715,21 @@ from src.gateway.governance.iso_control import (
 )
 
 __all__ = [
+    "CONTROL_EVALUATION_EVENT_TYPES",
+    "CONTROL_SAFETY_THRESHOLDS",
     "CRITICAL_CONTROLS",
     "FRAMEWORK_CONTROLS",
+    "MIN_TOLERATED_FAILURES_FOR_RATE_STABILITY",
     "STATISTICAL_TRACE_LULA_SPECS",
     "SUPPORTED_CONTROLS",
     "SUPPORTED_FRAMEWORKS",
+    "ZERO_TOLERANCE_RESIDUAL_RISK_BOUND",
     "AssurancePosture",
     "AssuranceStatus",
     "ComplianceMetrics",
     "OscalFinding",
     "OscalResult",
+    "derive_min_sample_size",
     "get_control_meta",
     "get_iso_control_map",
     "get_sla_seconds",

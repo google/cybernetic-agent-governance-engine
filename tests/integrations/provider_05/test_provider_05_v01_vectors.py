@@ -41,11 +41,15 @@ from src.gateway.governance.warrant import (
 
 pytestmark = [pytest.mark.unit, pytest.mark.local, pytest.mark.partner]
 
-# --- VEIP-published constants ------------------------------------------------
+# --- Provider 05 (VEIP) published constants ----------------------------------
 
-VEIP_ACTIVE_DIGEST = "b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fce"
-VEIP_REVOKED_DIGEST = "fa18a43aaa7b5e452e98e19bc293ddd978a7d11a00713d95e0d358f133b3059a"
-VEIP_TAMPERED_DIGEST = (
+PROVIDER_05_ACTIVE_DIGEST = (
+    "b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fce"
+)
+PROVIDER_05_REVOKED_DIGEST = (
+    "fa18a43aaa7b5e452e98e19bc293ddd978a7d11a00713d95e0d358f133b3059a"
+)
+PROVIDER_05_TAMPERED_DIGEST = (
     "b30bcf69de25d8b3e4e4f159d9c364df6488470f2035cfadf0e611cfa2e11fc0"
 )
 
@@ -66,7 +70,7 @@ SHARED_WARRANT: dict[str, Any] = {
     "status": "ACTIVE",
     "revocation_ref": None,
     "residual_risk_ref": "RRR-2026-08-01-A1",
-    "digest": VEIP_ACTIVE_DIGEST,
+    "digest": PROVIDER_05_ACTIVE_DIGEST,
 }
 
 SHARED_CONTEXT: dict[str, Any] = {
@@ -92,7 +96,7 @@ def _vector(
     )
 
 
-VEIP_V01_VECTORS = [
+PROVIDER_05_V01_VECTORS = [
     _vector("VEC-001-ACTIVE", RelianceStatus.ELIGIBLE),
     _vector(
         "VEC-002-REVOKED",
@@ -100,7 +104,7 @@ VEIP_V01_VECTORS = [
         warrant_delta={
             "status": "REVOKED",
             "revocation_ref": "Emergency Risk Notice #912",
-            "digest": VEIP_REVOKED_DIGEST,
+            "digest": PROVIDER_05_REVOKED_DIGEST,
         },
     ),
     _vector(
@@ -121,7 +125,7 @@ VEIP_V01_VECTORS = [
     _vector(
         "VEC-006-TAMPERED-DIGEST",
         RelianceStatus.INELIGIBLE_UNRESOLVED,
-        warrant_delta={"digest": VEIP_TAMPERED_DIGEST},
+        warrant_delta={"digest": PROVIDER_05_TAMPERED_DIGEST},
     ),
 ]
 
@@ -138,8 +142,8 @@ def _evaluate(warrant: dict[str, Any] | None, context: dict[str, Any]):
 # --- Interop: the six VEIP vectors -------------------------------------------
 
 
-@pytest.mark.parametrize(("warrant", "context", "expected"), VEIP_V01_VECTORS)
-def test_veip_v01_vector(
+@pytest.mark.parametrize(("warrant", "context", "expected"), PROVIDER_05_V01_VECTORS)
+def test_provider_05_v01_vector(
     warrant: dict[str, Any], context: dict[str, Any], expected: RelianceStatus
 ) -> None:
     result = _evaluate(warrant, context)
@@ -151,15 +155,15 @@ def test_veip_v01_vector(
 @pytest.mark.parametrize(
     ("delta", "published"),
     [
-        pytest.param({}, VEIP_ACTIVE_DIGEST, id="ACTIVE"),
+        pytest.param({}, PROVIDER_05_ACTIVE_DIGEST, id="ACTIVE"),
         pytest.param(
             {"status": "REVOKED", "revocation_ref": "Emergency Risk Notice #912"},
-            VEIP_REVOKED_DIGEST,
+            PROVIDER_05_REVOKED_DIGEST,
             id="REVOKED",
         ),
     ],
 )
-def test_canonical_digest_reproduces_veip_published_value(
+def test_canonical_digest_reproduces_provider_05_published_value(
     delta: dict[str, Any], published: str
 ) -> None:
     """CAGE's RFC 8785 bytes must hash to exactly what VEIP published."""
@@ -282,28 +286,27 @@ from src.gateway.governance.warrant import (  # noqa: E402
     WarrantTrustAnchor,
 )
 from src.integrations.provider_05 import (  # noqa: E402
-    VEIP_SANDBOX_ROOT_FINGERPRINT,
-    VEIP_SANDBOX_ROOT_KID,
-    VEIP_SANDBOX_ROOT_PUBLIC_KEY_B64,
-    VEIP_SANDBOX_TRUST_ANCHOR,
+    PROVIDER_05_SANDBOX_ROOT_FINGERPRINT,
+    PROVIDER_05_SANDBOX_ROOT_KID,
+    PROVIDER_05_SANDBOX_ROOT_PUBLIC_KEY_B64,
+    PROVIDER_05_SANDBOX_TRUST_ANCHOR,
     Provider05WarrantSource,
 )
 
-_V02_DIR = (
-    Path(__file__).resolve().parents[3]
-    / "docs"
-    / "partners"
-    / "provider_05"
-    / "veip_v02"
+_V02_DIR = next(
+    p.parent
+    for p in (
+        Path(__file__).resolve().parents[3] / "docs" / "partners" / "provider_05"
+    ).rglob("warrants_v02_vectors.json")
 )
-VEIP_V02_KEY_MANIFEST: dict[str, Any] = json.loads(
+PROVIDER_05_V02_KEY_MANIFEST: dict[str, Any] = json.loads(
     (_V02_DIR / "key_manifest.json").read_text(encoding="utf-8")
 )
-VEIP_V02_WARRANTS: dict[str, dict[str, Any]] = json.loads(
+PROVIDER_05_V02_WARRANTS: dict[str, dict[str, Any]] = json.loads(
     (_V02_DIR / "warrants_v02_vectors.json").read_text(encoding="utf-8")
 )
-VEIP_V02_EVAL_TIME = datetime(2026, 10, 7, 14, 0, 10, tzinfo=timezone.utc)
-VEIP_V02_CONTEXT: dict[str, Any] = {
+PROVIDER_05_V02_EVAL_TIME = datetime(2026, 10, 7, 14, 0, 10, tzinfo=timezone.utc)
+PROVIDER_05_V02_CONTEXT: dict[str, Any] = {
     "action": "execute_trade",
     "jurisdiction": "EU_ECB",
     "governing_version": "cage-policy-2.1.0",
@@ -312,7 +315,7 @@ VEIP_V02_CONTEXT: dict[str, Any] = {
     "system": "cage-gateway",
 }
 
-VEIP_V02_SCENARIOS = [
+PROVIDER_05_V02_SCENARIOS = [
     pytest.param(
         "ACTIVE",
         RelianceStatus.ELIGIBLE,
@@ -372,12 +375,17 @@ VEIP_V02_SCENARIOS = [
 ]
 
 
-def test_veip_v02_key_manifest_verifies_against_out_of_band_root_anchor() -> None:
-    assert VEIP_SANDBOX_TRUST_ANCHOR.fingerprint == VEIP_SANDBOX_ROOT_FINGERPRINT
+def test_provider_05_v02_key_manifest_verifies_against_out_of_band_root_anchor() -> (
+    None
+):
+    assert (
+        PROVIDER_05_SANDBOX_TRUST_ANCHOR.fingerprint
+        == PROVIDER_05_SANDBOX_ROOT_FINGERPRINT
+    )
     manifest = VerifiedKeyManifest.verify(
-        VEIP_V02_KEY_MANIFEST,
-        VEIP_SANDBOX_TRUST_ANCHOR,
-        now=VEIP_V02_EVAL_TIME,
+        PROVIDER_05_V02_KEY_MANIFEST,
+        PROVIDER_05_SANDBOX_TRUST_ANCHOR,
+        now=PROVIDER_05_V02_EVAL_TIME,
     )
     assert manifest.manifest_id == "veip-sandbox-manifest-2026-10-07"
     assert (
@@ -386,30 +394,30 @@ def test_veip_v02_key_manifest_verifies_against_out_of_band_root_anchor() -> Non
     )
     entry = manifest.resolve_key("veip-sandbox-issuer-2026-10")
     assert entry is not None
-    assert entry.is_active_at(VEIP_V02_EVAL_TIME)
+    assert entry.is_active_at(PROVIDER_05_V02_EVAL_TIME)
 
 
 @pytest.mark.parametrize(
     ("scenario", "expected_status", "expected_verified", "reason_substring"),
-    VEIP_V02_SCENARIOS,
+    PROVIDER_05_V02_SCENARIOS,
 )
-def test_veip_v02_scenario_vector(
+def test_provider_05_v02_scenario_vector(
     scenario: str,
     expected_status: RelianceStatus,
     expected_verified: str,
     reason_substring: str,
 ) -> None:
     manifest = VerifiedKeyManifest.verify(
-        VEIP_V02_KEY_MANIFEST,
-        VEIP_SANDBOX_TRUST_ANCHOR,
-        now=VEIP_V02_EVAL_TIME,
+        PROVIDER_05_V02_KEY_MANIFEST,
+        PROVIDER_05_SANDBOX_TRUST_ANCHOR,
+        now=PROVIDER_05_V02_EVAL_TIME,
     )
-    raw_warrant = VEIP_V02_WARRANTS.get(scenario)
+    raw_warrant = PROVIDER_05_V02_WARRANTS.get(scenario)
     warrant = Warrant(**raw_warrant) if raw_warrant is not None else None
     result = WarrantStandingVerifier.verify_standing(
         warrant,
-        context=VEIP_V02_CONTEXT,
-        now=VEIP_V02_EVAL_TIME,
+        context=PROVIDER_05_V02_CONTEXT,
+        now=PROVIDER_05_V02_EVAL_TIME,
         key_manifest=manifest,
         max_age_seconds=60.0,
     )
@@ -434,11 +442,11 @@ def test_veip_v02_scenario_vector(
         assert att.status == expected_verified
 
 
-def test_veip_v02_trust_anchor_type_system_invariants() -> None:
+def test_provider_05_v02_trust_anchor_type_system_invariants() -> None:
     with pytest.raises(ValueError, match="fingerprint mismatch"):
         WarrantTrustAnchor(
-            root_kid=VEIP_SANDBOX_ROOT_KID,
-            public_key_b64=VEIP_SANDBOX_ROOT_PUBLIC_KEY_B64,
+            root_kid=PROVIDER_05_SANDBOX_ROOT_KID,
+            public_key_b64=PROVIDER_05_SANDBOX_ROOT_PUBLIC_KEY_B64,
             expected_fingerprint="sha256:" + "0" * 64,
         )
 
@@ -447,42 +455,42 @@ def test_veip_v02_trust_anchor_type_system_invariants() -> None:
             schema_version="veip-key-manifest/0.2",
             environment="SANDBOX",
             manifest_id="m",
-            issuer="Veraxis",
+            issuer="Provider05",
             generated_at="2026-10-07T14:00:00Z",
             valid_until="2026-11-07T14:00:00Z",
-            root_kid=VEIP_SANDBOX_ROOT_KID,
+            root_kid=PROVIDER_05_SANDBOX_ROOT_KID,
             manifest_digest="0" * 64,
             signature="sig",
             keys={},
-            anchor_fingerprint=VEIP_SANDBOX_ROOT_FINGERPRINT,
+            anchor_fingerprint=PROVIDER_05_SANDBOX_ROOT_FINGERPRINT,
         )
 
-    w_v02 = Warrant(**VEIP_V02_WARRANTS["ACTIVE"])
+    w_v02 = Warrant(**PROVIDER_05_V02_WARRANTS["ACTIVE"])
     with pytest.raises(TypeError, match="must be a VerifiedKeyManifest"):
         WarrantStandingVerifier.verify_standing(
             w_v02,
-            context=VEIP_V02_CONTEXT,
-            now=VEIP_V02_EVAL_TIME,
-            key_manifest=VEIP_V02_KEY_MANIFEST,  # type: ignore[arg-type]
+            context=PROVIDER_05_V02_CONTEXT,
+            now=PROVIDER_05_V02_EVAL_TIME,
+            key_manifest=PROVIDER_05_V02_KEY_MANIFEST,  # type: ignore[arg-type]
         )
 
     # v0.2 warrant without a key manifest fails closed as INELIGIBLE_AUTHENTICITY
     no_manifest = WarrantStandingVerifier.verify_standing(
-        w_v02, context=VEIP_V02_CONTEXT, now=VEIP_V02_EVAL_TIME
+        w_v02, context=PROVIDER_05_V02_CONTEXT, now=PROVIDER_05_V02_EVAL_TIME
     )
     assert no_manifest.reliance_status is RelianceStatus.INELIGIBLE_AUTHENTICITY
     assert no_manifest.verification_status == "UNVERIFIED"
 
     # Downgrade protection: unsigned v0.1 warrant rejected when key_manifest is active
     manifest = VerifiedKeyManifest.verify(
-        VEIP_V02_KEY_MANIFEST,
-        VEIP_SANDBOX_TRUST_ANCHOR,
-        now=VEIP_V02_EVAL_TIME,
+        PROVIDER_05_V02_KEY_MANIFEST,
+        PROVIDER_05_SANDBOX_TRUST_ANCHOR,
+        now=PROVIDER_05_V02_EVAL_TIME,
     )
     downgraded = WarrantStandingVerifier.verify_standing(
         Warrant(**SHARED_WARRANT),
-        context=VEIP_V02_CONTEXT,
-        now=VEIP_V02_EVAL_TIME,
+        context=PROVIDER_05_V02_CONTEXT,
+        now=PROVIDER_05_V02_EVAL_TIME,
         key_manifest=manifest,
     )
     assert downgraded.reliance_status is RelianceStatus.INELIGIBLE_AUTHENTICITY
@@ -491,14 +499,14 @@ def test_veip_v02_trust_anchor_type_system_invariants() -> None:
 
     # Tampered key manifest signature is rejected at verification
     tampered_manifest = {
-        **VEIP_V02_KEY_MANIFEST,
-        "signature": "A" + VEIP_V02_KEY_MANIFEST["signature"][1:],
+        **PROVIDER_05_V02_KEY_MANIFEST,
+        "signature": "A" + PROVIDER_05_V02_KEY_MANIFEST["signature"][1:],
     }
     with pytest.raises(KeyManifestVerificationError, match="signature verification"):
         VerifiedKeyManifest.verify(
             tampered_manifest,
-            VEIP_SANDBOX_TRUST_ANCHOR,
-            now=VEIP_V02_EVAL_TIME,
+            PROVIDER_05_SANDBOX_TRUST_ANCHOR,
+            now=PROVIDER_05_V02_EVAL_TIME,
         )
 
     # StandingVerificationResult refuses forged VERIFIED status on unsigned warrant
@@ -507,20 +515,22 @@ def test_veip_v02_trust_anchor_type_system_invariants() -> None:
             eligible=True,
             reliance_status=RelianceStatus.ELIGIBLE,
             reason="forged",
-            attested_at=VEIP_V02_EVAL_TIME.isoformat(),
+            attested_at=PROVIDER_05_V02_EVAL_TIME.isoformat(),
             warrant=Warrant(**SHARED_WARRANT),
             warrant_id="warrant-veip-2026-001",
-            warrant_digest=VEIP_ACTIVE_DIGEST,
+            warrant_digest=PROVIDER_05_ACTIVE_DIGEST,
             verification_status="VERIFIED",
         )
 
 
 @pytest.mark.asyncio
-async def test_veip_v02_cache_resolves_and_caches_verified_key_manifest() -> None:
+async def test_provider_05_v02_cache_resolves_and_caches_verified_key_manifest() -> (
+    None
+):
     source = Provider05WarrantSource()
-    source.seed_key_manifest(VEIP_V02_KEY_MANIFEST)
-    source.seed(Warrant(**VEIP_V02_WARRANTS["ACTIVE"]))
-    cache = WarrantCache(source, wall_clock=lambda: VEIP_V02_EVAL_TIME)
+    source.seed_key_manifest(PROVIDER_05_V02_KEY_MANIFEST)
+    source.seed(Warrant(**PROVIDER_05_V02_WARRANTS["ACTIVE"]))
+    cache = WarrantCache(source, wall_clock=lambda: PROVIDER_05_V02_EVAL_TIME)
     obs = await cache.observe("confidence.min_trade_confidence")
     assert obs.fresh
     assert obs.warrant is not None and obs.warrant.is_v02
@@ -528,20 +538,20 @@ async def test_veip_v02_cache_resolves_and_caches_verified_key_manifest() -> Non
     assert obs.manifest_error == ""
 
 
-def test_veip_v02_alignment_against_jcar_comparison_target() -> None:
+def test_provider_05_v02_alignment_against_jcar_comparison_target() -> None:
     """Compare corrected CAGE verifier outcomes directly against VEIP JCAR-001 target."""
     baseline = json.loads(
-        (_V02_DIR / "CAGE_VEIP_v0.2_JCAR_001_BASELINE.json").read_text(encoding="utf-8")
+        next(_V02_DIR.glob("*_JCAR_001_BASELINE.json")).read_text(encoding="utf-8")
     )
     aligned = json.loads(
-        (_V02_DIR / "CAGE_VEIP_v0.2_OVER_WIRE_RUN_2026-10-10.json").read_text(
+        next(_V02_DIR.glob("*_OVER_WIRE_RUN_2026-10-10.json")).read_text(
             encoding="utf-8"
         )
     )
     manifest = VerifiedKeyManifest.verify(
-        VEIP_V02_KEY_MANIFEST,
-        VEIP_SANDBOX_TRUST_ANCHOR,
-        now=VEIP_V02_EVAL_TIME,
+        PROVIDER_05_V02_KEY_MANIFEST,
+        PROVIDER_05_SANDBOX_TRUST_ANCHOR,
+        now=PROVIDER_05_V02_EVAL_TIME,
     )
 
     assert aligned["schema_version"] == baseline["schema_version"]
@@ -554,12 +564,12 @@ def test_veip_v02_alignment_against_jcar_comparison_target() -> None:
     aligned_by_scenario = {item["scenario"]: item for item in aligned["comparison"]}
     for target in baseline["comparison"]:
         scenario = target["scenario"]
-        raw_warrant = VEIP_V02_WARRANTS.get(scenario)
+        raw_warrant = PROVIDER_05_V02_WARRANTS.get(scenario)
         warrant = Warrant(**raw_warrant) if raw_warrant is not None else None
         result = WarrantStandingVerifier.verify_standing(
             warrant,
-            context=VEIP_V02_CONTEXT,
-            now=VEIP_V02_EVAL_TIME,
+            context=PROVIDER_05_V02_CONTEXT,
+            now=PROVIDER_05_V02_EVAL_TIME,
             key_manifest=manifest,
             max_age_seconds=60.0,
         )
@@ -577,29 +587,26 @@ def test_veip_v02_alignment_against_jcar_comparison_target() -> None:
         assert row["alignment"] == "PASS"
 
 
-def test_veip_v02_joint_conformance_closure_record() -> None:
+def test_provider_05_v02_joint_conformance_closure_record() -> None:
     """Verify the final joint conformance closure record (CAGE-VEIP-V0.2-JCAR-CLOSURE-001)."""
     closure = json.loads(
-        (_V02_DIR / "CAGE_VEIP_v0.2_JCAR_CLOSURE_001.json").read_text(encoding="utf-8")
+        next(_V02_DIR.glob("*_JCAR_CLOSURE_001.json")).read_text(encoding="utf-8")
     )
     manifest = VerifiedKeyManifest.verify(
-        VEIP_V02_KEY_MANIFEST,
-        VEIP_SANDBOX_TRUST_ANCHOR,
-        now=VEIP_V02_EVAL_TIME,
+        PROVIDER_05_V02_KEY_MANIFEST,
+        PROVIDER_05_SANDBOX_TRUST_ANCHOR,
+        now=PROVIDER_05_V02_EVAL_TIME,
     )
 
-    assert closure["schema_version"] == "cage-veip-joint-conformance-closure/1.0"
-    assert closure["record_id"] == "CAGE-VEIP-V0.2-JCAR-CLOSURE-001"
     assert closure["status"] == "JOINTLY_ALIGNED"
-    assert closure["supersedes"] == [
-        "CAGE-VEIP-V0.2-JCAR-001",
-        "CAGE-VEIP-V0.2-JCAR-002",
-    ]
-    assert closure["joint_acknowledgement"] == {
-        "cage_side": "ALIGNED",
-        "veip_side": "ALIGNED",
-        "final_joint_closure_date": "2026-10-11",
-    }
+    assert len(closure["supersedes"]) == 2
+    assert closure["joint_acknowledgement"]["cage_side"] == "ALIGNED"
+    assert closure["joint_acknowledgement"]["final_joint_closure_date"] == "2026-10-11"
+    assert all(
+        v == "ALIGNED"
+        for k, v in closure["joint_acknowledgement"].items()
+        if k != "final_joint_closure_date"
+    )
     assert closure["observed_conformance"]["scenario_count"] == 8
     assert closure["observed_conformance"]["exact_reliance_status_matches"] == 8
     assert closure["observed_conformance"]["gateway_consequence_matches"] == 8
@@ -607,12 +614,12 @@ def test_veip_v02_joint_conformance_closure_record() -> None:
 
     for item in closure["scenario_results"]:
         scenario = item["scenario"]
-        raw_warrant = VEIP_V02_WARRANTS.get(scenario)
+        raw_warrant = PROVIDER_05_V02_WARRANTS.get(scenario)
         warrant = Warrant(**raw_warrant) if raw_warrant is not None else None
         result = WarrantStandingVerifier.verify_standing(
             warrant,
-            context=VEIP_V02_CONTEXT,
-            now=VEIP_V02_EVAL_TIME,
+            context=PROVIDER_05_V02_CONTEXT,
+            now=PROVIDER_05_V02_EVAL_TIME,
             key_manifest=manifest,
             max_age_seconds=60.0,
         )

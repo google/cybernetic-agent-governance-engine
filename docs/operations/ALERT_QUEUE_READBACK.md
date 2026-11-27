@@ -1,0 +1,90 @@
+# Alert Queue Read-Back: Silent Channel Binding, Adopter Defects, and Independent Failure Surfacing (`POAM-2026-230`)
+
+**Status:** Closed on observed two-envelope delivery and independent keyless-WIF verification (`2026-11-23`, `#859` `fc0152a8` through `#864` `7f75bcca`).
+**POA&M records:** [`POAM-2026-230`](../POAM.md) (closed `2026-11-23`), [`POAM-2026-231`](../POAM.md) (Finding 4 live corroboration), [`POAM-2026-201`](../POAM.md) / [`POAM-2026-243`](../POAM.md) / [`POAM-2026-244`](../POAM.md) (closed `2026-11-22`).
+**Runbook & breaking-change entries:** [Incident Blast Radius (`GKE_TEST_RUNBOOK.md`)](GKE_TEST_RUNBOOK.md), `AL-01` in [`BREAKING_CHANGES.md`](../BREAKING_CHANGES.md).
+**Enforcement & verification artifacts:** [`alert_routing.tf`](../../infra/targets/gcp-gke/alert_routing.tf), [`lula_alerting.tf`](../../infra/targets/gcp-gke/lula_alerting.tf), [`metrics_alerting.tf`](../../infra/targets/gcp-gke/metrics_alerting.tf), [`notifier.py`](../../src/compliance_bridge/notifier.py), [`sla_monitor.py`](../../src/compliance_bridge/sla_monitor.py), [`verify_alert_delivery.py`](../../scripts/verify_alert_delivery.py), [`alert-delivery-check.yml`](../../.github/workflows/alert-delivery-check.yml).
+
+---
+
+## 1. Why This Resolution Shape Is Recorded
+
+`POAM-2026-230` opened on `2026-11-16` with a straightforward diagnosis: all eight Cloud Monitoring `google_monitoring_alert_policy` resources defaulted to `notification_channels = []`, and `compliance-bridge` pinned `alert_channel = "console"`. Every alarm evaluated and wrote to nobody.
+
+What made the resolution unusual is what happened between diagnosis and remediation:
+
+1. On `2026-11-18`, a GCP Cloud Pub/Sub channel (`cage-staging-alerts-pubsub` -> `topics/cage-staging-alerts` -> `subscriptions/cage-staging-alerts-verify`) was staged in local `.tfvars` (modeled in [`terraform.auto.tfvars.example`](../../infra/targets/gcp-gke/terraform.auto.tfvars.example)) ahead of remediation.
+2. On `2026-11-19T16:07:46Z`, an unrelated routine `terraform apply` (`2c2cae96`) bound that channel onto all eight Cloud Monitoring policies silently — while `compliance-bridge` remained on `console` and nobody read `subscriptions/cage-staging-alerts-verify`.
+3. For three days (`2026-11-19T16:07:46Z` to `2026-11-22T20:48:54Z`), the live cluster accumulated **35 unread operational notifications** across real pod rotations, six rolling deployments, a 56-hour Lula dead-man window, and a live mutating-trade replay-defense wedge (`POAM-2026-238`).
+
+Had `POAM-2026-230` been closed by adding plan-time preconditions and firing a synthetic probe against a freshly created or purged subscription, **three empirical findings sitting inside those 35 unread messages would have been lost**:
+
+- **Finding A (Orphaned per-pod incidents):** Three `open` notifications for `google_monitoring_alert_policy.gateway_canary_pod_health` (`0.of38d4i5w2a3`, `0.of3en2j2q9g4`, `0.of5hdsgn60pd`) from pod rotations on `2026-11-16` and `2026-11-18` were retroactively emitted the second the channel bound at `16:07:46Z`, with `0` matching `closed` events. Deleting a pod stops its per-pod `uptime`/`restart_count` series; without `cross_series_reducer` (`REDUCE_MAX` / `REDUCE_SUM`) and `alert_strategy.auto_close`, Cloud Monitoring holds the per-pod incident open for GCP's 7-day default.
+- **Finding B (Single-replica rolling-deploy fatigue):** `24` of the `35` messages (`69%`, `12` `open`/`closed` pairs across `6` consecutive rolling deploys) came from `google_monitoring_alert_policy.prometheus_metrics_scrape_liveness` (`AU-12` Managed Prometheus operational telemetry scrape). Its `[5m]` `absent_over_time` lookback and `300s` duration were shorter than normal `6-7m` single-replica pod turnover on GKE, paging twice on every routine deployment.
+- **Independent live causality proof for `POAM-2026-231` Finding 4 (`67` seconds):** The channel bound at `2026-11-19T16:07:46Z` — **67 seconds before** `POAM-2026-238`'s `16:08:53Z`-`16:09:00Z` mutating-path outage (`100%` of `execute_trade` calls refused `403`). Across all `35` messages, `google_monitoring_alert_policy.gateway_sustained_refusal_ratio` emitted **`0` notifications**, proving on live delivery records (rather than metric arithmetic alone) that read-only canary probes masked a complete mutating-path wedge in front of an active, wired alarm.
+
+---
+
+## 2. Complete Accounting of the 35 Queued Messages (`2026-11-19` to `2026-11-22`)
+
+All `35` messages were pulled non-destructively (`modifyAckDeadline=0`, `0` acked) from `projects/<PROJECT_ID>/subscriptions/cage-staging-alerts-verify` on `2026-11-22` before any `#859` infrastructure change ran:
+
+| Policy (`displayName` suffix) | Messages | Shape | Root Cause / Observation |
+|---|---:|---|---|
+| `Gateway Synthetic Canary Pod Restart / Eviction` (`gateway_canary_pod_health`) | `3` | `3` `open`, `0` `closed` | Retroactive emission at `2026-11-19T16:07:46Z` for rotated pods from `11-16` (`0.of38d4i5w2a3`, `0.of3en2j2q9g4`) and `11-18` (`0.of5hdsgn60pd`); stranded open by unreduced per-pod series (**Finding A**). |
+| `Lula Compliance Audit Failure / Dead-Man Switch` (`lula_audit_failure`) | `8` | `4` `open`/`closed` pairs | `0.of5jthe3dt8x` (`11-18T06:04Z` -> `11-19T16:18Z`), `0.of7e718tw26p` (`11-19T18:06Z` -> `11-22T02:29Z`, `56h 23m`), `0.of8tijbwfndt` (`11-20T19:09Z` -> `19:14Z`), and `0.ofaymevipwsd` (`11-22T02:36Z` -> `13:59Z`, `11h 23m` `POAM-2026-201` / `POAM-2026-244` loop). `0` incidents at `11-22T18:00Z` (`job.batch/lula-audit-29922840`) or `11-23T00:00Z` (`job.batch/lula-audit-29923200`). |
+| `GMP Metrics Scrape & Series Arrival Down / Absent (AU-12)` (`prometheus_metrics_scrape_liveness`) | `24` | `12` `open`/`closed` pairs | `2` pairs per rolling deploy across `2c2cae96`, `9c588192`, `d05c7b95`, `da4d82a5`, `905893b5`, and `ddbbdc81` (`20:35:20Z` -> `20:48:54Z`) due to `[5m]`/`300s` window vs. `6-7m` single-replica pod replacement (**Finding B**, operational telemetry scrape). |
+| Remaining `5` policies (`lula_audit_pod_restart`, `gateway_sustained_refusal_ratio`, `gateway_zero_permitted_requests`, `gateway_canary_probe_absent`, `gateway_evidence_append_reconciliation`) | `0` | — | `0` notifications across the 3-day window, including across `POAM-2026-238`'s `16:08:53Z`-`16:09:00Z` `execute_trade` wedge 67 seconds after channel binding (`POAM-2026-231` Finding 4). |
+
+---
+
+## 3. End-to-End Resolution Timeline (`UTC`, `2026-11-22` to `2026-11-23`)
+
+| UTC Timestamp | Event | Observed Evidence |
+|---|---|---|
+| `2026-11-22 22:36` | `#859` (`fc0152a8`) squash-merged to `main` | Enforces `var.alert_notification_channels` (`local.resolved_alert_notification_channels` + `data.google_monitoring_notification_channel.bound` preconditions across `9/9` policies), `PubSubNotifier` + `validate_notifier_config()` (`NotifierConfigError`), retry-until-acked `_maybe_emit_notifier_heartbeat()`, Finding A (`REDUCE_SUM`/`REDUCE_MAX` + `1800s` `auto_close`), and Finding B (`max by (job, namespace) (up == 0)` + `[10m]`/`600s`). |
+| `2026-11-22 23:16:27` -> `23:18:31` | **Finding A & B demonstrated live** during `fc0152a8` rollout | `gateway_canary_pod_health` incident `0.ofbqxms0ka30` opens during canary turnover at `23:16:27Z` and **auto-closes in `124s`** at `23:18:31Z` (vs. 7-day orphaned hold). `prometheus_metrics_scrape_liveness` emits **`0` alerts** during the rolling deploy (vs. `24` across the `6` prior deploys). |
+| `2026-11-22 23:18:34` | **Application path (`Property 1b` & `3`) live** on `compliance-bridge` | `compliance-bridge@sha256:2a70ecf9...` (`GET /health` -> `"alert_channel_configured": true`) publishes `audit_id=notifier-heartbeat-17c02283699c` (`message_id=23431802309079337`) via `PubSubNotifier` on its first startup tick. |
+| `2026-11-22 23:28:41` | Local two-envelope verification passes | `verify_runtime_alert_policies()` (`policy_count=9`) + `inspect_subscription_batch()` observe both Cloud Monitoring incident `0.ofbr7ked883k` and `notifier-heartbeat-17c02283699c` (`periodic_bridge_heartbeat_age_seconds=610.19`) at `subscriptions/cage-staging-alerts-verify`. |
+| `2026-11-22 23:49` | `#860` (`e382278c`) merged + `v4.1.0` release body updated | Adds `google_monitoring_metric_descriptor.alert_heartbeat_probe` (clean-project single-pass `terraform apply` without `404 Cannot find metric(s)`) and encrypted GitHub Actions Secrets support. |
+| `2026-11-23 00:00:38` | Scheduled `job.batch/lula-audit-29923200` (`#858` `ddbbdc81`) | `cage_lula_audit_last_healthy_run_timestamp_seconds` advances to `1.795392038688168e+09`, `cage_lula_audit_last_pass_timestamp_seconds` stays `0.0`, `cage_lula_audit_deadman_breaches_total` stays `0.0`. |
+| `2026-11-23 00:05:37` -> `00:09:45` | **`Property 4` proven by live failure (`run 45086730009`)** | Keyless OIDC WIF (`google_service_account.alert_verifier`) authenticates on GitHub Actions, trips `0.ofc950vlgew1`, and **surfaces `FAIL` independently of the alert pipeline** when a single `pull(maxMessages=50)` returns only a ~25-message shard behind the `37` preserved operational messages. |
+| `2026-11-23 00:36` & `01:16` | `#861` (`6f63b58a`) & `#862` (`5fa41805`) merged + applied (`0` drift) | `#861` drains up to `10` batches under 45s temporary leases before releasing all `nack_ids` (`ackDeadlineSeconds=0`) in `finally`; `#862` isolates each run via `group_by_fields = ["metric.label.probe_id"]` in `write_heartbeat_metric()` (eliminating single-series `ALIGN_MAX` `1800s` cooldown latching) and completes the 21-file Criterion 5 citation sweep. |
+| `2026-11-23 01:20` & `01:25` | **Back-to-back green keyless-WIF runs (`45093811570` & `45094311801`)** | Dispatched 5 minutes apart on `main` (`5fa41805`): both exit `0` (`"status": "PASS"`, `policy_count=9`, `monitoring_incident_id="0.ofcas2dn1itq"` and `"0.ofcawbsajse8"`, `periodic_bridge_heartbeat_age_seconds=7366.39` and `7716.42`, `operational_messages_preserved=37`). |
+| `2026-11-23 01:57` & `02:15` | `#863` (`6f9313ab`) & `#864` (`7f75bcca`) merged | `POAM-2026-230` closed in [`POAM.md`](../POAM.md) and synced in `CHANGELOG.md` + `v4.1.0` release notes. |
+
+---
+
+## 4. Reusable Engineering Invariants
+
+1. **Read unread sinks non-destructively before remediating or purging.** An unconsumed queue in front of a newly bound or half-wired sink is an empirical log of how existing policies behave across real deployments, pod rotations, and incidents. Pull with `ackDeadlineSeconds=0` restoration (or temporary lease draining as in `inspect_subscription_batch()` in [`verify_alert_delivery.py`](../../scripts/verify_alert_delivery.py)) before altering thresholds or clearing backlog.
+2. **Prove two-envelope delivery and retry-until-acked state advancement.** A Cloud Monitoring incident proves only the infrastructure policy path; IAM propagation lag on `roles/pubsub.publisher` can still blackhole application alerts silently. Requiring both envelopes at the terminal subscription — and keeping `last_hb_monotonic = None` in `_maybe_emit_notifier_heartbeat()` ([`sla_monitor.py`](../../src/compliance_bridge/sla_monitor.py)) until `PubSubNotifier` receives a non-empty `messageIds` acknowledgement — prevents recording delivery that did not occur.
+3. **Isolate synthetic probe time series when `ALIGN_MAX` meets `auto_close`.** Writing `1` then `0` within the same 60-second `ALIGN_MAX` alignment bucket evaluates to `MAX(1, 0) = 1` followed by silence, latching an ungrouped incident open until `auto_close` (`1800s`) and suppressing subsequent runs. Declaring `google_monitoring_metric_descriptor.alert_heartbeat_probe` with explicit `probe_id` / `probe_source` labels and grouping `google_monitoring_alert_policy.alert_pipeline_heartbeat` by `metric.label.probe_id` makes consecutive runs independent while preserving zero Terraform drift.
+4. **Verify failure surfacing on the independent channel, not just happy-path passes.** Property 4 (`alert-delivery-check.yml` failing on GitHub Actions without relying on Cloud Monitoring or `PubSubNotifier`) was demonstrated empirically by `run 45086730009` failing loudly on Pub/Sub shard starvation before `run 45093811570` and `run 45094311801` passed.
+5. **Audit documentation against clean checkouts, not developer working trees.** Citing a gitignored path (such as a local `.tfvars` file) passes Gate G9 locally because the file exists on the maintainer's disk and fails in CI and adopter clones where it does not — always link the tracked template ([`terraform.auto.tfvars.example`](../../infra/targets/gcp-gke/terraform.auto.tfvars.example)).
+6. **Never poll a parent resource as a proxy for child-resource activity.** Whenever an API or CLI summarizes a parent object (`AlertPolicy.enabled`, `security-advisories.updated_at`, `gh pr list` `CREATED AT` / sticky `reviewDecision`, `CronJob` `LAST SCHEDULE`, or PR check rollups), read the child collection directly (`/comments`, `?state=triage`, `/pulls/{n}/commits`, `/actions/runs?status=action_required`, `subscriptions:pull`, `job.batch/*`).
+
+---
+
+## 5. Second Realisation (`2026-11-23`): Parent Surfaces Masking Child Activity Across GitHub Triage
+
+Within hours of recording the `POAM-2026-230` Pub/Sub read-back above, the identical structural failure mode — **polling a parent summary that does not advance on child activity** — recurred across three repository triage queues on `2026-11-23`:
+
+| Parent Surface Polled | What the Parent Reported | Hidden Child Queue / Filter | What Direct Child Read-Back Found (`2026-11-23`) |
+|---|---|---|---|
+| `GET /security-advisories?state=draft` (`updated_at`) | All three drafts showed `updated_at` at `2026-11-20` / `2026-11-21T02:46Z`, appearing unanswered; `0` incoming reports visible under `?state=draft`. | `/security-advisories/{id}/comments` (does not bump parent `updated_at`) + `?state=triage` (pre-draft submissions). | All three researcher sign-offs had been sitting in `/comments` since `2026-11-21T14:37:14Z`-`14:37:16Z` (enabling immediate `T=0` publication of `GHSA-xm4c-x85r-38fp`, `GHSA-gg2p-q2qw-3wx3`, and `GHSA-8r4c-xx89-28w5` in `#866` `6c20472c`), and `?state=triage` surfaced an unseen incoming report submitted `2026-11-22T17:18:51Z` inside its 5-business-day SLA window. |
+| `gh pr list` (`CREATED AT` + sticky `reviewDecision`) | `#654` read as `18 days ago` with `CHANGES_REQUESTED` (`2026-11-18T13:18Z`); `#747` read as `CHANGES_REQUESTED` (`2026-11-14T21:02Z`) with `1` CLA-bot comment. | `/pulls/{n}/commits` + `/issues/{n}/comments` (neither clears a prior `CHANGES_REQUESTED` review). | On `#654`, `@PratikDhanave` had rebased (`ff7c2576`, `35a49d0f`) and replied at `2026-11-20T05:50:06Z` addressing both review items; on `#747`, `@tausif-ahmed-guardian` had pushed follow-up commit `d91c31aa` silently `11h 37m` after review (`2026-11-15T08:39:47Z`). Sticky review state outlived the commits it described. |
+| Fork PR check rollups (`POAM-2026-234`) | Non-workflow checks (`cla/google`, `check-changes`) read as `no failing checks` while `mergeStateStatus` stayed `BLOCKED`. | `GET /actions/runs?status=action_required` (fork workflow runs awaiting maintainer approval). | **`187` fork workflow runs** were parked in `action_required` across open external PRs (`#654`, `#747`, `#757`, `#800`, `#812`, `#826`), leaving zero of ruleset `25966171`'s nine required checks executed on updated fork heads. |
+| `kubectl get cronjob` (`LAST SCHEDULE`, `ACTIVE: 0`) | Shows schedule cadence without child job outcome. | Child `job.batch/lula-audit-*` exit codes (`Failed 0/1` vs. `Complete 1/1`). | Structurally closed via `#858` (`ddbbdc81`, `cage_lula_audit_last_healthy_run_timestamp_seconds`) and `#859` (`fc0152a8`, `lula_audit_failure` Pub/Sub alert). |
+
+---
+
+## 6. Main Required-Check Reconciler Absence Triage & Violation Verification (`POAM-2026-171`)
+
+- **Why `absent` can mean delivery failure (`403`) rather than a dead scheduler:** In [`deliver_gcp_sinks()`](../../scripts/reconcile_main_check_results.py), `_publish_pubsub_envelope()` executes **before** `_write_reconciler_heartbeat_metric()`. That fail-closed order ensures the reconciler never asserts liveness it has not earned, which also means a Pub/Sub publish failure (such as `HTTP 403 PERMISSION_DENIED` before `roles/pubsub.publisher` is applied) suppresses the Cloud Monitoring heartbeat point and will page via `google_monitoring_alert_policy.main_result_reconciler_absent`. Always check the latest [`.github/workflows/main-result-reconciler.yml`](../../.github/workflows/main-result-reconciler.yml) run log for `403` / preflight errors before assuming the `37 */2` cron stopped firing.
+- **Distinct workflow exit codes:**
+  - `0`: all checked commits clean (`violation_count == 0`) and both GitHub issue + GCP sinks delivered.
+  - `1` (`::error::[POAM-2026-171] FOUND VIOLATIONS (exit 1)`): required-check violations detected (`violation_count > 0`; issue opened/reopened and `CRITICAL` `main_check_violation` published when GCP delivery succeeds).
+  - `2` (`::error::[POAM-2026-171] DELIVERY BROKEN (exit 2)`): runtime operational or GCP delivery error (for example `403` on Pub/Sub or Cloud Monitoring, or empty GitHub commit page).
+  - `3` (`::error::[POAM-2026-171] NOT WIRED (exit 3)`): preflight configuration missing (`CAGE_ALERT_VERIFIER_WIF_PROVIDER`, `CAGE_ALERT_VERIFIER_SERVICE_ACCOUNT`, `CAGE_ALERT_VERIFY_GCP_PROJECT`, or `CAGE_ALERT_VERIFY_PUBSUB_TOPIC` unset — distinct from `exit 1` violations and `exit 2` broken delivery).
+- **Verifying `main_check_violation` arrival on `cage-staging-alerts-verify`:** [`verify_alert_delivery.py`](../../scripts/verify_alert_delivery.py) inspects `source == "main_result_reconciler"` envelopes alongside Cloud Monitoring and `compliance-bridge` heartbeats: it deduplicates periodic reconciler `heartbeat` messages (preserving only the newest so they cannot starve subscription pulls), preserves `main_check_violation` alerts non-destructively, and fails closed when `--expect-main-check-violation-sha <sha>` is passed without a matching envelope arriving.

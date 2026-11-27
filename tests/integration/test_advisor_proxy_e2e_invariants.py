@@ -241,7 +241,7 @@ ADVISOR_TOOLS: list[dict[str, Any]] = [
                     "amount": {"type": "number"},
                     "currency": {"type": "string"},
                     "confidence": {"type": "number"},
-                    "transaction_id": {"type": "string"},
+                    "idempotency_key": {"type": "string"},
                     "side": {"type": "string"},
                     "deferred_id": {"type": "string"},
                 },
@@ -251,8 +251,16 @@ ADVISOR_TOOLS: list[dict[str, Any]] = [
 ]
 
 
-def _make_webauthn_binding(defer_id: str, approver_sub: str) -> dict[str, str]:
-    """Construct W3C WebAuthn CollectedClientData bound to a SHA-256 challenge digest."""
+def _make_webauthn_binding(
+    defer_id: str,
+    approver_sub: str,
+    *,
+    cred_id: str | None = None,
+    priv_key: ec.EllipticCurvePrivateKey | None = None,
+    rp_id: str = "console.cage.example.org",
+    origin: str = "https://console.cage.example.org",
+) -> dict[str, str]:
+    """Construct W3C WebAuthn CollectedClientData (and ES256 signature when key provided)."""
     challenge_bytes = hashlib.sha256(
         f"cage-hitl-v1:{defer_id}:{approver_sub}".encode()
     ).digest()
@@ -262,20 +270,35 @@ def _make_webauthn_binding(defer_id: str, approver_sub: str) -> dict[str, str]:
     client_data = {
         "type": "webauthn.get",
         "challenge": challenge_b64,
-        "origin": "https://console.cage.example.org",
+        "origin": origin,
         "crossOrigin": False,
     }
+    client_data_bytes = json.dumps(client_data, separators=(",", ":")).encode("utf-8")
     client_data_b64 = (
-        base64.urlsafe_b64encode(
-            json.dumps(client_data, separators=(",", ":")).encode("utf-8")
-        )
-        .rstrip(b"=")
-        .decode("ascii")
+        base64.urlsafe_b64encode(client_data_bytes).rstrip(b"=").decode("ascii")
     )
-    return {
+    payload: dict[str, str] = {
         "client_data_json": client_data_b64,
         "challenge_binding": challenge_bytes.hex(),
     }
+    if cred_id is not None and priv_key is not None:
+        auth_data_bytes = (
+            hashlib.sha256(rp_id.encode("utf-8")).digest()
+            + b"\x05"
+            + (1).to_bytes(4, "big")
+        )
+        sig_bytes = priv_key.sign(
+            auth_data_bytes + hashlib.sha256(client_data_bytes).digest(),
+            ec.ECDSA(hashes.SHA256()),
+        )
+        payload["credential_id"] = cred_id
+        payload["authenticator_data"] = (
+            base64.urlsafe_b64encode(auth_data_bytes).rstrip(b"=").decode("ascii")
+        )
+        payload["signature"] = (
+            base64.urlsafe_b64encode(sig_bytes).rstrip(b"=").decode("ascii")
+        )
+    return payload
 
 
 @asynccontextmanager
@@ -587,6 +610,7 @@ class E2EHarness:
     trust_anchors_path: Path
     recorded_executions: list[ExecutionClearance]
     signed_partner_receipts: list[tuple[str, dict[str, Any]]]
+    webauthn_keys: dict[str, tuple[str, ec.EllipticCurvePrivateKey]]
 
     def mint_oidc_jwt(
         self,
@@ -645,7 +669,7 @@ class E2EHarness:
             "amount": order.amount,
             "currency": order.currency,
             "confidence": order.confidence,
-            "transaction_id": order.transaction_id,
+            "idempotency_key": order.idempotency_key,
             "side": order.side or "buy",
         }
         if deferred_id:
@@ -670,6 +694,19 @@ class E2EHarness:
             json={"tool_name": tool_name, "params": params},
         )
 
+    def make_webauthn_assertion(
+        self, defer_id: str, approver_sub: str
+    ) -> dict[str, str]:
+        cred_pair = self.webauthn_keys.get(approver_sub)
+        if cred_pair is not None:
+            return _make_webauthn_binding(
+                defer_id,
+                approver_sub,
+                cred_id=cred_pair[0],
+                priv_key=cred_pair[1],
+            )
+        return _make_webauthn_binding(defer_id, approver_sub)
+
     async def escalate_oidc(
         self,
         defer_id: str,
@@ -681,7 +718,7 @@ class E2EHarness:
         body = (
             body_override
             if body_override is not None
-            else _make_webauthn_binding(defer_id, approver_sub)
+            else self.make_webauthn_assertion(defer_id, approver_sub)
         )
         return await self.bridge_http.post(
             f"/v1/defer/{defer_id}/escalate",
@@ -778,6 +815,37 @@ async def e2e_stack(
         json.dumps({"keys": [oidc_pub_jwk]}, indent=2), encoding="utf-8"
     )
 
+    webauthn_keys: dict[str, tuple[str, ec.EllipticCurvePrivateKey]] = {}
+    webauthn_cred_entries: list[dict[str, str]] = []
+    for idx, sub in enumerate((ALICE_SUB, BOB_SUB)):
+        w_priv = ec.generate_private_key(ec.SECP256R1())
+        w_pub_pem = (
+            w_priv.public_key()
+            .public_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PublicFormat.SubjectPublicKeyInfo,
+            )
+            .decode("utf-8")
+        )
+        w_cred_id = (
+            base64.urlsafe_b64encode(f"e2e-webauthn-cred-{idx}".encode("ascii"))
+            .rstrip(b"=")
+            .decode("ascii")
+        )
+        webauthn_keys[sub] = (w_cred_id, w_priv)
+        webauthn_cred_entries.append(
+            {
+                "credential_id": w_cred_id,
+                "operator_urn": sub,
+                "alg": "ES256",
+                "public_key_pem": w_pub_pem,
+            }
+        )
+    webauthn_creds_path = tmp_path / "webauthn_credentials.json"
+    webauthn_creds_path.write_text(
+        json.dumps({"credentials": webauthn_cred_entries}, indent=2), encoding="utf-8"
+    )
+
     monkeypatch.setenv("CAGE_INTERNAL_TOKEN", internal_token)
     monkeypatch.setenv("CAGE_OPERATOR_IDENTITY_ALLOW_OIDC", "true")
     monkeypatch.setenv("CAGE_OPERATOR_IDENTITY_ALLOW_DEV_SYNTHETIC", "false")
@@ -787,6 +855,12 @@ async def e2e_stack(
     monkeypatch.delenv("CAGE_OPERATOR_JWKS_JSON", raising=False)
     monkeypatch.delenv("CAGE_OPERATOR_JWKS_URI", raising=False)
     monkeypatch.setenv("CAGE_TRUSTED_OPERATOR_IDENTITIES", f"{ALICE_SUB},{BOB_SUB}")
+    monkeypatch.setenv("CAGE_WEBAUTHN_RP_ID", "console.cage.example.org")
+    monkeypatch.setenv(
+        "CAGE_WEBAUTHN_ALLOWED_ORIGINS", "https://console.cage.example.org"
+    )
+    monkeypatch.setenv("CAGE_WEBAUTHN_CREDENTIALS_FILE", str(webauthn_creds_path))
+    monkeypatch.delenv("CAGE_WEBAUTHN_CREDENTIALS_JSON", raising=False)
     monkeypatch.setattr(bridge_auth, "_CAGE_ENV", "staging")
     reset_oidc_verifier()
 
@@ -863,6 +937,8 @@ async def e2e_stack(
     monkeypatch.setattr(
         inference_proxy.inference_app.state, "redis", stream_redis, raising=False
     )
+    monkeypatch.setattr(governance_app.state, "redis", stream_redis, raising=False)
+    monkeypatch.setattr(mcp_tool_server.app.state, "redis", stream_redis, raising=False)
     await publish_thresholds_loaded(sink)
 
     # Real TokenQuotaProxy backed by fakeredis; generous initial budget for E2E turns.
@@ -1080,6 +1156,7 @@ async def e2e_stack(
                 trust_anchors_path=trust_anchors_path,
                 recorded_executions=recorded_executions,
                 signed_partner_receipts=signed_partner_receipts,
+                webauthn_keys=webauthn_keys,
             )
         finally:
             reset_oidc_verifier()
@@ -1100,6 +1177,7 @@ def _merge_proxy_and_mcp() -> Starlette:
         return await inference_proxy.chat_completions(request, background_tasks)
 
     combined.mount("/", mcp_tool_server.app)
+    mcp_tool_server.app.state.redis = combined.state.redis
     return combined
 
 
@@ -1221,6 +1299,7 @@ async def test_advisor_proxy_e2e_all_five_invariants_and_negative_controls(
     # mints & burns ES256 seal, actuates, and settles.
     exec_allow_json = await e2e_stack.advisor_execute_trade(allow_args)
     assert exec_allow_json["status"] == "SUCCESS"
+    assert exec_allow_json["outcome"]["status"] == "EXECUTED"
     assert exec_allow_json["output"].startswith("EXECUTED: AAPL x 1200.0")
     assert len(e2e_stack.recorded_executions) == 1
     first_clearance = e2e_stack.recorded_executions[0]
@@ -1299,6 +1378,8 @@ async def test_advisor_proxy_e2e_all_five_invariants_and_negative_controls(
     exec_deny = await e2e_stack.execute_tool("execute_trade_action", deny_args)
     assert exec_deny.status_code == 200
     exec_deny_json = exec_deny.json()
+    assert exec_deny_json["status"] == "ERROR"
+    assert exec_deny_json["outcome"]["status"] == "REFUSED"
     assert exec_deny_json["output"].startswith("BLOCKED:")
     assert isinstance(exec_deny_json.get("proof_hash"), str)
     assert len(exec_deny_json["proof_hash"]) == 64
@@ -1336,9 +1417,11 @@ async def test_advisor_proxy_e2e_all_five_invariants_and_negative_controls(
     # Attempting direct /tools/execute without HITL approval fails closed (real OPA MANUAL_REVIEW).
     unapproved_direct = await e2e_stack.execute_tool(
         "execute_trade_action",
-        {**defer_args, "transaction_id": str(uuid.uuid4())},
+        {**defer_args, "idempotency_key": str(uuid.uuid4())},
     )
     assert unapproved_direct.status_code == 200
+    assert unapproved_direct.json()["status"] == "ERROR"
+    assert unapproved_direct.json()["outcome"]["status"] == "REFUSED"
     assert unapproved_direct.json()["output"].startswith("BLOCKED:")
     if unapproved_direct.json().get("proof_hash"):
         observed_refusal_hashes.append(unapproved_direct.json()["proof_hash"])
@@ -1404,7 +1487,7 @@ async def test_advisor_proxy_e2e_all_five_invariants_and_negative_controls(
         await e2e_stack.escalate_oidc(defer_id, mallory_jwt, approver_sub=MALLORY_SUB)
     ).status_code == 403
 
-    # --- Negative Control #1d: missing or mismatched WebAuthn binding -> 400 (POAM-2026-196) ---
+    # --- Negative Control #1d: missing, partial, or forged WebAuthn assertion -> 400 (POAM-2026-210) ---
     alice_jwt = e2e_stack.mint_oidc_jwt(ALICE_SUB)
     missing_webauthn = await e2e_stack.escalate_oidc(
         defer_id, alice_jwt, body_override={}
@@ -1412,13 +1495,28 @@ async def test_advisor_proxy_e2e_all_five_invariants_and_negative_controls(
     assert missing_webauthn.status_code == 400
     assert missing_webauthn.json()["detail"]["error"] == "WEBAUTHN_BINDING_REQUIRED"
 
-    bad_webauthn = _make_webauthn_binding(defer_id, ALICE_SUB)
+    partial_webauthn = _make_webauthn_binding(defer_id, ALICE_SUB)
+    partial_resp = await e2e_stack.escalate_oidc(
+        defer_id, alice_jwt, body_override=partial_webauthn
+    )
+    assert partial_resp.status_code == 400
+    assert partial_resp.json()["detail"]["error"] == "WEBAUTHN_BINDING_REQUIRED"
+
+    bad_webauthn = e2e_stack.make_webauthn_assertion(defer_id, ALICE_SUB)
     bad_webauthn["challenge_binding"] = "00" * 32
     mismatched_webauthn = await e2e_stack.escalate_oidc(
         defer_id, alice_jwt, body_override=bad_webauthn
     )
     assert mismatched_webauthn.status_code == 400
     assert mismatched_webauthn.json()["detail"]["error"] == "APPROVAL_VALIDATION_FAILED"
+
+    forged_sig_webauthn = e2e_stack.make_webauthn_assertion(defer_id, ALICE_SUB)
+    forged_sig_webauthn["signature"] = "dGVzdC1zaWduYXR1cmU"
+    forged_sig_resp = await e2e_stack.escalate_oidc(
+        defer_id, alice_jwt, body_override=forged_sig_webauthn
+    )
+    assert forged_sig_resp.status_code == 400
+    assert forged_sig_resp.json()["detail"]["error"] == "APPROVAL_VALIDATION_FAILED"
 
     # --- Negative Control #1e: SoD self-approval (initiator == approver) -> 403 ---
     sod_queue = DeferQueue(e2e_stack.defer_redis)
@@ -1449,8 +1547,12 @@ async def test_advisor_proxy_e2e_all_five_invariants_and_negative_controls(
     premature_tx = str(uuid.uuid4())
     premature_exec = await e2e_stack.execute_tool(
         "execute_trade_action",
-        {**defer_args, "transaction_id": premature_tx, "deferred_id": defer_id},
+        {**defer_args, "idempotency_key": premature_tx, "deferred_id": defer_id},
     )
+    assert premature_exec.json()["status"] == "ERROR"
+    premature_outcome = premature_exec.json()["outcome"]
+    assert premature_outcome["status"] == "REFUSED"
+    assert premature_outcome["redemption_refusal"] == "QUORUM_INCOMPLETE"
     assert premature_exec.json()["output"].startswith("BLOCKED:")
     if premature_exec.json().get("proof_hash"):
         observed_refusal_hashes.append(premature_exec.json()["proof_hash"])
@@ -1491,10 +1593,11 @@ async def test_advisor_proxy_e2e_all_five_invariants_and_negative_controls(
         ]
     )
     assert redeem_args["deferred_id"] == defer_id
-    assert redeem_args["transaction_id"] == redeem_tx
+    assert redeem_args["idempotency_key"] == redeem_tx
 
     redeem_exec = await e2e_stack.advisor_execute_trade(redeem_args)
     assert redeem_exec["status"] == "SUCCESS"
+    assert redeem_exec["outcome"]["status"] == "EXECUTED"
     assert redeem_exec["output"].startswith("EXECUTED: MSFT x 7500.0")
     assert len(e2e_stack.recorded_executions) == 2
     assert e2e_stack.recorded_executions[1].params["symbol"] == "MSFT"
@@ -1508,8 +1611,12 @@ async def test_advisor_proxy_e2e_all_five_invariants_and_negative_controls(
     # --- Negative Control #2b: sequential & concurrent replay of approved deferred_id ---
     replay_exec = await e2e_stack.execute_tool(
         "execute_trade_action",
-        {**redeem_args, "transaction_id": str(uuid.uuid4())},
+        {**redeem_args, "idempotency_key": str(uuid.uuid4())},
     )
+    assert replay_exec.json()["status"] == "ERROR"
+    replay_outcome = replay_exec.json()["outcome"]
+    assert replay_outcome["status"] == "REFUSED"
+    assert replay_outcome["redemption_refusal"] == "CONSUMED"
     assert replay_exec.json()["output"].startswith("BLOCKED:")
     assert replay_exec.json().get("proof_hash")
     observed_refusal_hashes.append(replay_exec.json()["proof_hash"])
@@ -1542,7 +1649,7 @@ async def test_advisor_proxy_e2e_all_five_invariants_and_negative_controls(
             "execute_trade_action",
             {
                 **race_init_args,
-                "transaction_id": str(uuid.uuid4()),
+                "idempotency_key": str(uuid.uuid4()),
                 "deferred_id": race_defer_id,
             },
         ),
@@ -1550,12 +1657,16 @@ async def test_advisor_proxy_e2e_all_five_invariants_and_negative_controls(
             "execute_trade_action",
             {
                 **race_init_args,
-                "transaction_id": str(uuid.uuid4()),
+                "idempotency_key": str(uuid.uuid4()),
                 "deferred_id": race_defer_id,
             },
         ),
     )
     race_outputs = [race_res_a.json()["output"], race_res_b.json()["output"]]
+    race_statuses = sorted(
+        r.json()["outcome"]["status"] for r in (race_res_a, race_res_b)
+    )
+    assert race_statuses == ["EXECUTED", "REFUSED"], race_outputs
     blocked_race = [o for o in race_outputs if o.startswith("BLOCKED:")]
     succeeded_race = [o for o in race_outputs if o.startswith("EXECUTED: GOOGL")]
     assert len(succeeded_race) == 1, race_outputs

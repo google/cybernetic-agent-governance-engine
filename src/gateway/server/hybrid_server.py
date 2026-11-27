@@ -320,6 +320,7 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         from src.gateway.governance.quarantine_actuator import bind_quarantine_redis
 
         shared_redis = _build_shared_redis_from_env()
+        await _verify_shared_redis_startup(shared_redis)
         app.state.redis = shared_redis
         inference_app.state.redis = shared_redis
         governance_app.state.redis = shared_redis
@@ -611,13 +612,26 @@ NEMO_RELOAD_CHANNEL = "cage:nemo:reload"
 
 
 def _build_shared_redis_from_env() -> Any:
-    """Resolve the shared async Redis client via ``build_async_redis`` when configured."""
+    """Resolve the shared async Redis client via ``build_async_redis`` when configured.
+
+    Under an enforcing posture (``staging`` / ``production``), missing Redis
+    configuration or client initialization failure raises ``RuntimeError`` at
+    startup so a misconfigured pod never passes ``/healthz`` and serves 100%
+    fail-closed 403 quarantine refusals.
+    """
+    from src.gateway.governance.env_posture import is_enforcing, resolve_posture
     from src.gateway.infrastructure.redis_client import build_async_redis
 
+    enforcing = is_enforcing(resolve_posture())
     url = os.environ.get("REDIS_URL", "").strip()
     if not url:
         host = os.environ.get("REDIS_HOST", "").strip()
         if not host:
+            if enforcing:
+                raise RuntimeError(
+                    "Shared Redis client is required under an enforcing posture "
+                    "(configure REDIS_URL or REDIS_HOST)."
+                )
             return None
         port = os.environ.get("REDIS_PORT", "6379").strip() or "6379"
         scheme = (
@@ -626,12 +640,43 @@ def _build_shared_redis_from_env() -> Any:
             else "redis"
         )
         url = f"{scheme}://{host}:{port}"
-    db = int(os.environ.get("REDIS_DB", "0"))
+    raw_db = os.environ.get("REDIS_DB")
     try:
+        db: int | None = int(raw_db.strip()) if raw_db and raw_db.strip() else None
         return build_async_redis(url, db=db)
     except Exception as exc:
+        if enforcing:
+            raise RuntimeError(
+                f"Shared Redis client initialization failed under an enforcing posture: {exc}"
+            ) from exc
         logger.warning("⚠️ Shared Redis client init failed: %s", exc)
         return None
+
+
+async def _verify_shared_redis_startup(shared_redis: Any) -> None:
+    """Probe shared Redis with ``PING`` at startup under an enforcing posture."""
+    import inspect
+
+    from src.gateway.governance.env_posture import is_enforcing, resolve_posture
+
+    if shared_redis is None or not is_enforcing(resolve_posture()):
+        return
+    ping_fn = getattr(shared_redis, "ping", None)
+    if not callable(ping_fn):
+        return
+    try:
+        res = ping_fn()
+        if inspect.isawaitable(res):
+            await res
+    except Exception as exc:
+        if hasattr(shared_redis, "aclose"):
+            try:
+                await shared_redis.aclose()
+            except Exception as close_exc:
+                logger.debug("Shared Redis startup cleanup error: %s", close_exc)
+        raise RuntimeError(
+            f"Shared Redis connectivity check (PING) failed under an enforcing posture: {exc}"
+        ) from exc
 
 
 def _get_refinement_redis(app_instance: FastAPI | None = None) -> Any:
@@ -986,11 +1031,12 @@ async def _cas_claim_refinement_proposal(
     return ok_flag, code, parsed if isinstance(parsed, dict) else None
 
 
-@root_app.post("/v1/nemo/propose-refinement")
+@root_app.post("/v1/nemo/propose-refinement", response_model=None)
 async def propose_nemo_refinement(
     request: Request, req: NeMoApplyRefinementRequest
-) -> dict[str, Any]:
+) -> dict[str, Any] | JSONResponse:
     """Stage a NeMo Guardrails refinement proposal for human review."""
+    from src.gateway.server.quarantine_guard import refuse_if_quarantined
     from src.gateway.server.workload_identity import extract_client_identity
 
     try:
@@ -999,6 +1045,14 @@ async def propose_nemo_refinement(
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
     await _enforce_nemo_rate_limit(request, "nemo-propose")
+    if q_resp := await refuse_if_quarantined(
+        request,
+        action_id="nemo-propose",
+        surface="hybrid_server",
+        fallback_app_obj=root_app,
+        verified_agent_id=proposer_identity,
+    ):
+        return q_resp
 
     proposal_id = str(_uuid.uuid4())
     proposal = {
@@ -1043,15 +1097,16 @@ async def propose_nemo_refinement(
     }
 
 
-@root_app.post("/v1/nemo/approve-refinement/{proposal_id}")
+@root_app.post("/v1/nemo/approve-refinement/{proposal_id}", response_model=None)
 async def approve_nemo_refinement(
     proposal_id: str,
     req: NeMoApproveRequest,
     request: Request,
-) -> dict[str, Any]:
+) -> dict[str, Any] | JSONResponse:
     """Approve or reject a staged NeMo refinement proposal via atomic Redis Lua CAS."""
     from src.gateway.governance.semantic_rail_factory import semantic_rails_refusal
     from src.gateway.server.inference_proxy import _safe_error_response
+    from src.gateway.server.quarantine_guard import refuse_if_quarantined
     from src.gateway.server.workload_identity import extract_client_identity
 
     try:
@@ -1060,6 +1115,14 @@ async def approve_nemo_refinement(
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
     await _enforce_nemo_rate_limit(request, "nemo-approve")
+    if q_resp := await refuse_if_quarantined(
+        request,
+        action_id="nemo-approve",
+        surface="hybrid_server",
+        fallback_app_obj=root_app,
+        verified_agent_id=approver_identity,
+    ):
+        return q_resp
     _require_nemo_approver_identity(approver_identity)
 
     reviewer = req.reviewer.strip() if req.reviewer else ""
@@ -1208,11 +1271,29 @@ async def approve_nemo_refinement(
     }
 
 
-@root_app.get("/v1/nemo/proposals/pending")
-async def list_pending_nemo_proposals(request: Request) -> dict[str, Any]:
+@root_app.get("/v1/nemo/proposals/pending", response_model=None)
+async def list_pending_nemo_proposals(
+    request: Request,
+) -> dict[str, Any] | JSONResponse:
     """List staged NeMo refinement proposals using bounded SSCAN (no unbounded HGETALL)."""
+    from src.gateway.server.quarantine_guard import refuse_if_quarantined
+    from src.gateway.server.workload_identity import extract_client_identity
+
+    try:
+        caller_identity = extract_client_identity(request.scope)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
     await _enforce_nemo_rate_limit(request, "nemo-proposals")
-    redis_client = _get_refinement_redis(request.app)
+    if q_resp := await refuse_if_quarantined(
+        request,
+        action_id="nemo-proposals",
+        surface="hybrid_server",
+        fallback_app_obj=root_app,
+        verified_agent_id=caller_identity,
+    ):
+        return q_resp
+    redis_client = _get_refinement_redis(request.scope.get("app"))
     if redis_client is None or not hasattr(redis_client, "sscan"):
         raise HTTPException(
             status_code=503,
@@ -1268,11 +1349,12 @@ async def list_pending_nemo_proposals(request: Request) -> dict[str, Any]:
     return {"pending": pending, "count": len(pending)}
 
 
-@root_app.post("/v1/nemo/apply-refinement")
+@root_app.post("/v1/nemo/apply-refinement", response_model=None)
 async def apply_nemo_refinement(
     request: Request, req: NeMoApplyRefinementRequest
-) -> dict[str, Any]:
+) -> dict[str, Any] | JSONResponse:
     """Stage a NeMo refinement proposal and return pending_approval."""
+    from src.gateway.server.quarantine_guard import refuse_if_quarantined
     from src.gateway.server.workload_identity import extract_client_identity
 
     try:
@@ -1281,6 +1363,14 @@ async def apply_nemo_refinement(
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
     await _enforce_nemo_rate_limit(request, "nemo-propose")
+    if q_resp := await refuse_if_quarantined(
+        request,
+        action_id="nemo-apply",
+        surface="hybrid_server",
+        fallback_app_obj=root_app,
+        verified_agent_id=proposer_identity,
+    ):
+        return q_resp
 
     logger.info(
         "[NeMo/Refinement] Routing to proposal flow. control_id=%s source=%s proposer=%s",

@@ -48,19 +48,25 @@ EXCLUDED_PATH_PREFIXES = (
 )
 
 
-def get_tracked_files() -> list[str]:
-    """Return all git-tracked files."""
+def get_tracked_files(repo_root: Path | None = None) -> list[str]:
+    """Return all git-tracked files using NUL-delimited ``git ls-files -z``."""
+    root = Path(".") if repo_root is None else repo_root
     try:
         out = subprocess.check_output(
-            ["git", "ls-files"], text=True, stderr=subprocess.DEVNULL
+            ["git", "ls-files", "-z"],
+            cwd=root,
+            stderr=subprocess.DEVNULL,
         )
-        return [line.strip() for line in out.splitlines() if line.strip()]
-    except subprocess.CalledProcessError:
-        root = Path(".")
         return [
-            str(p)
+            entry.decode("utf-8", errors="surrogateescape")
+            for entry in out.split(b"\x00")
+            if entry
+        ]
+    except subprocess.CalledProcessError:
+        return [
+            p.relative_to(root).as_posix()
             for p in root.rglob("*")
-            if p.is_file() and not str(p).startswith(".git")
+            if p.is_file() and ".git" not in p.relative_to(root).parts
         ]
 
 

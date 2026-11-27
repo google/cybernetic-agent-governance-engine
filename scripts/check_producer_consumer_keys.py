@@ -1332,6 +1332,7 @@ class GatewayHttpProducerCatalog:
 
     validate_action_refusal_keys: set[str] = field(default_factory=set)
     validate_action_payload_keys: set[str] = field(default_factory=set)
+    execute_tool_keys: set[str] = field(default_factory=set)
     policy_precheck_keys: set[str] = field(default_factory=set)
     envelope_keys: set[str] = field(default_factory=set)
     external_attestation_keys: set[str] = field(default_factory=set)
@@ -1458,6 +1459,7 @@ def collect_gateway_http_producers(
             "handle_require_approval",
             "handle_defer",
             "_reliance_field",
+            "_defer_ttl_fields",
         ):
             v_fn = verdicts_mod.functions.get(fn_name)
             if v_fn is not None:
@@ -1480,6 +1482,29 @@ def collect_gateway_http_producers(
                                 node.value.body, verdicts_mod, modules, catalog
                             )
                         )
+
+    env_mod = modules.get("src.gateway.governance.governance_envelope")
+    if env_mod is not None:
+        builder_cls = env_mod.classes.get("GovernanceEnvelopeBuilder")
+        if builder_cls is not None:
+            for item in builder_cls.body:
+                if (
+                    isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and item.name == "build_unsigned"
+                ):
+                    for node in ast.walk(item):
+                        if isinstance(node, ast.Assign):
+                            for tgt in node.targets:
+                                if (
+                                    isinstance(tgt, ast.Subscript)
+                                    and isinstance(tgt.value, ast.Name)
+                                    and tgt.value.id == "payload_data"
+                                ):
+                                    added = _resolve_expr_strings(
+                                        tgt.slice, env_mod, modules
+                                    )
+                                    http_cat.validate_action_payload_keys.update(added)
+                                    http_cat.validate_action_refusal_keys.update(added)
 
     # validate_action_endpoint hoists external_attestations out of payload_result.
     http_cat.validate_action_payload_keys.discard("external_attestations")
@@ -1525,6 +1550,63 @@ def collect_gateway_http_producers(
         http_cat.sse_delta_keys.update(
             {"reasoning_content", "content", "tool_calls", "role"}
         )
+
+    mts_mod = modules.get("src.gateway.server.mcp_tool_server")
+    if mts_mod is not None:
+        exec_fn = mts_mod.functions.get("execute_tool_endpoint")
+        if exec_fn is not None:
+            for node in ast.walk(exec_fn):
+                if (
+                    isinstance(node, (ast.Assign, ast.AnnAssign))
+                    and node.value is not None
+                ):
+                    targets = (
+                        node.targets if isinstance(node, ast.Assign) else [node.target]
+                    )
+                    for tgt in targets:
+                        if isinstance(tgt, ast.Name) and tgt.id == "response":
+                            if isinstance(node.value, ast.Dict):
+                                http_cat.execute_tool_keys.update(
+                                    _extract_dict_node_keys(
+                                        node.value, mts_mod, modules, catalog
+                                    )
+                                )
+                        elif (
+                            isinstance(tgt, ast.Subscript)
+                            and isinstance(tgt.value, ast.Name)
+                            and tgt.value.id == "response"
+                        ):
+                            http_cat.execute_tool_keys.update(
+                                _resolve_expr_strings(tgt.slice, mts_mod, modules)
+                            )
+                elif isinstance(node, ast.Call):
+                    callee_name = (
+                        node.func.id
+                        if isinstance(node.func, ast.Name)
+                        else (
+                            node.func.attr
+                            if isinstance(node.func, ast.Attribute)
+                            else ""
+                        )
+                    )
+                    if callee_name == "_SubscriptableJSONResponse":
+                        kw_map = {
+                            kw.arg: kw.value
+                            for kw in node.keywords
+                            if kw.arg is not None
+                        }
+                        sc = kw_map.get("status_code")
+                        content = kw_map.get("content")
+                        if (
+                            isinstance(sc, ast.Constant)
+                            and sc.value == 200
+                            and isinstance(content, ast.Dict)
+                        ):
+                            http_cat.execute_tool_keys.update(
+                                _extract_dict_node_keys(
+                                    content, mts_mod, modules, catalog
+                                )
+                            )
 
     return http_cat
 
@@ -2017,10 +2099,12 @@ def check_gateway_test_fixtures(
                 if status != 200:
                     continue
 
-                # Skip non-validate-action 200 endpoints (JWKS, policy-version, OPA /v1/data, state-commitments).
+                # Skip non-validate-action 200 endpoints (JWKS, policy-version, OPA /v1/data, state-commitments, broker order lookup).
                 if keys <= {"keys"} or keys == {"active_hash"} or keys == {"result"}:
                     continue
                 if "stateHash" in keys and "evidenceRecordHash" in keys:
+                    continue
+                if "filled_qty" in keys and "id" in keys:
                     continue
 
                 # Rule 5d: /governance/policy-precheck 200 contract parity.
@@ -2041,6 +2125,60 @@ def check_gateway_test_fixtures(
                                     detail=(
                                         f"/governance/policy-precheck 200 fixture contains unproduced "
                                         f"keys {sorted(extra_pp)} (allowed: {sorted(http_cat.policy_precheck_keys)})"
+                                    ),
+                                )
+                            )
+                    continue
+
+                # Rule 5e: /tools/execute 200 contract parity.
+                _is_validate_action_shaped = bool(
+                    keys
+                    & {
+                        "verdict",
+                        "execution_allowed",
+                        "deferred_id",
+                        "narrowed_params",
+                        "tiers_passed",
+                        "evaluated_action_hash",
+                        "payload",
+                        "envelope_version",
+                        "envelope_id",
+                        "signature",
+                    }
+                )
+                if not _is_validate_action_shaped and (
+                    bool(
+                        keys
+                        & {
+                            "outcome",
+                            "output",
+                            "actuation_outcome",
+                            "may_have_executed",
+                            "output_redacted",
+                            "sanitizer_violation",
+                            "status",
+                            "error_type",
+                        }
+                    )
+                    or (
+                        "/tools/execute" in fn_src
+                        and "/governance/validate-action" not in fn_src
+                        and "/governance/policy-precheck" not in fn_src
+                    )
+                ):
+                    if _is_negative_200_rejection_fn(fn, raised_names):
+                        continue
+                    if http_cat.execute_tool_keys:
+                        extra_exec = keys - http_cat.execute_tool_keys
+                        if extra_exec:
+                            violations.append(
+                                ViolationRecord(
+                                    file=rel_path,
+                                    line=node.lineno,
+                                    kind="unproduced-execute-fixture",
+                                    detail=(
+                                        f"/tools/execute 200 fixture contains unproduced "
+                                        f"keys {sorted(extra_exec)} (allowed: {sorted(http_cat.execute_tool_keys)})"
                                     ),
                                 )
                             )

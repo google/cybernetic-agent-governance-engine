@@ -25,7 +25,14 @@
 #   4. prod refuses single-project custody unless external_evidence_domain_enabled = true
 #      or evidence_project_id != project_id, while staging allows single-project mode.
 
-mock_provider "google" {}
+mock_provider "google" {
+  mock_data "google_monitoring_notification_channel" {
+    defaults = {
+      enabled = true
+      name    = "projects/cage-test-project/notificationChannels/12345"
+    }
+  }
+}
 mock_provider "helm" {}
 mock_provider "kubernetes" {}
 mock_provider "random" {}
@@ -208,6 +215,47 @@ run "prod_refuses_single_project_evidence_domain_without_external_or_distinct_pr
   }
 
   expect_failures = [terraform_data.evidence_domain_isolation_guard]
+}
+
+run "staging_certification_mode_refuses_single_project_evidence_domain" {
+  command = plan
+
+  variables {
+    certification_mode = true
+  }
+
+  expect_failures = [terraform_data.evidence_domain_isolation_guard]
+}
+
+run "staging_certification_mode_with_separate_evidence_project_locks_custody_2555d" {
+  command = plan
+
+  override_data {
+    target          = module.evidence_domain.data.google_project.evidence[0]
+    override_during = plan
+    values = {
+      number = "987654321098"
+    }
+  }
+
+  variables {
+    certification_mode  = true
+    evidence_project_id = "dedicated-evidence-custody-proj"
+  }
+
+  assert {
+    condition = (
+      module.evidence_domain.cross_project_isolated &&
+      local.cross_project_evidence_custody &&
+      local.telemetry_retention_period_seconds == 86400 &&
+      local.evidence_retention_period_seconds == 220752000 &&
+      module.worm_bucket.retention_period_seconds == 220752000 &&
+      module.worm_bucket.retention_locked &&
+      google_storage_bucket.langfuse_event_upload.retention_policy[0].retention_period == 86400 &&
+      google_storage_bucket.langfuse_event_upload.retention_policy[0].is_locked
+    )
+    error_message = "certification_mode with dedicated evidence_project_id must isolate CMEK/custody cross-project and lock WORM evidence for 2555d while keeping telemetry at 1d"
+  }
 }
 
 run "external_evidence_domain_plans_zero_managed_custody_resources" {

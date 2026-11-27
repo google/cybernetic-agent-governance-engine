@@ -37,8 +37,8 @@ To verify hazard completeness, we re-evaluate the system’s capacity to determi
 
 * **Hazard:** **UCA-5 / FIN-1** (Trade exceeds drawdown limit or portfolio fraction limit due to market drift during human review).
 * **Previous State:** Vulnerable to Time-Of-Check to Time-Of-Use (TOCTOU).
-* **New Enforcement Mechanism:** The execution plan now inherently contains a bounded limit (`max_slippage_pct`). The `post_hitl_revalidate_node` acts as a hard deterministic circuit breaker, recalculating drift immediately prior to actuation.
-* **Evaluation:** **PASS.** The hazard is fully mapped to a deterministic mathematical bound evaluated at execution time, not generation time.
+* **New Enforcement Mechanism:** Check-time market price $P_{\text{stale}}$ is persisted in `hitl_reference_quote` (`AgentState`) prior to HITL suspension, and the human reviewer bounds acceptable execution drift via `max_slippage_pct` (`ApprovalDecision`). Upon resumption, `post_hitl_rehydrate_node` samples live price $P_{\text{fresh}}$ and `post_hitl_revalidate_node` acts as a fail-closed deterministic circuit breaker, blocking both exceeded drift (`price_slippage_exceeded`) and any missing or unverifiable quote state (`drift_unverifiable`, `POAM-2026-240`).
+* **Evaluation:** **PASS.** The hazard is mapped to a fail-closed mathematical bound evaluated immediately prior to actuation.
 
 ---
 
@@ -70,11 +70,11 @@ In the prior architecture, the continuous variable $x_2$ (market price) evolved 
 
 **The Updated Hybrid Automaton:**
 
-1. $\text{PENDING\_HITL}$ is entered when [`approval_node`](../../src/governed_financial_advisor/graph/nodes/approval_node.py) calls the LangGraph `interrupt()` primitive (`langgraph.types.interrupt`), suspending the graph. When the reviewer resumes the thread via the LangGraph SDK `Command(resume={...})` pattern, `interrupt()` returns the decision payload and the node issues `Command(goto="post_hitl_rehydrate")`, transitioning the system to $\text{REVALIDATING}$.
-2. The `post_hitl_revalidate_node` samples $P_{\text{fresh}}$ (continuous state $x_2$ at time $t_{\text{resume}}$).
-3. The guard condition $G_{\text{actuate}}$ for the transition to $\text{APPROVED}$ (execution) is strictly defined by the invariant:
-$$G_{\text{actuate}} \iff \left( \frac{|P_{\text{fresh}} - P_{\text{stale}}|}{P_{\text{stale}}} \le \text{max\_slippage\_pct} \right) \land \left( \text{CBF}(P_{\text{fresh}}, \text{amount}) \ge 0 \right) \land \left( \text{OPA}(P_{\text{fresh}}, \text{params}) = \text{ALLOW} \right)$$
-4. If $G_{\text{actuate}}$ evaluates to False, the system transitions to $\text{BLOCKED}$ (fail-closed).
+1. $\text{PENDING\_HITL}$ is entered when [`approval_node`](../../src/governed_financial_advisor/graph/nodes/approval_node.py) calls the LangGraph `interrupt()` primitive (`langgraph.types.interrupt`), suspending the graph with check-time quote $P_{\text{stale}}$ recorded in `hitl_reference_quote`. When the reviewer resumes the thread via the LangGraph SDK `Command(resume={...})` pattern, `interrupt()` returns the decision payload and the node issues `Command(goto="post_hitl_rehydrate")`, transitioning the system to $\text{REVALIDATING}$.
+2. [`post_hitl_rehydrate_node`](../../src/governed_financial_advisor/graph/subgraphs/governed_trader_graph.py) samples $P_{\text{fresh}}$ (continuous state $x_2$ at time $t_{\text{resume}}$), and [`post_hitl_revalidate_node`](../../src/governed_financial_advisor/graph/subgraphs/governed_trader_graph.py) evaluates the reviewer's `max_slippage_pct` bound fail-closed (`POAM-2026-240`).
+3. The guard condition $G_{\text{actuate}}$ for transitioning to actuation is strictly defined by the invariant:
+$$G_{\text{actuate}} \iff \left( P_{\text{stale}} > 0 \land P_{\text{fresh}} > 0 \land \frac{|P_{\text{fresh}} - P_{\text{stale}}|}{P_{\text{stale}}} \times 100 \le \text{max\_slippage\_pct} \right) \land \left( \text{CBF}(P_{\text{fresh}}, \text{amount}) \ge 0 \right) \land \left( \text{OPA}(P_{\text{fresh}}, \text{params}) = \text{ALLOW} \right)$$
+4. If $G_{\text{actuate}}$ evaluates to False — including when either quote is missing or unverifiable — the system transitions fail-closed to $\text{BLOCKED}$ without emitting a `PASSED` attestation.
 
 Because the transition to an actuated state is mathematically gated by a real-time sample of the continuous variables against the required limits, **the continuous state trajectory can no longer outpace the discrete sampling rate of the governance engine.**
 
@@ -97,7 +97,7 @@ The Cloud Security Alliance Autonomous Agent Risk Management (CSA AARM v1.0) fra
 | **AARM-V3** | Confused Deputy — agent is manipulated into performing actions on behalf of an unauthorized principal | OPA RBAC (`trade.governance` package) + gateway ingress by Linkerd mTLS workload identity (`WorkloadIdentityMiddleware`, `src/gateway/server/workload_identity.py`) | $\forall \text{tool\_call}: \text{identity}(\text{caller}) \in \text{trusted\_identities} \land \text{role}(\text{caller}) \in \text{authorized\_roles}(\text{tool})$ | **NEUTRALIZED** |
 | **AARM-V4** | Cross-Agent Propagation — malicious payload propagates across agent boundaries | Linkerd mTLS SPIFFE/SVID identity + NeMo input rail on every agent boundary | $\forall \text{agent\_msg}: \text{SPIFFE\_identity\_verified} \land \text{NeMo}(\text{msg}) = \text{SAFE}$ | **NEUTRALIZED** |
 | **AARM-V5** | Prompt Injection — adversarial input hijacks agent intent | Aho-Corasick Tier-1 scan + NeMo Guardrails Tier-2 + Presidio PII scan | $\forall \text{input}: \text{AhoCorasick}(\text{input}) = \emptyset \land \text{NeMo}(\text{input}) = \text{SAFE}$ before any agent node executes | **NEUTRALIZED** |
-| **AARM-V6** | Reward Hacking — agent exploits reward signal to achieve unintended outcomes | STPA UCA Validator (Tier 1) + DoWhy Causal Gatekeeper (Tier 6) non-positive slope guard + placebo refutation | $\beta > 0 \land \text{placebo\_p\_value} \ge 0.05 \land \text{placebo\_effect} \le 0.2 \land \min(1.0, 0.5 + \beta \times \text{amount}) \le 0.95$ required for ALLOW | **NEUTRALIZED** |
+| **AARM-V6** | Reward Hacking — agent exploits reward signal to achieve unintended outcomes | STPA UCA Validator (Tier 1) + DoWhy Causal Gatekeeper (Tier 6) non-positive slope guard + placebo refutation | $\beta > 0 \land \text{placebo\_p\_value} \ge 0.05 \land \text{placebo\_effect} \le 0.2 \land \min(1.0, \beta \times \text{amount} / \text{normalization\_scale}) \le 0.45$ required for ALLOW | **NEUTRALIZED** |
 | **AARM-V7** | Context Window Overflow — agent proceeds on fundamentally incomplete context | DEFER State Machine (`defer_queue.py`, Redis db=1 `noeviction`) | $\text{confidence\_score} \in [0.70, 0.95) \Rightarrow \text{state} = \text{DEFERRED}$; execution blocked until `EXTERNAL_VALIDATION` injected | **NEUTRALIZED** |
 | **AARM-V8** | Temporal Deception — model engineers its own privilege escalation via time-based manipulation | Human-gated NeMo refinement (`POST /v1/nemo/propose-refinement` → human approval → `POST /v1/nemo/apply-refinement`) | $\nexists \text{path}: \text{model\_output} \xrightarrow{*} \text{apply\_refinement}$ without $\text{reviewer\_identity} \ne \emptyset \land \text{rationale} \ne \emptyset$ | **NEUTRALIZED** |
 | **AARM-V9** | Privilege Escalation — single model cannot detect its own compliance violations | Heterogeneous multi-model consensus (`RoutedCriticBackend`: DeepSeek-R1 Risk Manager + Llama 3.1 Compliance Officer) | $\forall \text{trade} > \text{threshold}: \text{vote}(\text{DeepSeek-R1}) = \text{APPROVE} \land \text{vote}(\text{Llama-3.1}) = \text{APPROVE}$ required | **NEUTRALIZED** |
@@ -273,7 +273,7 @@ A caller that caught `GovernanceError` from the old `govern()` path and proceede
 
 **Remediation (v2.0.0-rc.2 / v3.0.0):**
 
-[`SymbolicGovernor.govern()`](../../src/gateway/governance/governor/governor.py) now issues a routing seal on approval and returns it as a `str`. `govern()`, `validate_action()`, `revalidate_post_hitl()` and the NARROW re-run all seal through [`sealing.run_sealed()`](../../src/gateway/governance/governor/sealing.py): it opens a `ReservationScope`, calls `run_pipeline()`, and only on zero violations calls `issue_seal()` → [`routing_seal.generate_seal_with_evidence()`](../../src/gateway/governance/routing_seal.py). If the seal fails or is cancelled, every Phase 2 commit is rolled back LIFO from its `CommitReceipt`. A refused run that still holds commits raises `[UNROLLED_COMMIT]`. [`governance_middleware.enforce_governance(governor, ...)`](../../src/gateway/server/governance_middleware.py) propagates the seal to callers, and finance's [`execute_trade_action()`](../../src/cage_finance/tools/tool_provider.py) calls `verify_and_consume_seal()` before executing the trade. A missing, invalid or already-consumed seal produces an immediate `BLOCKED` response.
+[`SymbolicGovernor.govern()`](../../src/gateway/governance/governor/governor.py) now issues a routing seal on approval and returns it in a [`SealedAction`](../../src/gateway/governance/governor/sealing.py) with the evaluated params it commits to (the caller's params with the action's server inputs bound once). `govern()`, `revalidate_post_hitl()` and the NARROW re-run all seal through [`sealing.run_sealed()`](../../src/gateway/governance/governor/sealing.py): it opens a `ReservationScope`, calls `run_pipeline()`, and only on zero violations calls `issue_seal()` → [`routing_seal.generate_seal_with_evidence()`](../../src/gateway/governance/routing_seal.py). If the seal fails or is cancelled, every Phase 2 commit is rolled back LIFO from its `CommitReceipt`. A refused run that still holds commits raises `[UNROLLED_COMMIT]`. [`governance_middleware.enforce_governance(governor, ...)`](../../src/gateway/server/governance_middleware.py) returns the sealed action to callers, and finance's [`execute_trade_action()`](../../src/cage_finance/tools/tool_provider.py) calls `verify_and_consume_seal()` against `SealedAction.params` before executing exactly those params. A missing, invalid or already-consumed seal produces an immediate `BLOCKED` response.
 
 `govern()`, `validate_action()` and `revalidate_post_hitl()` all satisfy the invariant. There is no longer any code path from `CHECKING` to `EXECUTED` that bypasses `SEAL_ISSUED`.
 
@@ -456,11 +456,13 @@ verify_seal(seal, action, params, expected_record_hash)
 
 **Source:** [`src/gateway/governance/provenance_chain.py`](../../src/gateway/governance/provenance_chain.py)
 
-The provenance chain builds a cryptographic audit trail linking each LangGraph governance node's input and output. It satisfies **NIST AU-10** (non-repudiation), **ISO 42001 §A.7.5** (records integrity), and **AARM-V1** (Memory Poisoning neutralization).
+> **Not wired (`POAM-2026-246`):** `provenance_chain.py` has no production caller. No governance node produces a `ProvenanceRecord`, and no record is signed or persisted. The properties below hold for the library functions under [`tests/test_provenance_chain.py`](../../tests/test_provenance_chain.py) only; they are not a runtime control. The authoritative hash-chained decision record is the evidence stream ([`evidence/stream.py`](../../src/gateway/governance/evidence/stream.py)).
+
+The library defines a hash chain that would link each LangGraph governance node's input and output if anything called it. Nothing does, so it satisfies no control today. This section previously listed it against **NIST AU-10** (non-repudiation), **ISO 42001 §A.7.5** (records integrity) and **AARM-V1** (Memory Poisoning neutralization); those mappings are withdrawn.
 
 ### Hash Chain Construction
 
-Each governance node execution produces a `ProvenanceRecord`:
+`build_provenance_record()` returns a `ProvenanceRecord` (no governance node calls it today):
 
 ```python
 record_n = ProvenanceRecord(
@@ -487,7 +489,7 @@ $$\forall n: \text{record\_hash}_n = \text{SHA256}(\text{prev\_hash}_{n-1} \| \t
 
 **Valid decisions:** the canonical five — `ALLOW`, `DENY`, `DEFER`, `NARROW`, `REQUIRE_APPROVAL` (`VALID_DECISIONS` is derived from the `GovernanceDecision` enum; the retired `PAUSE` value is rejected). `build_provenance_record()` raises `ValueError` for any other value, preventing silent chain corruption from invalid decision strings.
 
-In production, each record is signed with the KMS key ring via [`src/gateway/governance/kms_signer.py`](../../src/gateway/governance/kms_signer.py) and written to the GCS WORM bucket under `provenance/<date>/<trace_id>.json`.
+No record is signed or persisted: there is no path from this module to [`src/gateway/governance/kms_signer.py`](../../src/gateway/governance/kms_signer.py) and no `provenance/<date>/<trace_id>.json` WORM prefix. An earlier version of this section said each record was KMS-signed and written to the GCS WORM bucket in production; that claim was never true and is withdrawn (`POAM-2026-246`).
 
 ---
 

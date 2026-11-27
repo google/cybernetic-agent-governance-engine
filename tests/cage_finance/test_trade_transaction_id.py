@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""A trade's transaction_id is its idempotency key, at the gateway and the broker (#514)."""
+"""A trade's idempotency_key is its idempotency key, at the gateway and the broker (#514)."""
 
 from __future__ import annotations
 
@@ -25,26 +25,27 @@ import httpx
 import pytest
 from pydantic import ValidationError
 
-from src.cage_finance.models.trade_order import TradeOrder, is_valid_transaction_id
+from src.cage_finance.models.trade_order import TradeOrder
 from src.cage_finance.tools import trade_executor
+from src.gateway.governance.execution_idempotency import is_valid_idempotency_key
 from src.gateway.governance.routing_seal import SymbolicGovernorViolation, generate_seal
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 
-def _order(transaction_id: str) -> TradeOrder:
+def _order(idempotency_key: str) -> TradeOrder:
     return TradeOrder(
         symbol="AAPL",
         amount=10,
         currency="USD",
         side="buy",
         confidence=0.99,
-        transaction_id=transaction_id,
+        idempotency_key=idempotency_key,
     )
 
 
 @pytest.mark.parametrize(
-    "transaction_id",
+    "idempotency_key",
     [
         str(uuid.uuid4()),
         str(uuid.uuid5(uuid.NAMESPACE_URL, "thread:t-1|call:c-1")),
@@ -52,13 +53,13 @@ def _order(transaction_id: str) -> TradeOrder:
     ],
     ids=["uuid4", "uuid5", "uuid4-upper"],
 )
-def test_uuid4_and_uuid5_are_accepted(transaction_id: str) -> None:
-    assert is_valid_transaction_id(transaction_id)
-    assert _order(transaction_id).transaction_id == transaction_id
+def test_uuid4_and_uuid5_are_accepted(idempotency_key: str) -> None:
+    assert is_valid_idempotency_key(idempotency_key)
+    assert _order(idempotency_key).idempotency_key == idempotency_key
 
 
 @pytest.mark.parametrize(
-    "transaction_id",
+    "idempotency_key",
     [
         str(uuid.uuid1()),
         str(uuid.uuid3(uuid.NAMESPACE_URL, "x")),
@@ -68,19 +69,19 @@ def test_uuid4_and_uuid5_are_accepted(transaction_id: str) -> None:
     ],
     ids=["uuid1", "uuid3", "hex", "trailing-newline", "garbage"],
 )
-def test_other_transaction_ids_are_refused(transaction_id: str) -> None:
-    assert not is_valid_transaction_id(transaction_id)
+def test_other_idempotency_keys_are_refused(idempotency_key: str) -> None:
+    assert not is_valid_idempotency_key(idempotency_key)
     with pytest.raises(ValidationError, match="UUID v4 or v5"):
-        _order(transaction_id)
+        _order(idempotency_key)
 
 
-def test_non_string_transaction_id_is_not_valid() -> None:
-    assert not is_valid_transaction_id(None)
-    assert not is_valid_transaction_id(uuid.uuid4())
+def test_non_string_idempotency_key_is_not_valid() -> None:
+    assert not is_valid_idempotency_key(None)
+    assert not is_valid_idempotency_key(uuid.uuid4())
 
 
 @pytest.mark.asyncio
-async def test_broker_order_carries_the_transaction_id_as_client_order_id(
+async def test_broker_order_carries_the_idempotency_key_as_client_order_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("CAGE_SEAL_STRICT_MODE", "false")
@@ -113,7 +114,7 @@ async def test_broker_order_carries_the_transaction_id_as_client_order_id(
             )
 
     assert result == "EXECUTED: AAPL x 10.0 (Order ID: broker-order-1)"
-    assert sent["client_order_id"] == order.transaction_id
+    assert sent["client_order_id"] == order.idempotency_key
 
 
 @pytest.mark.asyncio

@@ -18,7 +18,7 @@ import os
 import re
 import uuid
 from collections.abc import Mapping, Sequence
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, NoReturn
 
 from opentelemetry import trace
@@ -69,11 +69,13 @@ OBSERVATION_OUTPUT = "observation.output"
 
 
 def resolve_thread_id(params: dict[str, Any]) -> str:
-    """Resolve thread_id from params."""
-    if "thread_id" in params:
-        return str(params["thread_id"])
-    if "transaction_id" in params:
-        return str(params["transaction_id"])
+    """Resolve non-empty correlation thread_id from params (thread_id -> idempotency_key)."""
+    raw_thread = params.get("thread_id")
+    if raw_thread is not None and raw_thread != "":
+        return str(raw_thread)
+    raw_idem = params.get("idempotency_key")
+    if raw_idem is not None and raw_idem != "":
+        return str(raw_idem)
     return "unknown"
 
 
@@ -646,6 +648,20 @@ async def handle_post_hitl_defer(
     )
 
 
+def _defer_ttl_fields() -> dict[str, Any]:
+    """Return authoritative ``ttl_seconds`` and RFC 3339 ``defer_expires_at`` from ``DeferQueue``."""
+    from src.gateway.governance.defer_queue import _DEFAULT_TTL
+
+    ttl_s = int(_DEFAULT_TTL)
+    expires_at = datetime.now(timezone.utc) + timedelta(seconds=ttl_s)
+    return {
+        "ttl_seconds": ttl_s,
+        "defer_expires_at": expires_at.isoformat(timespec="milliseconds").replace(
+            "+00:00", "Z"
+        ),
+    }
+
+
 async def handle_require_approval(
     action: str,
     params: dict[str, Any],
@@ -715,6 +731,7 @@ async def handle_require_approval(
         "narrowed_params": (classification_meta.get("narrow_hint") or {}).get(
             "narrowed_params"
         ),
+        **(_defer_ttl_fields() if deferred_id else {}),
         **_reliance_field(reliance),
     }
 
@@ -779,6 +796,7 @@ async def handle_defer(
         "deferrable": classification_meta.get("deferrable", True),
         "retry_after_seconds": 300,
         "agent_id": agent_id,
+        **(_defer_ttl_fields() if defer_token else {}),
         **_reliance_field(reliance),
     }
 
@@ -992,13 +1010,46 @@ _INFRA_DEPENDENCY_BY_CODE: Mapping[str, tuple[str, str]] = {
         "execution_ledger_unavailable",
     ),
     "SERVER_INPUT_UNAVAILABLE": ("server_inputs", "server_input_unavailable"),
+    "CBF_RECONCILIATION_UNAVAILABLE": ("cbf", "governance_dependency_unavailable"),
+    "FISCAL_STORE_UNAVAILABLE": ("fiscal", "governance_dependency_unavailable"),
+    "FTRA_ERROR": ("ftra", "governance_dependency_unavailable"),
+    "FTRA_REGISTRY_UNAVAILABLE": ("ftra", "governance_dependency_unavailable"),
+    "TIER_EXCEPTION": ("governance", "governance_dependency_unavailable"),
+    "ROLLBACK_FAILED": ("governance", "governance_dependency_unavailable"),
+    "CONFIRM_FAILED": ("governance", "governance_dependency_unavailable"),
+    "KMS_SIGNING_UNAVAILABLE": ("kms", "kms_signing_unavailable"),
+    "NARROW_RECEIPT_UNAVAILABLE": ("evidence_stream", "narrow_receipt_unavailable"),
+    "CAUSAL_TELEMETRY_UNAVAILABLE": (
+        "causal_telemetry",
+        "causal_telemetry_unavailable",
+    ),
+    "CONSENSUS_NO_INFERENCE_BACKEND": (
+        "consensus",
+        "consensus_backend_unavailable",
+    ),
+    "CONSENSUS_NO_CRITICS_CONFIGURED": (
+        "consensus",
+        "consensus_backend_unavailable",
+    ),
+    "CONSENSUS_UNAVAILABLE": ("consensus", "consensus_backend_unavailable"),
+    "STPA_ERROR": ("stpa", "stpa_evaluation_error"),
+    "BOUNDING_PROVIDER_UNAVAILABLE": (
+        "bounding",
+        "bounding_provider_unavailable",
+    ),
 }
+
+INFRASTRUCTURE_FAILURE_CODES: frozenset[str] = frozenset(_INFRA_DEPENDENCY_BY_CODE)
 
 _INFRA_DEPENDENCY_BY_TIER: Mapping[str, tuple[str, str]] = {
     "opa": ("opa", "policy_engine_unavailable"),
     "defer_queue": ("defer_queue", "defer_queue_unavailable"),
     "execution_ledger": ("execution_ledger", "execution_ledger_unavailable"),
     "server_inputs": ("server_inputs", "server_input_unavailable"),
+    "causal": ("causal_telemetry", "causal_telemetry_unavailable"),
+    "consensus": ("consensus", "consensus_backend_unavailable"),
+    "stpa": ("stpa", "stpa_evaluation_error"),
+    "bounding": ("bounding", "bounding_provider_unavailable"),
 }
 
 

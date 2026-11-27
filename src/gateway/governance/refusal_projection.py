@@ -21,7 +21,7 @@ tier on governance refusals (``POAM-2026-225``, ``RP-1``):
   ``cage:evidence:stream`` and ``module.worm_bucket`` carries:
     1. ``params_hash`` — deterministic 64-hex SHA-256 over canonical
        ``(action, params)`` (excluding call-envelope ``thread_id`` /
-       ``transaction_id``), matching ``GOVERNANCE_DECISION`` and
+       ``idempotency_key``), matching ``GOVERNANCE_DECISION`` and
        ``GOVERNANCE_DEFERRAL``; and
     2. ``evaluated_params`` — a **default-deny**, **value-shape-constrained**
        projection of only the bounded scalar, boolean, closed-enum, or short
@@ -65,9 +65,10 @@ from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 SERVER_INPUT_INFRA_ERRORS_KEY = "__cage_server_input_unavailable__"
 
 #: Envelope-level correlation keys excluded before computing ``params_hash``,
-#: matching ``build_refusal_receipt``'s historical parameter scope.
+#: matching ``build_refusal_receipt``'s historical parameter scope so
+#: identical refusals under distinct per-request idempotency keys hash alike.
 REFUSAL_ENVELOPE_EXCLUDED_KEYS: frozenset[str] = frozenset(
-    {"thread_id", "transaction_id", SERVER_INPUT_INFRA_ERRORS_KEY}
+    {"thread_id", "idempotency_key", SERVER_INPUT_INFRA_ERRORS_KEY}
 )
 
 #: Valid Python/JSON parameter identifier shape.

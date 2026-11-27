@@ -127,6 +127,9 @@ class TestEndpointIdentity:
 
 class TestEndpointErrors:
     @pytest.mark.asyncio
+    @pytest.mark.covers(
+        "src.gateway.server.state_commitment_api:commit_state_endpoint#except StateCommitmentError as exc"
+    )
     async def test_chain_outage_is_503(self) -> None:
         response = await _post(
             _apps(RecordingEvidenceSink(fail=True)),
@@ -136,6 +139,9 @@ class TestEndpointErrors:
         assert response.status_code == 503
 
     @pytest.mark.asyncio
+    @pytest.mark.covers(
+        "src.gateway.server.state_commitment_api:commit_state_endpoint#except RuntimeError as exc"
+    )
     async def test_missing_service_is_503(self) -> None:
         response = await _post(
             _apps(None, with_service=False), _body(), {"l5d-client-id": TRUSTED}

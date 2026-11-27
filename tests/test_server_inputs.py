@@ -349,6 +349,82 @@ async def test_spoofed_approval_token_on_write_db_stripped_and_refused_by_uca1()
     assert bound["approval_token"] == "apr-9f1c2d3e"
 
 
+@pytest.mark.usefixtures("connected_evidence_sink")
+async def test_post_hitl_run_binds_server_inputs_once_and_seals_the_bound_params(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``revalidate_post_hitl`` binds ``write_db``'s server inputs exactly once,
+    under the verified approval: the forged ``approval_token`` is replaced by
+    the stamped one, and the stage, the approval's coverage check and spend,
+    the seal and the returned ``SealedAction`` all name those bound params."""
+    from unittest.mock import AsyncMock
+
+    from src.gateway.governance.contracts import ReadOnlyTier, Violation
+    from src.gateway.governance.governor import governor as governor_module
+    from src.gateway.governance.governor import sealing as sealing_module
+    from src.gateway.governance.governor.sealing import SealedAction
+    from tests.fixtures.approval import SpendCounter, granted_approval
+
+    evaluated_by_tier: list[dict[str, Any]] = []
+
+    class _RevalidatedWriteDbTier(ReadOnlyTier):
+        tier_name = "write_db_reval"
+        order = 1
+        revalidated_after_approval = True
+
+        def claims_action(self, action: str, params: dict[str, Any]) -> bool:
+            return action == "write_db"
+
+        async def evaluate(
+            self, action: str, params: dict[str, Any]
+        ) -> list[Violation]:
+            evaluated_by_tier.append(dict(params))
+            return []
+
+    bindings: list[str] = []
+    real_bind = governor_module.bind_server_inputs
+
+    async def _counting_bind(
+        resolvers: Mapping[str, ServerInputResolver],
+        action: str,
+        params: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        bindings.append(action)
+        return await real_bind(resolvers, action, params)
+
+    monkeypatch.setattr(governor_module, "bind_server_inputs", _counting_bind)
+    issue_seal = AsyncMock(return_value="seal-write-db")
+    monkeypatch.setattr(sealing_module, "issue_seal", issue_seal)
+
+    gov = make_governor(domain_tiers=(_RevalidatedWriteDbTier(),))
+    counter = SpendCounter()
+    caller = {"table": "positions", "approval_token": "forged-token-123456"}
+
+    governed = await gov.revalidate_post_hitl(
+        "write_db",
+        caller,
+        approval=granted_approval(approval_id="9f1c2d3e", counter=counter),
+    )
+
+    bound = {"table": "positions", "approval_token": "apr-9f1c2d3e"}
+    assert isinstance(governed, SealedAction)
+    assert (governed.action, governed.seal, governed.params) == (
+        "write_db",
+        "seal-write-db",
+        bound,
+    )
+    # One binding: there is no second server-input lookup.
+    assert bindings == ["write_db"]
+    assert evaluated_by_tier == [bound]
+    assert counter.covered == [bound]
+    assert counter.params == [bound]
+    assert counter.spent is True
+    issue_seal.assert_awaited_once()
+    assert issue_seal.await_args.args == ("write_db", bound)
+    # The caller's dict is snapshotted, never mutated.
+    assert caller == {"table": "positions", "approval_token": "forged-token-123456"}
+
+
 from src.gateway.governance.env_posture import DeploymentPosture as _Posture
 
 

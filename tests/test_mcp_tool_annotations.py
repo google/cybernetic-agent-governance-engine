@@ -45,7 +45,7 @@ def _finance_server() -> FastMCP:
 
 @pytest.mark.asyncio
 async def test_trade_tool_is_destructive_and_idempotent() -> None:
-    """Destructive, but the mandatory transaction_id makes a resend a replay."""
+    """Destructive, but the mandatory idempotency_key makes a resend a replay."""
     tools = {t.name: t.annotations for t in await _finance_server().list_tools()}
 
     trade = tools["execute_trade_action"]

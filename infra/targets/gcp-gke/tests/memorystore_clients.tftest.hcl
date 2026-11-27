@@ -39,6 +39,12 @@
 # The key values below are test fixtures, not credentials.
 
 mock_provider "google" {
+  mock_data "google_monitoring_notification_channel" {
+    defaults = {
+      enabled = true
+      name    = "projects/cage-test-project/notificationChannels/12345"
+    }
+  }
   mock_resource "google_container_cluster" {
     override_during = plan
     defaults = {

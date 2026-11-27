@@ -48,6 +48,7 @@ from src.cage_finance.actuators.broker_actuator import BrokerActuator
 from src.cage_finance.ground_truth import SimulatedCashLedgerProvider
 from src.cage_healthcare.tools.tool_provider import ClinicalDoseActuator
 from src.gateway.governance.execution_actuator import ActuatorRegistry
+from src.gateway.governance.governor.sealing import SealedAction
 from src.gateway.governance.governor.trace import seal_ref
 from src.gateway.governance.seams.actuation import ExecutionClearance
 from src.gateway.governance.seams.ground_truth import InMemoryLedgerJournal
@@ -140,6 +141,10 @@ async def test_seal_digest_is_sha256_and_the_trace_join_key(seal: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.covers(
+    "src.gateway.governance.seams.actuation:ExecutionClearance.__post_init__#require_sha256_hex",
+    "src.gateway.governance.seams.digests:require_sha256_hex#raise ValueError",
+)
 async def test_clearance_refuses_a_seal_in_the_digest_field(seal: str) -> None:
     with pytest.raises(ValueError, match="SHA-256") as refused:
         _clearance(digest=seal, routing_seal=seal)
@@ -160,6 +165,10 @@ async def test_clearance_refuses_a_seal_in_the_digest_field(seal: str) -> None:
         64,
     ],
     ids=["empty", "upper", "short", "long", "non-hex", "newline", "none", "int"],
+)
+@pytest.mark.covers(
+    "src.gateway.governance.seams.actuation:ExecutionClearance.__post_init__#require_sha256_hex",
+    "src.gateway.governance.seams.digests:require_sha256_hex#raise ValueError",
 )
 def test_clearance_refuses_any_non_digest(digest: Any) -> None:
     with pytest.raises(ValueError, match="SHA-256"):
@@ -190,16 +199,17 @@ async def test_finance_records_the_digest_and_hands_the_broker_the_seal(
     registry.register(BrokerActuator(ledger=ledger), claims={"execute_trade"})
     broker_execute = AsyncMock(return_value="EXECUTED (mock): AAPL x 10.0 buy")
     from src.cage_finance.tools.tool_provider import execute_trade_action
+    from src.gateway.governance.commit_outcome import CommitStatus
 
     minted_seals: list[str] = []
 
     async def _mint_for_trade(
         _gov: Any, act: str, params: dict[str, Any], **_kw: Any
-    ) -> str:
+    ) -> SealedAction:
         s = await rs.generate_seal(act, params, record_hash="c" * 64)
         assert rs._is_jwt_seal(s) is rs._is_jwt_seal(seal)
         minted_seals.append(s)
-        return s
+        return SealedAction(act, s, dict(params))
 
     with ExitStack() as stack:
         for target, value in (
@@ -229,12 +239,13 @@ async def test_finance_records_the_digest_and_hands_the_broker_the_seal(
             currency="USD",
             confidence=0.99,
             governor=trade_governor(),
-            transaction_id=str(uuid.uuid4()),
+            idempotency_key=str(uuid.uuid4()),
         )
 
     assert len(minted_seals) == 1
     fin_seal = minted_seals[0]
-    assert result.startswith("EXECUTED"), result
+    assert result.status is CommitStatus.EXECUTED, result
+    assert result.message.startswith("EXECUTED"), result
     # The broker re-checks the seal itself, never the digest.
     assert broker_execute.await_args.kwargs["routing_seal"] == fin_seal
     receipt = sink.only("ACTUATION_RECEIPT")
@@ -247,10 +258,15 @@ async def test_healthcare_records_the_digest_not_the_seal(
 ) -> None:
     from src.cage_healthcare.tools import tool_provider as clinical
     from src.cage_healthcare.tools.dose_order import DoseOrder
+    from src.gateway.governance.execution_idempotency import ExecutionLedger
 
+    dose_key = "44444444-4444-4444-8444-444444444444"
     dose_params = {
         **DoseOrder(
-            patient_id="patient-1", medication="heparin", dose_mg=2.0
+            patient_id="patient-1",
+            medication="heparin",
+            dose_mg=2.0,
+            idempotency_key=dose_key,
         ).model_dump(),
         "confidence": 0.99,
     }
@@ -263,11 +279,16 @@ async def test_healthcare_records_the_digest_not_the_seal(
     registry = ActuatorRegistry()
     registry.register(ClinicalDoseActuator(), claims={"administer_dose"})
     governor = MagicMock(settle=AsyncMock(return_value=[]))
+    governor.components.execution_ledger = ExecutionLedger(None)
 
     with ExitStack() as stack:
         stack.enter_context(
             patch.object(
-                clinical, "enforce_governance", AsyncMock(return_value=hc_seal)
+                clinical,
+                "enforce_governance",
+                AsyncMock(
+                    return_value=SealedAction("administer_dose", hc_seal, dose_params)
+                ),
             )
         )
         stack.enter_context(
@@ -280,16 +301,21 @@ async def test_healthcare_records_the_digest_not_the_seal(
         )
         stack.enter_context(patch(_SINK, MagicMock(return_value=sink)))
         result = await clinical.administer_dose_action(
-            "patient-1", "heparin", 2.0, governor=governor
+            "patient-1", "heparin", 2.0, dose_key, governor=governor
         )
 
-    assert result["status"] == "GOVERNED", result
+    from src.gateway.governance.commit_outcome import CommitStatus
+
+    assert result.status is CommitStatus.EXECUTED, result
     receipt = sink.only("ACTUATION_RECEIPT")
     assert receipt["governance_decision_digest"] == rs.seal_digest(hc_seal)
     _assert_seal_absent(sink.events, hc_seal)
     governor.settle.assert_awaited_once_with(hc_seal, executed=True)
 
 
+@pytest.mark.covers(
+    "src.cage_healthcare.tools.tool_provider:ClinicalDoseActuator.actuate#CLEARANCE_INVALID"
+)
 async def test_clinical_actuator_refuses_a_clearance_without_its_seal() -> None:
     clearance = _clearance(digest=rs.seal_digest("seal-under-test"))
     clearance.executor_id = ClinicalDoseActuator.actuator_id

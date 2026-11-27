@@ -458,10 +458,10 @@ async def test_post_hitl_inside_the_window_relies_on_the_cached_warrant() -> Non
         "src.gateway.governance.routing_seal.generate_seal_with_evidence",
         return_value="seal-ok",
     ):
-        seal = await governor.revalidate_post_hitl(
+        sealed = await governor.revalidate_post_hitl(
             "execute_trade", dict(_TRADE), approval=granted_approval("PASS")
         )
-    assert seal == "seal-ok"
+    assert sealed.seal == "seal-ok"
     assert source.calls == 1
 
 
@@ -498,10 +498,10 @@ async def test_post_hitl_with_an_expired_cache_seals_on_a_good_refetch() -> None
         "src.gateway.governance.routing_seal.generate_seal_with_evidence",
         return_value="seal-ok",
     ):
-        seal = await governor.revalidate_post_hitl(
+        sealed = await governor.revalidate_post_hitl(
             "execute_trade", dict(_TRADE), approval=granted_approval("PASS")
         )
-    assert seal == "seal-ok"
+    assert sealed.seal == "seal-ok"
     assert source.calls == 2
 
 
@@ -548,13 +548,55 @@ def test_out_of_bounds_window_is_refused(fields: dict[str, Any]) -> None:
 @pytest.mark.parametrize(
     "kwargs",
     [
-        {"max_age_seconds": 60.001},
-        {"max_age_seconds": 0},
-        {"max_age_seconds": -1},
-        {"max_age_seconds": float("inf")},
-        {"max_age_seconds": True},
-        {"fetch_timeout_seconds": 0},
-        {"max_age_seconds": 1, "fetch_timeout_seconds": 1},
+        pytest.param(
+            {"max_age_seconds": 60.001},
+            id="above_contract_max",
+            marks=pytest.mark.covers(
+                "src.gateway.governance.warrant.cache:WarrantCache.__init__#exceeds the Warrant Contract"
+            ),
+        ),
+        pytest.param(
+            {"max_age_seconds": 0},
+            id="max_age_zero",
+            marks=pytest.mark.covers(
+                "src.gateway.governance.warrant.cache:_positive_seconds#must be a finite positive number"
+            ),
+        ),
+        pytest.param(
+            {"max_age_seconds": -1},
+            id="max_age_negative",
+            marks=pytest.mark.covers(
+                "src.gateway.governance.warrant.cache:_positive_seconds#must be a finite positive number"
+            ),
+        ),
+        pytest.param(
+            {"max_age_seconds": float("inf")},
+            id="max_age_inf",
+            marks=pytest.mark.covers(
+                "src.gateway.governance.warrant.cache:_positive_seconds#must be a finite positive number"
+            ),
+        ),
+        pytest.param(
+            {"max_age_seconds": True},
+            id="max_age_bool",
+            marks=pytest.mark.covers(
+                "src.gateway.governance.warrant.cache:_positive_seconds#must be a finite positive number"
+            ),
+        ),
+        pytest.param(
+            {"fetch_timeout_seconds": 0},
+            id="timeout_zero",
+            marks=pytest.mark.covers(
+                "src.gateway.governance.warrant.cache:_positive_seconds#must be a finite positive number"
+            ),
+        ),
+        pytest.param(
+            {"max_age_seconds": 1, "fetch_timeout_seconds": 1},
+            id="timeout_ge_max_age",
+            marks=pytest.mark.covers(
+                "src.gateway.governance.warrant.cache:WarrantCache.__init__#must be shorter than"
+            ),
+        ),
     ],
 )
 def test_cache_refuses_an_out_of_bounds_window(kwargs: dict[str, Any]) -> None:
@@ -665,6 +707,9 @@ async def test_every_reliance_record_carries_freshness() -> None:
     assert all(isinstance(v, str) for v in evidence.values())
 
 
+@pytest.mark.covers(
+    "src.gateway.governance.warrant.reliance:RelianceRecord.__post_init__#must be None or a finite number >= 0"
+)
 @pytest.mark.parametrize(
     "fields",
     [

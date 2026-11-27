@@ -41,9 +41,9 @@ from src.gateway.governance.warrant import (
     WarrantCache,
 )
 from src.integrations.provider_05 import (
-    VEIP_SANDBOX_BASE_URL,
-    VEIP_SANDBOX_ROOT_FINGERPRINT,
-    VEIP_SANDBOX_TRUST_ANCHOR,
+    PROVIDER_05_SANDBOX_BASE_URL,
+    PROVIDER_05_SANDBOX_ROOT_FINGERPRINT,
+    PROVIDER_05_SANDBOX_TRUST_ANCHOR,
     Provider05WarrantSource,
 )
 
@@ -53,7 +53,7 @@ pytestmark = [
     pytest.mark.partner,
 ]
 
-VEIP_V02_EVAL_TIME = datetime(2026, 10, 7, 14, 0, 10, tzinfo=timezone.utc)
+PROVIDER_05_V02_EVAL_TIME = datetime(2026, 10, 7, 14, 0, 10, tzinfo=timezone.utc)
 
 _EU_ECB_BINDING = NormBinding(
     norm_id=TRADE_CONFIDENCE_NORM_ID,
@@ -64,27 +64,27 @@ _EU_ECB_BINDING = NormBinding(
 )
 
 
-def _veip_sandbox_url() -> str:
+def _provider_05_sandbox_url() -> str:
     return (
         os.environ.get("PROVIDER_05_ATTESTATION_ENDPOINT", "").strip()
-        or VEIP_SANDBOX_BASE_URL
+        or PROVIDER_05_SANDBOX_BASE_URL
     )
 
 
 @pytest.mark.asyncio
-async def test_live_veip_v02_key_manifest_fetch_and_root_verification() -> None:
+async def test_live_provider_05_v02_key_manifest_fetch_and_root_verification() -> None:
     """Fetch /.well-known/veip/key-manifest.json over the wire and verify root signature."""
-    source = Provider05WarrantSource(endpoint=_veip_sandbox_url())
+    source = Provider05WarrantSource(endpoint=_provider_05_sandbox_url())
     assert source.trust_anchor is not None
-    assert source.trust_anchor.fingerprint == VEIP_SANDBOX_ROOT_FINGERPRINT
+    assert source.trust_anchor.fingerprint == PROVIDER_05_SANDBOX_ROOT_FINGERPRINT
 
     raw_manifest = await source.fetch_key_manifest()
     assert raw_manifest is not None and isinstance(raw_manifest, dict)
 
     verified = VerifiedKeyManifest.verify(
         raw_manifest,
-        VEIP_SANDBOX_TRUST_ANCHOR,
-        now=VEIP_V02_EVAL_TIME,
+        PROVIDER_05_SANDBOX_TRUST_ANCHOR,
+        now=PROVIDER_05_V02_EVAL_TIME,
     )
     assert verified.schema_version == "veip-key-manifest/0.2"
     assert verified.manifest_id == "veip-sandbox-manifest-2026-10-07"
@@ -94,7 +94,7 @@ async def test_live_veip_v02_key_manifest_fetch_and_root_verification() -> None:
     )
     key_entry = verified.resolve_key("veip-sandbox-issuer-2026-10")
     assert key_entry is not None
-    assert key_entry.is_active_at(VEIP_V02_EVAL_TIME)
+    assert key_entry.is_active_at(PROVIDER_05_V02_EVAL_TIME)
 
 
 @pytest.mark.asyncio
@@ -159,7 +159,7 @@ async def test_live_veip_v02_key_manifest_fetch_and_root_verification() -> None:
         ),
     ],
 )
-async def test_live_veip_v02_all_eight_scenarios_over_the_wire(
+async def test_live_provider_05_v02_all_eight_scenarios_over_the_wire(
     scenario: str,
     expected_status: RelianceStatus,
     expected_verified: str,
@@ -167,15 +167,15 @@ async def test_live_veip_v02_all_eight_scenarios_over_the_wire(
 ) -> None:
     """Exercise all 8 VEIP v0.2 scenarios over the wire through WarrantCache and WarrantStage."""
     source = Provider05WarrantSource(
-        endpoint=_veip_sandbox_url(),
+        endpoint=_provider_05_sandbox_url(),
         scenario="" if scenario == "ACTIVE" else scenario,
     )
-    cache = WarrantCache(source, wall_clock=lambda: VEIP_V02_EVAL_TIME)
+    cache = WarrantCache(source, wall_clock=lambda: PROVIDER_05_V02_EVAL_TIME)
     stage = WarrantStage(
         [_EU_ECB_BINDING],
         cache,
         jurisdiction="EU_ECB",
-        clock=lambda: VEIP_V02_EVAL_TIME,
+        clock=lambda: PROVIDER_05_V02_EVAL_TIME,
     )
 
     output = await stage.run(
@@ -208,33 +208,30 @@ async def test_live_veip_v02_all_eight_scenarios_over_the_wire(
 
 
 @pytest.mark.asyncio
-async def test_live_veip_v02_alignment_against_jcar_comparison_target() -> None:
+async def test_live_provider_05_v02_alignment_against_jcar_comparison_target() -> None:
     """Verify all 8 live wire scenarios match the VEIP JCAR-001 expected target."""
     import json
     from pathlib import Path
 
-    jcar_path = (
-        Path(__file__).resolve().parents[3]
-        / "docs"
-        / "partners"
-        / "provider_05"
-        / "veip_v02"
-        / "CAGE_VEIP_v0.2_JCAR_001_BASELINE.json"
+    jcar_path = next(
+        (
+            Path(__file__).resolve().parents[3] / "docs" / "partners" / "provider_05"
+        ).rglob("*_JCAR_001_BASELINE.json")
     )
     baseline = json.loads(jcar_path.read_text(encoding="utf-8"))
 
     for target in baseline["comparison"]:
         scenario = target["scenario"]
         source = Provider05WarrantSource(
-            endpoint=_veip_sandbox_url(),
+            endpoint=_provider_05_sandbox_url(),
             scenario="" if scenario == "ACTIVE" else scenario,
         )
-        cache = WarrantCache(source, wall_clock=lambda: VEIP_V02_EVAL_TIME)
+        cache = WarrantCache(source, wall_clock=lambda: PROVIDER_05_V02_EVAL_TIME)
         stage = WarrantStage(
             [_EU_ECB_BINDING],
             cache,
             jurisdiction="EU_ECB",
-            clock=lambda: VEIP_V02_EVAL_TIME,
+            clock=lambda: PROVIDER_05_V02_EVAL_TIME,
         )
         output = await stage.run(
             StageContext(

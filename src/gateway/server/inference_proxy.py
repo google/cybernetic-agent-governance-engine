@@ -41,6 +41,7 @@ Governance pipeline applied here:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
 import json
 import logging
@@ -56,6 +57,7 @@ import httpx
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
 
 from src.gateway.governance.evidence.stream import EvidenceChainUnavailableError
 from src.gateway.governance.inference_backend import (
@@ -66,7 +68,11 @@ from src.gateway.governance.inference_backend import (
 )
 from src.gateway.governance.iso_control import stamp_iso_control
 from src.gateway.governance.text_filter import ac_keyword_scan
-from src.gateway.governance.token_quota_proxy import _get_token_quota_proxy
+from src.gateway.governance.token_quota_proxy import (
+    QuotaCheckResult,
+    QuotaExceededError,
+    _get_token_quota_proxy,
+)
 from src.gateway.governance.uca_logger import _get_uca_logger
 from src.gateway.infrastructure.config_manager import config_manager
 from src.gateway.infrastructure.privacy import scrub_pii
@@ -157,6 +163,85 @@ def _reject_non_finite_json(token: str) -> Any:
     raise ValueError(f"Non-finite JSON constant {token!r} is not permitted")
 
 
+_ALLOWED_CHAT_COMPLETION_TOP_KEYS = frozenset(
+    {
+        "model",
+        "messages",
+        "prompt",
+        "system",
+        "stream",
+        "stream_options",
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "typical_p",
+        "n",
+        "best_of",
+        "use_beam_search",
+        "length_penalty",
+        "early_stopping",
+        "max_tokens",
+        "max_completion_tokens",
+        "min_tokens",
+        "stop",
+        "stop_token_ids",
+        "include_stop_str_in_output",
+        "ignore_eos",
+        "presence_penalty",
+        "frequency_penalty",
+        "repetition_penalty",
+        "logit_bias",
+        "logprobs",
+        "top_logprobs",
+        "prompt_logprobs",
+        "user",
+        "seed",
+        "tools",
+        "tool_choice",
+        "parallel_tool_calls",
+        "functions",
+        "function_call",
+        "response_format",
+        "reasoning_effort",
+        "include_reasoning",
+        "store",
+        "metadata",
+        "modalities",
+        "audio",
+        "prediction",
+        "service_tier",
+        "web_search_options",
+        "guided_json",
+        "guided_regex",
+        "guided_choice",
+        "guided_grammar",
+        "guided_decoding_backend",
+        "guided_whitespace_pattern",
+        "structural_tag",
+        "structured_outputs",
+        "chat_template",
+        "chat_template_kwargs",
+        "add_generation_prompt",
+        "continue_final_message",
+        "echo",
+        "spaces_between_special_tokens",
+        "truncate_prompt_tokens",
+        "skip_special_tokens",
+        "lora_request",
+        "priority",
+        "kv_transfer_params",
+        "vllm_xargs",
+        "extra_body",
+        "thread_id",
+        "trace_id",
+        "session_id",
+        "conversation_id",
+        "agent_id",
+    }
+)
+
+
 async def _read_validated_chat_body(
     request: Request,
 ) -> tuple[dict[str, Any] | None, JSONResponse | None]:
@@ -243,14 +328,32 @@ async def _read_validated_chat_body(
                 "message": "Request body must be a JSON object",
             },
         )
-    if "messages" in parsed and not isinstance(parsed.get("messages"), list):
+    unknown_top_keys = sorted(
+        str(k)[:64] for k in parsed if k not in _ALLOWED_CHAT_COMPLETION_TOP_KEYS
+    )
+    if unknown_top_keys:
         return None, JSONResponse(
             status_code=400,
             content={
                 "error": "invalid_request_error",
-                "message": "messages must be a list",
+                "message": (
+                    f"Unsupported top-level request field(s): "
+                    f"{', '.join(unknown_top_keys[:10])}"
+                ),
             },
         )
+    if "messages" in parsed:
+        raw_messages = parsed.get("messages")
+        if not isinstance(raw_messages, list) or any(
+            not isinstance(item, dict) for item in raw_messages
+        ):
+            return None, JSONResponse(
+                status_code=400,
+                content={
+                    "error": "invalid_request_error",
+                    "message": "messages must be a list of message objects",
+                },
+            )
     if (
         "stream_options" in parsed
         and parsed.get("stream_options") is not None
@@ -320,11 +423,90 @@ def _compute_token_reservation(body: dict[str, Any], scannable_prompt_text: str)
     explicit_max = max(explicit_limits)
     if explicit_max == 0:
         return prompt_estimate
-    return explicit_max * num_choices
+    return prompt_estimate + (explicit_max * num_choices)
+
+
+def _resolve_quota_session_id(
+    agent_id: str, request: Request, body: dict[str, Any]
+) -> str:
+    """Build a collision-resistant quota scope key for ``agent_id`` + session/thread."""
+    candidates: tuple[Any, ...] = (
+        request.headers.get("x-cage-thread-id"),
+        request.headers.get("x-cage-session-id"),
+        body.get("thread_id"),
+        body.get("session_id"),
+        body.get("conversation_id"),
+    )
+    for raw in candidates:
+        if isinstance(raw, str):
+            cleaned = raw.strip()
+            if cleaned:
+                digest = hashlib.sha256(cleaned.encode("utf-8")).hexdigest()[:16]
+                return f"{agent_id}:s:{digest}"
+    return agent_id
+
+
+def _supports_workload_id_kwarg(fn: Any) -> bool:
+    """Return True if *fn* accepts ``workload_id=...`` (or ``**kwargs``)."""
+    try:
+        sig = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return False
+    if "workload_id" in sig.parameters:
+        return True
+    return any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+
+
+async def _check_quota_step(
+    quota_session_id: str, agent_id: str, token_delta: int
+) -> Any:
+    quota_proxy = _get_token_quota_proxy()
+    check_fn = quota_proxy.check_and_increment
+    if quota_session_id != agent_id and _supports_workload_id_kwarg(check_fn):
+        return await check_fn(
+            agent_id=quota_session_id,
+            token_delta=token_delta,
+            workload_id=agent_id,
+        )
+    return await check_fn(
+        agent_id=quota_session_id,
+        token_delta=token_delta,
+    )
+
+
+async def _rollback_quota_step(
+    quota_session_id: str, agent_id: str, reserved_tokens: int
+) -> None:
+    quota_proxy = _get_token_quota_proxy()
+    rollback_fn = quota_proxy.rollback_step
+    if quota_session_id != agent_id and _supports_workload_id_kwarg(rollback_fn):
+        await rollback_fn(
+            quota_session_id,
+            reserved_tokens=reserved_tokens,
+            workload_id=agent_id,
+        )
+        return
+    await rollback_fn(quota_session_id, reserved_tokens=reserved_tokens)
+
+
+async def _shielded_quota_rollback(
+    quota_session_id: str, agent_id: str, reserved_tokens: int
+) -> None:
+    """Run quota rollback shielded from task cancellation on BaseException."""
+    try:
+        await asyncio.shield(
+            _rollback_quota_step(quota_session_id, agent_id, reserved_tokens)
+        )
+    except asyncio.CancelledError:
+        pass
 
 
 async def _reconcile_actual_usage(
-    agent_id: str, reserved_tokens: int, usage: Any
+    quota_session_id: str,
+    reserved_tokens: int,
+    usage: Any,
+    *,
+    workload_id: str | None = None,
 ) -> None:
     """Reconcile reserved token quota against actual vLLM usage.total_tokens when present."""
     if not isinstance(usage, dict):
@@ -339,7 +521,19 @@ async def _reconcile_actual_usage(
     quota_proxy = _get_token_quota_proxy()
     reconcile_fn = getattr(quota_proxy, "reconcile_actual_tokens", None)
     if callable(reconcile_fn):
-        res = reconcile_fn(agent_id, reserved_tokens, total_tokens)
+        if (
+            workload_id
+            and workload_id != quota_session_id
+            and _supports_workload_id_kwarg(reconcile_fn)
+        ):
+            res = reconcile_fn(
+                quota_session_id,
+                reserved_tokens,
+                total_tokens,
+                workload_id=workload_id,
+            )
+        else:
+            res = reconcile_fn(quota_session_id, reserved_tokens, total_tokens)
         if inspect.isawaitable(res):
             await res
 
@@ -426,6 +620,15 @@ def _map_upstream_error_status(upstream_status: int) -> int:
     return 502
 
 
+class UpstreamStreamingBackendError(Exception):
+    """Typed out-of-band signal for upstream HTTP >= 400 streaming responses."""
+
+    def __init__(self, upstream_status: int, correlation_id: str) -> None:
+        self.upstream_status = upstream_status
+        self.correlation_id = correlation_id
+        super().__init__(f"Upstream inference error {upstream_status}")
+
+
 async def _stream_vllm(
     target_url: str,
     body: dict[str, Any],
@@ -438,7 +641,9 @@ async def _stream_vllm(
     The bytes this yields never reach the client: ``chat_completions``
     buffers them, parses each ``data:`` payload and returns frames that
     :func:`~src.gateway.server.completion_egress.encode_sse_frames` builds
-    from the allowlisted, masked completion.
+    from the allowlisted, masked completion. Upstream HTTP ``>= 400`` status
+    codes raise :class:`UpstreamStreamingBackendError` out-of-band rather than
+    injecting synthetic frames onto the SSE stream (``POAM-2026-237``).
 
     When *span* and *request_start_ns* are provided, captures the time-to-
     first-token (TTFT) on the first non-empty chunk and records it on the span
@@ -462,13 +667,10 @@ async def _stream_vllm(
                 correlation_id,
                 scrub_pii(error_body.decode(errors="replace")[:200]),
             )
-            err_event = {
-                "error": f"vLLM backend error {resp.status_code}",
-                "status_code": int(resp.status_code),
-                "correlation_id": correlation_id,
-            }
-            yield f"data: {json.dumps(err_event)}\n\n".encode()
-            return
+            raise UpstreamStreamingBackendError(
+                upstream_status=int(resp.status_code),
+                correlation_id=correlation_id,
+            )
         async for chunk in resp.aiter_bytes():
             if chunk:
                 # ── TTFT capture ───────────────────────────────────────
@@ -601,10 +803,22 @@ async def _mask_json_value(rails: Any, value: Any) -> tuple[Any, bool]:
     if isinstance(value, dict):
         modified = False
         out_dict: dict[str, Any] = {}
-        for key, item in value.items():
+        for idx, (key, item) in enumerate(value.items()):
+            raw_key = str(key)
+            raw_scrubbed = scrub_pii(raw_key)
+            scrubbed_key = (
+                raw_scrubbed if isinstance(raw_scrubbed, str) else str(raw_scrubbed)
+            )
+            final_key = scrubbed_key
+            if final_key in out_dict:
+                suffix = idx
+                while f"{scrubbed_key}_{suffix}" in out_dict:
+                    suffix += 1
+                final_key = f"{scrubbed_key}_{suffix}"
+            key_mod = final_key != raw_key
             new_item, item_mod = await _mask_json_value(rails, item)
-            out_dict[str(key)] = new_item
-            modified = modified or item_mod
+            out_dict[final_key] = new_item
+            modified = modified or key_mod or item_mod
         return out_dict, modified
     return value, False
 
@@ -655,6 +869,64 @@ class _ProxyMasker:
         return scrubbed if isinstance(scrubbed, str) else str(scrubbed)
 
 
+_BINARY_CONTENT_KEYS = frozenset({"image_url", "input_audio", "audio", "file", "data"})
+_MSG_HANDLED_OR_STRUCTURAL_KEYS = frozenset(
+    {
+        "role",
+        "content",
+        "reasoning_content",
+        "reasoning",
+        "refusal",
+        "name",
+        "tool_calls",
+        "function_call",
+        "tool_call_id",
+        "id",
+        "type",
+        "audio",
+    }
+)
+
+
+def _iter_nonbinary_string_leaves(value: Any, fragments: list[str]) -> None:
+    """Append string leaves from nested dict/list values while skipping binary media keys."""
+    if isinstance(value, str):
+        if value:
+            fragments.append(value)
+    elif isinstance(value, list):
+        for item in value:
+            _iter_nonbinary_string_leaves(item, fragments)
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            if str(key) in _BINARY_CONTENT_KEYS:
+                continue
+            _iter_nonbinary_string_leaves(item, fragments)
+
+
+def _extract_callable_invocation_fragments(call_obj: Any, fragments: list[str]) -> None:
+    """Extract scannable fragments from a ``function_call`` or ``tool_calls[*].function`` payload."""
+    if call_obj is None:
+        return
+    if isinstance(call_obj, str):
+        if call_obj:
+            fragments.append(call_obj)
+        return
+    if isinstance(call_obj, dict):
+        for key in ("name", "arguments"):
+            raw = call_obj.get(key)
+            if isinstance(raw, str):
+                if raw:
+                    fragments.append(raw)
+            elif raw is not None:
+                fragments.append(json.dumps(raw, default=str))
+        for key, extra_val in call_obj.items():
+            if key in {"name", "arguments"} or str(key) in _BINARY_CONTENT_KEYS:
+                continue
+            _iter_nonbinary_string_leaves(extra_val, fragments)
+        return
+    fragments.append(json.dumps(call_obj, default=str))
+
+
 def _extract_message_content_text(content: Any) -> str:
     """Extract text from an OpenAI string, multi-part content array, or structured value."""
     if content is None:
@@ -665,16 +937,18 @@ def _extract_message_content_text(content: Any) -> str:
         parts: list[str] = []
         for part in content:
             if isinstance(part, dict):
-                text_val = part.get("text")
-                if isinstance(text_val, str) and text_val:
-                    parts.append(text_val)
-                input_text_val = part.get("input_text")
-                if (
-                    isinstance(input_text_val, str)
-                    and input_text_val
-                    and input_text_val != text_val
-                ):
-                    parts.append(input_text_val)
+                seen_in_part: set[str] = set()
+                for text_key in ("text", "input_text", "refusal"):
+                    val = part.get(text_key)
+                    if isinstance(val, str) and val and val not in seen_in_part:
+                        parts.append(val)
+                        seen_in_part.add(val)
+                for key, extra_val in part.items():
+                    if key in {"type", "text", "input_text", "refusal"} or (
+                        str(key) in _BINARY_CONTENT_KEYS
+                    ):
+                        continue
+                    _iter_nonbinary_string_leaves(extra_val, parts)
             elif isinstance(part, str) and part:
                 parts.append(part)
         return " ".join(parts)
@@ -682,30 +956,115 @@ def _extract_message_content_text(content: Any) -> str:
 
 
 def _extract_scannable_messages_text(messages: Any) -> str:
-    """Collect all scannable text from messages and assistant tool_calls."""
+    """Collect all scannable text across message content, tool_calls, and legacy function_call."""
     if not isinstance(messages, list):
         return ""
     fragments: list[str] = []
     for msg in messages:
         if not isinstance(msg, dict):
             continue
-        text = _extract_message_content_text(msg.get("content"))
-        if text:
-            fragments.append(text)
-        reasoning_text = _extract_message_content_text(msg.get("reasoning_content"))
-        if reasoning_text:
-            fragments.append(reasoning_text)
+        for text_field in (
+            "content",
+            "reasoning_content",
+            "reasoning",
+            "refusal",
+            "name",
+        ):
+            text = _extract_message_content_text(msg.get(text_field))
+            if text:
+                fragments.append(text)
         tool_calls = msg.get("tool_calls")
         if isinstance(tool_calls, list):
             for tc in tool_calls:
-                if not isinstance(tc, dict):
-                    continue
-                fn = tc.get("function")
-                if isinstance(fn, dict):
-                    if isinstance(fn.get("name"), str):
-                        fragments.append(fn["name"])
-                    if isinstance(fn.get("arguments"), str):
-                        fragments.append(fn["arguments"])
+                if isinstance(tc, dict):
+                    _extract_callable_invocation_fragments(
+                        tc.get("function"), fragments
+                    )
+                    for tc_key, tc_val in tc.items():
+                        if tc_key in {"id", "type", "index", "function"} or (
+                            str(tc_key) in _BINARY_CONTENT_KEYS
+                        ):
+                            continue
+                        _iter_nonbinary_string_leaves(tc_val, fragments)
+                elif tc is not None:
+                    _extract_callable_invocation_fragments(tc, fragments)
+        elif tool_calls is not None:
+            _extract_callable_invocation_fragments(tool_calls, fragments)
+
+        # Legacy OpenAI messages[*].function_call ingress scan
+        if msg.get("function_call") is not None:
+            _extract_callable_invocation_fragments(msg.get("function_call"), fragments)
+
+        # Residual non-binary string leaves on any unrecognized message fields
+        for extra_key, extra_val in msg.items():
+            if (
+                extra_key in _MSG_HANDLED_OR_STRUCTURAL_KEYS
+                or str(extra_key) in _BINARY_CONTENT_KEYS
+            ):
+                continue
+            _iter_nonbinary_string_leaves(extra_val, fragments)
+    return " ".join(fragments)
+
+
+_SCANNABLE_SCHEMA_TOP_KEYS = (
+    "functions",
+    "tools",
+    "tool_choice",
+    "function_call",
+    "prompt",
+    "system",
+    "response_format",
+    "guided_json",
+    "guided_regex",
+    "guided_choice",
+    "guided_grammar",
+    "guided_decoding_backend",
+    "guided_whitespace_pattern",
+    "structural_tag",
+    "structured_outputs",
+    "chat_template",
+    "chat_template_kwargs",
+    "stop",
+    "metadata",
+    "prediction",
+    "extra_body",
+    "vllm_xargs",
+    "logit_bias",
+    "lora_request",
+    "kv_transfer_params",
+    "web_search_options",
+    "audio",
+    "modalities",
+    "reasoning_effort",
+    "service_tier",
+    "user",
+)
+
+
+def _iter_nonbinary_schema_fragments(value: Any, fragments: list[str]) -> None:
+    """Append non-binary string leaves and dict keys from schema/decoding fields."""
+    if isinstance(value, str):
+        if value:
+            fragments.append(value)
+    elif isinstance(value, list):
+        for item in value:
+            _iter_nonbinary_schema_fragments(item, fragments)
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            key_str = str(key)
+            if key_str in _BINARY_CONTENT_KEYS:
+                continue
+            if key_str:
+                fragments.append(key_str)
+            _iter_nonbinary_schema_fragments(item, fragments)
+
+
+def _extract_scannable_request_schema_text(body: dict[str, Any]) -> str:
+    """Extract string leaves and dynamic dict keys from request schema/decoding fields."""
+    fragments: list[str] = []
+    for top_key in _SCANNABLE_SCHEMA_TOP_KEYS:
+        if body.get(top_key) is not None:
+            _iter_nonbinary_schema_fragments(body.get(top_key), fragments)
     return " ".join(fragments)
 
 
@@ -1011,14 +1370,19 @@ async def chat_completions(
         )
 
         # Build a combined text representation of ALL messages (including multi-part
-        # content arrays and prior tool_calls arguments) for Ingress Stage 1 scan.
-        # This prevents system-only, assistant-only, or structured content arrays
-        # from bypassing the keyword filter (GHSA-hfqj-24cj-693g).
+        # content arrays, tool_calls, and legacy function_call) plus top-level
+        # prompt/tool schema fields for Ingress Stage 1 scan (GHSA-hfqj-24cj-693g).
         all_messages_text = _extract_scannable_messages_text(messages)
-        span.set_attribute(SPAN_ATTR_CONTENT_INPUT_LENGTH, len(all_messages_text))
+        request_schema_text = _extract_scannable_request_schema_text(body)
+        stage1_scan_text = (
+            f"{all_messages_text} {request_schema_text}".strip()
+            if request_schema_text
+            else all_messages_text
+        )
+        span.set_attribute(SPAN_ATTR_CONTENT_INPUT_LENGTH, len(stage1_scan_text))
 
-        # 1. Ingress Stage 1 keyword scan — applied to ALL messages, not just user role.
-        if ac_keyword_scan(all_messages_text):
+        # 1. Ingress Stage 1 keyword scan — applied to ALL messages and top-level schema text.
+        if ac_keyword_scan(stage1_scan_text):
             stamp_iso_control(span, ingress_stage=1, control="A.5.2", outcome="BLOCK")
             try:
                 await _emit_proxy_evidence(
@@ -1061,52 +1425,82 @@ async def chat_completions(
             )
 
         # ── Step 2.5: Out-of-Band Quarantine Enforcement (SC-7 / AC-3) ──
-        from src.gateway.governance.quarantine_actuator import is_workload_quarantined
+        from src.gateway.server.quarantine_guard import refuse_if_quarantined
 
-        request_thread_id = body.get("thread_id") or request.headers.get(
-            "x-cage-thread-id"
-        )
-        app_state = getattr(getattr(request, "app", None), "state", None)
-        shared_redis = getattr(app_state, "redis", None)
-        if await is_workload_quarantined(
-            thread_id=str(request_thread_id) if request_thread_id else None,
-            agent_svid=agent_id,
-            redis_client=shared_redis,
+        if q_resp := await refuse_if_quarantined(
+            request,
+            action_id="inference_chat_completions",
+            surface="inference_proxy",
+            body_params=body,
+            fallback_app_obj=inference_app,
+            verified_agent_id=agent_id,
+            span=span,
         ):
-            stamp_iso_control(span, ingress_stage=1, control="SC-7", outcome="BLOCK")
-            try:
-                await _emit_proxy_evidence(
-                    request,
-                    span=span,
-                    body=body,
-                    event_type="INFERENCE_PROXY_BLOCK",
-                    control_id="SC-7",
-                    status_code=403,
-                    reason="Workload SVID or thread is quarantined",
-                    model_id=model_id,
-                    agent_id=agent_id,
-                    extra={"thread_id": request_thread_id},
-                )
-            except EvidenceChainUnavailableError as exc:
-                return _evidence_unavailable_response(exc)
-            return JSONResponse(
-                content={
-                    "error": "workload_quarantined",
-                    "message": "Workload SVID or thread is quarantined by CAGE out-of-band governance",
-                    "agent_id": agent_id,
-                    "thread_id": request_thread_id,
-                },
-                status_code=403,
-            )
+            return q_resp
 
         # ── Step 3: Token Quota Enforcement (ISO 42001 Annex A.4) ──
         # Runs for ALL requests regardless of message role composition.
-        token_delta = _compute_token_reservation(body, all_messages_text)
+        token_delta = _compute_token_reservation(body, stage1_scan_text)
+        quota_session_id = _resolve_quota_session_id(agent_id, request, body)
 
-        quota_result = await _get_token_quota_proxy().check_and_increment(
-            agent_id=agent_id,
-            token_delta=token_delta,
-        )
+        try:
+            quota_result = await _check_quota_step(
+                quota_session_id, agent_id, token_delta
+            )
+        except QuotaExceededError as quota_exc:
+            if quota_exc.reason == "redis_unavailable":
+                if span.is_recording():
+                    span.set_attribute("cage.verdict", "INFRASTRUCTURE_BLOCK")
+                    span.set_attribute("cage.infrastructure.dependency", "redis")
+                    span.set_attribute(
+                        "cage.infrastructure.failure_code", "quota_store_unavailable"
+                    )
+                try:
+                    await _emit_proxy_evidence(
+                        request,
+                        span=span,
+                        body=body,
+                        event_type="GOVERNANCE_INFRASTRUCTURE_BLOCK",
+                        control_id="A.5.3",
+                        status_code=503,
+                        reason="Token quota store (Redis) unavailable; failing closed.",
+                        model_id=model_id,
+                        agent_id=agent_id,
+                        extra={
+                            "decision": "INFRASTRUCTURE_BLOCK",
+                            "dependency": "redis",
+                            "reason_code": "quota_store_unavailable",
+                        },
+                    )
+                except EvidenceChainUnavailableError as exc:
+                    return _evidence_unavailable_response(exc)
+                return JSONResponse(
+                    status_code=503,
+                    content={
+                        "error": "governance_dependency_unavailable",
+                        "dependency": "redis",
+                        "reason_code": "quota_store_unavailable",
+                        "message": "Token quota store (Redis) unavailable; failing closed.",
+                    },
+                )
+            if quota_exc.reason == "invalid_token_delta":
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        "error": "invalid_request_error",
+                        "message": str(quota_exc),
+                    },
+                )
+            quota_result = QuotaCheckResult(
+                allowed=False,
+                agent_id=agent_id,
+                step_count=quota_exc.current_value,
+                accumulated_tokens=quota_exc.current_value,
+                step_quota_max=quota_exc.quota_max,
+                token_quota_max=quota_exc.quota_max,
+                block_reason=quota_exc.reason,
+                session_ttl=0,
+            )
         if not quota_result.allowed:
             stamp_iso_control(span, ingress_stage=2, control="A.4", outcome="BLOCK")
             # Awaited inline — WORM and evidence stream writes must complete before
@@ -1160,7 +1554,7 @@ async def chat_completions(
         # records SKIPPED with the reason code instead of a PASS that never
         # happened. Steps 4-7 are wrapped in a try/except so that any downstream
         # failure triggers a quota rollback (CTRL_TQP_007 §5.3).
-        nemo_input_text = all_messages_text if all_messages_text else last_user_msg
+        nemo_input_text = stage1_scan_text if stage1_scan_text else last_user_msg
         try:
             if rails_refusal is not None:
                 # Off by configuration. An enabled-but-absent rail (rails
@@ -1201,24 +1595,18 @@ async def chat_completions(
             raw_client = _get_http_client()
             client = await raw_client if inspect.isawaitable(raw_client) else raw_client
         except EvidenceChainUnavailableError as exc:
-            await _get_token_quota_proxy().rollback_step(
-                agent_id, reserved_tokens=token_delta
-            )
+            await _rollback_quota_step(quota_session_id, agent_id, token_delta)
             logger.error(
                 "Inference proxy refusal failed closed: evidence chain unavailable: %s",
                 exc,
             )
             return _evidence_unavailable_response(exc)
         except InferenceBackendUnavailable as exc:
-            await _get_token_quota_proxy().rollback_step(
-                agent_id, reserved_tokens=token_delta
-            )
+            await _rollback_quota_step(quota_session_id, agent_id, token_delta)
             logger.error("Inference proxy cannot forward: %s", exc)
             return _backend_unavailable_response(exc.reason_code, str(exc))
-        except Exception:
-            await _get_token_quota_proxy().rollback_step(
-                agent_id, reserved_tokens=token_delta
-            )
+        except BaseException:
+            await _shielded_quota_rollback(quota_session_id, agent_id, token_delta)
             raise
 
         # Respect the caller's streaming preference. When stream=True the proxy
@@ -1271,22 +1659,31 @@ async def chat_completions(
                         stream_overflow = True
                         break
                     collected_chunks.append(chunk)
-            except HTTPException:
-                await _get_token_quota_proxy().rollback_step(
-                    agent_id, reserved_tokens=token_delta
+            except UpstreamStreamingBackendError as exc:
+                await _shielded_quota_rollback(quota_session_id, agent_id, token_delta)
+                upstream_status = (
+                    exc.upstream_status if 400 <= exc.upstream_status < 600 else 502
                 )
-                raise
-            except Exception as exc:
-                await _get_token_quota_proxy().rollback_step(
-                    agent_id, reserved_tokens=token_delta
+                gateway_status = _map_upstream_error_status(upstream_status)
+                return JSONResponse(
+                    status_code=gateway_status,
+                    content={
+                        "error": "upstream_inference_error",
+                        "upstream_status": upstream_status,
+                        "message": f"vLLM backend error {upstream_status}",
+                        "correlation_id": _canonical_uuid(exc.correlation_id)
+                        or str(_uuid.uuid4()),
+                    },
                 )
+            except BaseException as exc:
+                await _shielded_quota_rollback(quota_session_id, agent_id, token_delta)
+                if isinstance(exc, HTTPException) or not isinstance(exc, Exception):
+                    raise
                 safe_err = _safe_error_response(exc)
                 raise HTTPException(status_code=500, detail=safe_err) from exc
 
             if stream_overflow:
-                await _get_token_quota_proxy().rollback_step(
-                    agent_id, reserved_tokens=token_delta
-                )
+                await _rollback_quota_step(quota_session_id, agent_id, token_delta)
                 return JSONResponse(
                     status_code=413,
                     content={
@@ -1297,9 +1694,7 @@ async def chat_completions(
 
             raw_stream = b"".join(collected_chunks).decode(errors="replace")
             assembler = StreamAssembler()
-            stream_backend_error = False
-            stream_backend_status = 502
-            stream_error_correlation_id: str | None = None
+            stream_sse_error = False
             stream_protocol_error = False
 
             for data_str in _iter_sse_data_payloads(raw_stream):
@@ -1312,50 +1707,33 @@ async def chat_completions(
                     stream_protocol_error = True
                     break
 
-                # POAM-2026-237 (GHSA-5c7p-g73w-v4m3 open follow-up): this
-                # prefix check only catches synthetic frames emitted by
-                # _stream_vllm() on upstream HTTP >= 400. Upstream HTTP-200
-                # SSE {"error": ...} frames miss this branch and are stripped
-                # by StreamAssembler into empty choices under PII_SCRUB_PASS;
-                # tracked for out-of-band stream error signaling + fail-closed
-                # HTTP-200 error-frame rejection in POAM-2026-237.
-                err_field = str(chunk_json.get("error", ""))
-                if err_field.startswith("vLLM backend error"):
-                    stream_backend_error = True
-                    raw_status = chunk_json.get("status_code")
-                    if isinstance(raw_status, int) and not isinstance(raw_status, bool):
-                        stream_backend_status = raw_status
-                    else:
-                        parts = err_field.rsplit(" ", 1)
-                        if len(parts) == 2 and parts[1].isdigit():
-                            stream_backend_status = int(parts[1])
-                    # _stream_vllm() mints this as a uuid4; any other string in
-                    # this position came from upstream and is not echoed.
-                    stream_error_correlation_id = (
-                        _canonical_uuid(chunk_json.get("correlation_id"))
-                        or stream_error_correlation_id
-                    )
-                    continue
+                # POAM-2026-237: Fail closed before StreamAssembler.absorb() on
+                # any upstream HTTP-200 SSE JSON frame carrying a non-null
+                # "error" key. Never trust upstream status_code or
+                # correlation_id fields from the untrusted SSE stream.
+                if chunk_json.get("error") is not None:
+                    stream_sse_error = True
+                    break
 
                 assembler.absorb(chunk_json)
 
-            # [KC-01] / [F-15] FIRST: Abort on streaming backend >= 400 error BEFORE emitting PASS evidence!
-            if stream_backend_error:
-                await _get_token_quota_proxy().rollback_step(
-                    agent_id, reserved_tokens=token_delta
+            # [KC-01] / [F-15] / [POAM-2026-237]: Abort on upstream HTTP-200 SSE
+            # error frames BEFORE sanitize_stream() or emitting PASS evidence.
+            if stream_sse_error:
+                await _rollback_quota_step(quota_session_id, agent_id, token_delta)
+                sse_correlation_id = str(_uuid.uuid4())
+                logger.error(
+                    "Upstream HTTP-200 SSE stream emitted an error frame; "
+                    "failing closed [correlation_id=%s]",
+                    sse_correlation_id,
                 )
-                upstream_status = (
-                    stream_backend_status if 400 <= stream_backend_status < 600 else 502
-                )
-                gateway_status = _map_upstream_error_status(upstream_status)
                 return JSONResponse(
-                    status_code=gateway_status,
+                    status_code=502,
                     content={
                         "error": "upstream_inference_error",
-                        "upstream_status": upstream_status,
-                        "message": f"vLLM backend error {upstream_status}",
-                        "correlation_id": stream_error_correlation_id
-                        or str(_uuid.uuid4()),
+                        "upstream_status": 502,
+                        "message": "Upstream inference stream returned an error frame",
+                        "correlation_id": sse_correlation_id,
                     },
                 )
 
@@ -1363,9 +1741,7 @@ async def chat_completions(
             # the egress allowlist, so it is neither masked as text nor
             # replayed: the request fails closed before any PASS evidence.
             if stream_protocol_error:
-                await _get_token_quota_proxy().rollback_step(
-                    agent_id, reserved_tokens=token_delta
-                )
+                await _rollback_quota_step(quota_session_id, agent_id, token_delta)
                 protocol_correlation_id = str(_uuid.uuid4())
                 logger.error(
                     "Upstream stream carried a data payload that is not a JSON "
@@ -1389,10 +1765,8 @@ async def chat_completions(
                     fallback_model=model_id,
                     now=int(time.time()),
                 )
-            except Exception:
-                await _get_token_quota_proxy().rollback_step(
-                    agent_id, reserved_tokens=token_delta
-                )
+            except BaseException:
+                await _shielded_quota_rollback(quota_session_id, agent_id, token_delta)
                 raise
 
             # Record lengths ONLY — never message/response content on OTel spans (#774).
@@ -1414,17 +1788,21 @@ async def chat_completions(
                     output_fields_dropped=stream_report.fields_dropped,
                 )
             except EvidenceChainUnavailableError as exc:
-                await _get_token_quota_proxy().rollback_step(
-                    agent_id, reserved_tokens=token_delta
-                )
+                await _rollback_quota_step(quota_session_id, agent_id, token_delta)
                 logger.error(
                     "Inference proxy streaming pass failed closed: evidence chain unavailable: %s",
                     exc,
                 )
                 return _evidence_unavailable_response(exc)
+            except BaseException:
+                await _shielded_quota_rollback(quota_session_id, agent_id, token_delta)
+                raise
 
             await _reconcile_actual_usage(
-                agent_id, token_delta, stream_completion.get("usage")
+                quota_session_id,
+                token_delta,
+                stream_completion.get("usage"),
+                workload_id=agent_id,
             )
 
             if stream_report.pii_redacted:
@@ -1477,17 +1855,11 @@ async def chat_completions(
             upstream_completion = resp.json()
             if not isinstance(upstream_completion, dict):
                 raise ValueError("Upstream inference response was not a JSON object")
-        except HTTPException:
-            # MED-6 fix: roll back quota on vLLM HTTP errors (4xx/5xx).
-            await _get_token_quota_proxy().rollback_step(
-                agent_id, reserved_tokens=token_delta
-            )
-            raise
-        except Exception as exc:
-            # MED-6 fix: roll back quota on connection/timeout/parse errors.
-            await _get_token_quota_proxy().rollback_step(
-                agent_id, reserved_tokens=token_delta
-            )
+        except BaseException as exc:
+            # MED-6 / KC-05 fix: shielded rollback on HTTP errors, network errors, and CancelledError.
+            await _shielded_quota_rollback(quota_session_id, agent_id, token_delta)
+            if isinstance(exc, HTTPException) or not isinstance(exc, Exception):
+                raise
             safe_err = _safe_error_response(exc)
             raise HTTPException(status_code=500, detail=safe_err) from exc
 
@@ -1501,10 +1873,8 @@ async def chat_completions(
                 fallback_model=model_id,
                 now=int(time.time()),
             )
-        except Exception:
-            await _get_token_quota_proxy().rollback_step(
-                agent_id, reserved_tokens=token_delta
-            )
+        except BaseException:
+            await _shielded_quota_rollback(quota_session_id, agent_id, token_delta)
             raise
 
         # Record lengths ONLY — never message/response content on OTel spans (#774).
@@ -1525,14 +1895,20 @@ async def chat_completions(
                 output_fields_dropped=report.fields_dropped,
             )
         except EvidenceChainUnavailableError as exc:
-            await _get_token_quota_proxy().rollback_step(
-                agent_id, reserved_tokens=token_delta
-            )
+            await _rollback_quota_step(quota_session_id, agent_id, token_delta)
             logger.error(
                 "Inference proxy pass failed closed: evidence chain unavailable: %s",
                 exc,
             )
             return _evidence_unavailable_response(exc)
+        except BaseException:
+            await _shielded_quota_rollback(quota_session_id, agent_id, token_delta)
+            raise
 
-        await _reconcile_actual_usage(agent_id, token_delta, completion.get("usage"))
+        await _reconcile_actual_usage(
+            quota_session_id,
+            token_delta,
+            completion.get("usage"),
+            workload_id=agent_id,
+        )
         return JSONResponse(content=completion)

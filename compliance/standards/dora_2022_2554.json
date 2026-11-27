@@ -1,0 +1,438 @@
+{
+  "schema_version": 1,
+  "standard": "dora",
+  "title": "Regulation (EU) 2022/2554 on digital operational resilience for the financial sector (DORA)",
+  "source_url": "https://eur-lex.europa.eu/eli/reg/2022/2554/oj",
+  "version": "Regulation (EU) 2022/2554, OJ L 333, 27 December 2022",
+  "retrieved": "2026-11-23",
+  "source_quality": "primary",
+  "source_sha256": "cf50d8f023d23b2a56f535aaee0760eba7f1925ef08a9858c5c31d43d414f46b",
+  "source_notes": "Verified against the Official Journal English XHTML text retrieved from EUR-Lex on 2026-11-23 (source_sha256 is the XHTML body digest). All 64 article titles (Articles 1–64) are verbatim Official Journal headings. Because Official Journal paragraphs and points carry no formal headings, the 4 paragraph/point rows (12(1), 12(1)(a), 12(1)(b), 12(3)) are editorial descriptors verified against the primary clause text.",
+  "license": "European Union legislation published in the Official Journal of the European Union; reuse authorized under Commission Decision 2011/833/EU (EUR-Lex, © European Union, 1998–2026). Only identifiers, article titles, and clause descriptors are retained here.",
+  "complete": true,
+  "rows": [
+    {
+      "id": "1",
+      "title": "Subject matter",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "2",
+      "title": "Scope",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "3",
+      "title": "Definitions",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "4",
+      "title": "Proportionality principle",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "5",
+      "title": "Governance and organisation",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "6",
+      "title": "ICT risk management framework",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "7",
+      "title": "ICT systems, protocols and tools",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "8",
+      "title": "Identification",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "9",
+      "title": "Protection and prevention",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "10",
+      "title": "Detection",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "11",
+      "title": "Response and recovery",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "12",
+      "title": "Backup policies and procedures, restoration and recovery procedures and methods",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "12(1)",
+      "title": "Backup policies and restoration and recovery procedures to be developed and documented",
+      "status": "active",
+      "kind": "paragraph",
+      "children_complete": true
+    },
+    {
+      "id": "12(1)(a)",
+      "title": "Backup policies specifying data scope and minimum backup frequency",
+      "status": "active",
+      "kind": "point"
+    },
+    {
+      "id": "12(1)(b)",
+      "title": "Restoration and recovery procedures and methods",
+      "status": "active",
+      "kind": "point"
+    },
+    {
+      "id": "12(3)",
+      "title": "Segregated ICT systems for restoring backup data",
+      "status": "active",
+      "kind": "paragraph"
+    },
+    {
+      "id": "13",
+      "title": "Learning and evolving",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "14",
+      "title": "Communication",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "15",
+      "title": "Further harmonisation of ICT risk management tools, methods, processes and policies",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "16",
+      "title": "Simplified ICT risk management framework",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "17",
+      "title": "ICT-related incident management process",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "18",
+      "title": "Classification of ICT-related incidents and cyber threats",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "19",
+      "title": "Reporting of major ICT-related incidents and voluntary notification of significant cyber threats",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "20",
+      "title": "Harmonisation of reporting content and templates",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "21",
+      "title": "Centralisation of reporting of major ICT-related incidents",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "22",
+      "title": "Supervisory feedback",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "23",
+      "title": "Operational or security payment-related incidents concerning credit institutions, payment institutions, account information service providers, and electronic money institutions",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "24",
+      "title": "General requirements for the performance of digital operational resilience testing",
+      "status": "active",
+      "kind": "article",
+      "aliases": [
+        "Resilience testing programme",
+        "Resilience testing"
+      ]
+    },
+    {
+      "id": "25",
+      "title": "Testing of ICT tools and systems",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "26",
+      "title": "Advanced testing of ICT tools, systems and processes based on TLPT",
+      "status": "active",
+      "kind": "article",
+      "aliases": [
+        "TLPT",
+        "Threat-led penetration testing"
+      ]
+    },
+    {
+      "id": "27",
+      "title": "Requirements for testers for the carrying out of TLPT",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "28",
+      "title": "General principles",
+      "status": "active",
+      "kind": "article",
+      "aliases": [
+        "ICT third-party risk"
+      ]
+    },
+    {
+      "id": "29",
+      "title": "Preliminary assessment of ICT concentration risk at entity level",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "30",
+      "title": "Key contractual provisions",
+      "status": "active",
+      "kind": "article",
+      "aliases": [
+        "Contractual provisions"
+      ]
+    },
+    {
+      "id": "31",
+      "title": "Designation of critical ICT third-party service providers",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "32",
+      "title": "Structure of the Oversight Framework",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "33",
+      "title": "Tasks of the Lead Overseer",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "34",
+      "title": "Operational coordination between Lead Overseers",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "35",
+      "title": "Powers of the Lead Overseer",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "36",
+      "title": "Exercise of the powers of the Lead Overseer outside the Union",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "37",
+      "title": "Request for information",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "38",
+      "title": "General investigations",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "39",
+      "title": "Inspections",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "40",
+      "title": "Ongoing oversight",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "41",
+      "title": "Harmonisation of conditions enabling the conduct of the oversight activities",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "42",
+      "title": "Follow-up by competent authorities",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "43",
+      "title": "Oversight fees",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "44",
+      "title": "International cooperation",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "45",
+      "title": "Information-sharing arrangements on cyber threat information and intelligence",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "46",
+      "title": "Competent authorities",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "47",
+      "title": "Cooperation with structures and authorities established by Directive (EU) 2022/2555",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "48",
+      "title": "Cooperation between authorities",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "49",
+      "title": "Financial cross-sector exercises, communication and cooperation",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "50",
+      "title": "Administrative penalties and remedial measures",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "51",
+      "title": "Exercise of the power to impose administrative penalties and remedial measures",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "52",
+      "title": "Criminal penalties",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "53",
+      "title": "Notification duties",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "54",
+      "title": "Publication of administrative penalties",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "55",
+      "title": "Professional secrecy",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "56",
+      "title": "Data Protection",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "57",
+      "title": "Exercise of the delegation",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "58",
+      "title": "Review clause",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "59",
+      "title": "Amendments to Regulation (EC) No 1060/2009",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "60",
+      "title": "Amendments to Regulation (EU) No 648/2012",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "61",
+      "title": "Amendments to Regulation (EU) No 909/2014",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "62",
+      "title": "Amendments to Regulation (EU) No 600/2014",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "63",
+      "title": "Amendment to Regulation (EU) 2016/1011",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "64",
+      "title": "Entry into force and application",
+      "status": "active",
+      "kind": "article"
+    }
+  ]
+}

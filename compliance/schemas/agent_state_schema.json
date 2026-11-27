@@ -170,6 +170,12 @@
         "null"
       ]
     },
+    "hitl_reference_quote": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
     "guardrail_blocked": {
       "type": "boolean"
     },
@@ -232,6 +238,18 @@
       ]
     },
     "deferred_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "deferred_step_ids": {
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "redemption_refusal": {
       "type": [
         "string",
         "null"

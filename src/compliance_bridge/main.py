@@ -97,6 +97,10 @@ from .auth import (
 )
 from .cer_index import CERIndex
 from .cmek_guard import validate_cmek_configuration
+from .evidence_custodian import (
+    EvidenceCustodyIntegrityError,
+    NonEvidentiaryAttestationError,
+)
 from .infra_custody import (
     DEFAULT_INFRA_STREAM_KEY,
     IDEMPOTENCY_KEY_PATTERN,
@@ -107,18 +111,29 @@ from .infra_custody import (
     InfraIdempotencyConflictError,
     is_inline_custody_flush_enabled,
 )
-from .metrics import get_compliance_metrics, invalidate_compliance_metrics_cache
-from .notifier import create_notifier
+from .metrics import (
+    get_cm6_thresholds_posture,
+    get_compliance_metrics,
+    invalidate_compliance_metrics_cache,
+)
+from .notifier import (
+    create_notifier,
+    is_external_notifier_configured,
+    validate_notifier_config,
+)
 from .oscal_exporter import build_oscal_assessment_results, findings_from_metrics_dict
 from .sla_monitor import run_sla_monitor
 from .sse_events import event_bus
 from .types import (
+    CONTROL_SAFETY_THRESHOLDS,
     CRITICAL_CONTROLS,
     SUPPORTED_CONTROLS,
+    Cm6ThresholdsPosture,
     ComplianceMetrics,
     OscalFinding,
     get_control_meta,
     get_iso_control_map,
+    get_sla_seconds,
 )
 
 # ---------------------------------------------------------------------------
@@ -228,9 +243,11 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
             "is True or CAGE_ENV is not 'dev'/'development' (POAM-2026-167 / LT-1)."
         )
 
-    # POAM-018: fail closed on missing Langfuse credentials before any custody
-    # client, background task or connection is created.
+    # POAM-018 & POAM-2026-230: fail closed on missing Langfuse credentials or
+    # unconfigured/console alert notifier before any custody client, background
+    # task or connection is created.
     validate_langfuse_credentials()
+    validate_notifier_config()
 
     _custodian: EvidenceCustodian | None = None
     _custody_task: asyncio.Task | None = None
@@ -377,8 +394,33 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         port=_cb_metrics_port, addr=_cb_metrics_addr
     )
 
+    async def _warm_cm6_cache_once() -> None:
+        try:
+            await get_cm6_thresholds_posture(window_hours=168)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning("[cm6-cache-warmer] Warmup scan failed: %s", exc)
+
+    async def _run_cm6_cache_warmer() -> None:
+        interval = max(
+            30,
+            int(os.environ.get("EVIDENCE_SLA_POLL_INTERVAL_SECONDS", "300") or "300"),
+        )
+        while True:
+            await _warm_cm6_cache_once()
+            await asyncio.sleep(interval)
+
     # Start background tasks
     _sla_task = asyncio.create_task(run_sla_monitor(), name="sla-monitor")
+    _cm6_warm_task: asyncio.Task[None] | None = None
+    if (
+        _custodian is not None
+        and os.environ.get("EVIDENCE_SLA_DISABLED", "").strip() != "1"
+    ):
+        _cm6_warm_task = asyncio.create_task(
+            _run_cm6_cache_warmer(), name="cm6-cache-warmer"
+        )
 
     logger.info(
         "✅ compliance-bridge ready on port %s. Supported controls: %s",
@@ -390,6 +432,7 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     finally:
         for _task in (
             _sla_task,
+            _cm6_warm_task,
             _custody_task,
             _infra_custody_task,
             _verify_task,
@@ -588,6 +631,7 @@ async def health() -> dict:
         "langfuse_compliance_configured": langfuse_compliance_configured,
         "langfuse_app_configured": langfuse_app_configured,
         "oscal_storage_configured": oscal_storage_configured,
+        "alert_channel_configured": is_external_notifier_configured(),
         "environment": active_env,
     }
 
@@ -764,41 +808,112 @@ async def get_metrics_summary(
     # Use region-filtered controls — consistent with /v1/controls endpoint.
     active_region = resolve_deployment_region()
     region_control_ids: list[str] = list(get_control_meta(active_region).keys())
+    active_sla_map = get_sla_seconds(active_region)
 
     results: dict = {}
+    passing: list[str] = []
     failing: list[str] = []
+    errored_controls: list[str] = []
     critical_fails: list[str] = []
+    insufficient_traffic_controls: list[str] = []
+    insufficient_sample_controls: list[str] = []
 
-    # Fetch all controls concurrently
+    # Fetch all controls concurrently; WORM custody tamper raises immediately.
     async def _fetch(cid: str) -> None:
         try:
-            m = await get_compliance_metrics(cid, window_hours)
+            m = await asyncio.wait_for(
+                get_compliance_metrics(cid, window_hours),
+                timeout=8.0,
+            )
             results[cid] = m.model_dump()
-            # A control is "failing" when safety_rate < 1.0 and not in grace period
-            # M-10: safety_rate is None when no traces exist — treat as not-failing
-            if (
-                m.safety_rate is not None
+            # A control fails when safety_rate violates its threshold or
+            # evidence_age_seconds > SLA outside startup grace. Small populations
+            # (`0 < total_traces < min_sample_size`) land in
+            # `insufficient_sample_controls` (neither passing nor failing), except
+            # zero-tolerance (`threshold == 1.0`) violations which fail immediately.
+            sla_limit = active_sla_map.get(cid)
+            threshold = CONTROL_SAFETY_THRESHOLDS.get(cid, 1.0)
+            freshness_failed = (
+                not m.startup_grace_active
+                and sla_limit is not None
+                and m.evidence_age_seconds > sla_limit
+            )
+            zero_tol_violation = (
+                threshold == 1.0
+                and m.safety_rate is not None
                 and m.safety_rate < 1.0
                 and not m.startup_grace_active
-            ):
+            )
+            sample_sufficient = m.total_traces >= m.min_sample_size
+            safety_failed = zero_tol_violation or (
+                sample_sufficient
+                and m.safety_rate is not None
+                and m.safety_rate < threshold
+                and not m.startup_grace_active
+            )
+            if safety_failed or freshness_failed:
                 failing.append(cid)
                 if cid in CRITICAL_CONTROLS:
                     critical_fails.append(cid)
+            elif not m.startup_grace_active and m.safety_rate is None:
+                insufficient_traffic_controls.append(cid)
+            elif (
+                not m.startup_grace_active
+                and m.total_traces > 0
+                and not sample_sufficient
+            ):
+                insufficient_sample_controls.append(cid)
+            else:
+                passing.append(cid)
+        except (EvidenceCustodyIntegrityError, NonEvidentiaryAttestationError):
+            raise
         except Exception as exc:
-            logger.warning("[metrics/summary] Failed to fetch %s: %s", cid, exc)
-            results[cid] = {"error": str(exc)}
+            is_timeout = isinstance(exc, (asyncio.TimeoutError, TimeoutError))
+            err_type = "timeout" if is_timeout else type(exc).__name__
+            err_msg = (
+                f"fetch timeout after 8s for {cid}"
+                if is_timeout and not str(exc)
+                else str(exc) or err_type
+            )
+            logger.warning(
+                "[metrics/summary] Failed to fetch %s (%s): %s", cid, err_type, err_msg
+            )
+            results[cid] = {"error": err_msg, "error_type": err_type}
+            errored_controls.append(cid)
+            failing.append(cid)
+            if cid in CRITICAL_CONTROLS:
+                critical_fails.append(cid)
 
     try:
         await asyncio.wait_for(
             asyncio.gather(*[_fetch(cid) for cid in region_control_ids]),
             timeout=25.0,
         )
+    except (EvidenceCustodyIntegrityError, NonEvidentiaryAttestationError) as exc:
+        logger.critical("[metrics/summary] 🚨 Custody integrity error: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "custody_integrity_error",
+                "message": str(exc),
+            },
+        ) from exc
     except asyncio.TimeoutError:
         logger.warning(
-            "[metrics/summary] gather timed out after 25s — returning partial results"
+            "[metrics/summary] gather timed out after 25s — marking incomplete controls as errored"
         )
+        for cid in region_control_ids:
+            if cid not in results:
+                results[cid] = {
+                    "error": f"summary gather timeout after 25s for {cid}",
+                    "error_type": "timeout",
+                }
+                errored_controls.append(cid)
+                failing.append(cid)
+                if cid in CRITICAL_CONTROLS:
+                    critical_fails.append(cid)
 
-    passing_count = len(region_control_ids) - len(failing)
+    passing_count = len(passing)
     overall_rate = (
         passing_count / len(region_control_ids) if region_control_ids else 1.0
     )
@@ -807,8 +922,11 @@ async def get_metrics_summary(
         "overall_pass_rate": round(overall_rate, 4),
         "total_controls": len(region_control_ids),
         "passing_controls": passing_count,
-        "failing_controls": sorted(failing),
-        "critical_fails": sorted(critical_fails),
+        "failing_controls": sorted(set(failing)),
+        "insufficient_traffic_controls": sorted(set(insufficient_traffic_controls)),
+        "insufficient_sample_controls": sorted(set(insufficient_sample_controls)),
+        "errored_controls": sorted(set(errored_controls)),
+        "critical_fails": sorted(set(critical_fails)),
         "window_hours": window_hours,
         "controls": results,
     }
@@ -841,7 +959,9 @@ LULA_AUDIT_RUNS_TOTAL: Any = None
 LULA_AUDIT_EVALUATED_MANIFESTS: Any = None
 LULA_AUDIT_NOT_SATISFIED_CONTROLS: Any = None
 LULA_AUDIT_INSUFFICIENT_TRAFFIC_CONTROLS: Any = None
+LULA_AUDIT_INSUFFICIENT_SAMPLE_CONTROLS: Any = None
 LULA_AUDIT_LAST_PASS_TIMESTAMP_SECONDS: Any = None
+LULA_AUDIT_LAST_HEALTHY_RUN_TIMESTAMP_SECONDS: Any = None
 try:
     from prometheus_client import REGISTRY as _PROM_REGISTRY
     from prometheus_client import Counter as _PromCounter
@@ -876,9 +996,17 @@ try:
         "cage_lula_audit_insufficient_traffic_controls",
         "Number of statistical trace-rate controls reporting not-satisfied due to insufficient_traffic in the latest lula_audit run",
     )
+    LULA_AUDIT_INSUFFICIENT_SAMPLE_CONTROLS = _bridge_gauge(
+        "cage_lula_audit_insufficient_sample_controls",
+        "Number of statistical trace-rate controls reporting not-satisfied due to insufficient_sample (< min_sample_size) in the latest lula_audit run",
+    )
     LULA_AUDIT_LAST_PASS_TIMESTAMP_SECONDS = _bridge_gauge(
         "cage_lula_audit_last_pass_timestamp_seconds",
-        "Unix timestamp (UTC seconds) of the most recent clean passing lula_audit run",
+        "Unix timestamp (UTC seconds) of the most recent statistically clean (26/26 satisfied) lula_audit run",
+    )
+    LULA_AUDIT_LAST_HEALTHY_RUN_TIMESTAMP_SECONDS = _bridge_gauge(
+        "cage_lula_audit_last_healthy_run_timestamp_seconds",
+        "Unix timestamp (UTC seconds) of the most recent auditor-healthy (>= 26 evaluated, failed_count == 0) lula_audit run",
     )
 except ImportError:  # pragma: no cover - optional runtime dependency
     pass
@@ -916,10 +1044,14 @@ class InfraEvent(BaseModel):
     satisfied_count: int | None = Field(default=None, ge=0)
     failed_count: int | None = Field(default=None, ge=0)
     insufficient_traffic_count: int | None = Field(default=None, ge=0)
+    insufficient_sample_count: int | None = Field(default=None, ge=0)
     startup_grace_count: int | None = Field(default=None, ge=0)
     not_satisfied_count: int | None = Field(default=None, ge=0)
     failed_controls: tuple[str, ...] | list[str] | None = Field(default=None)
     insufficient_traffic_controls: tuple[str, ...] | list[str] | None = Field(
+        default=None
+    )
+    insufficient_sample_controls: tuple[str, ...] | list[str] | None = Field(
         default=None
     )
     startup_grace_controls: tuple[str, ...] | list[str] | None = Field(default=None)
@@ -950,6 +1082,7 @@ class InfraEvent(BaseModel):
     @field_validator(
         "failed_controls",
         "insufficient_traffic_controls",
+        "insufficient_sample_controls",
         "startup_grace_controls",
     )
     @classmethod
@@ -1141,6 +1274,14 @@ async def ingest_infra_event(
         if event.insufficient_traffic_controls is not None
         else None
     )
+    scrubbed_insufficient_sample_controls = (
+        [
+            _CREDENTIAL_PATTERN.sub("[REDACTED]", c)[:128]
+            for c in event.insufficient_sample_controls
+        ]
+        if event.insufficient_sample_controls is not None
+        else None
+    )
     scrubbed_startup_grace_controls = (
         [
             _CREDENTIAL_PATTERN.sub("[REDACTED]", c)[:128]
@@ -1197,9 +1338,11 @@ async def ingest_infra_event(
             not_satisfied_count=event.not_satisfied_count,
             failed_count=event.failed_count,
             insufficient_traffic_count=event.insufficient_traffic_count,
+            insufficient_sample_count=event.insufficient_sample_count,
             startup_grace_count=event.startup_grace_count,
             failed_controls=scrubbed_failed_controls,
             insufficient_traffic_controls=scrubbed_insufficient_controls,
+            insufficient_sample_controls=scrubbed_insufficient_sample_controls,
             startup_grace_controls=scrubbed_startup_grace_controls,
         )
     except InfraIdempotencyConflictError as exc:
@@ -1236,6 +1379,7 @@ async def ingest_infra_event(
             scrubbed_summary=scrubbed_summary,
             scrubbed_failed_controls=scrubbed_failed_controls,
             scrubbed_insufficient_controls=scrubbed_insufficient_controls,
+            scrubbed_insufficient_sample_controls=scrubbed_insufficient_sample_controls,
             scrubbed_startup_grace_controls=scrubbed_startup_grace_controls,
             receipt_hash=receipt.record_hash,
             idempotent_replay=receipt.idempotent_replay,
@@ -1245,7 +1389,7 @@ async def ingest_infra_event(
 
 
 _LULA_SUMMARY_RATIO_RE = re.compile(
-    r"\blula_audit\s+(PASS|FAIL|INSUFFICIENT_TRAFFIC)\s*:\s*(\d+)\s*/\s*(\d+)\b",
+    r"\blula_audit\s+(PASS|FAIL|INSUFFICIENT_TRAFFIC|INSUFFICIENT_SAMPLE)\s*:\s*(\d+)\s*/\s*(\d+)\b",
     re.IGNORECASE,
 )
 _LULA_SUMMARY_FAILED_BLOCK_RE = re.compile(
@@ -1268,6 +1412,7 @@ async def _handle_lula_audit_post_custody(
     scrubbed_summary: str,
     scrubbed_failed_controls: list[str] | None,
     scrubbed_insufficient_controls: list[str] | None = None,
+    scrubbed_insufficient_sample_controls: list[str] | None = None,
     scrubbed_startup_grace_controls: list[str] | None = None,
     receipt_hash: str,
     idempotent_replay: bool,
@@ -1301,17 +1446,36 @@ async def _handle_lula_audit_post_custody(
         failed_controls_list = []
 
     insufficient_controls_raw = [c for c in (scrubbed_insufficient_controls or []) if c]
+    insufficient_sample_raw = [
+        c for c in (scrubbed_insufficient_sample_controls or []) if c
+    ]
     startup_grace_controls_raw = [
         c for c in (scrubbed_startup_grace_controls or []) if c
     ]
     # Server-authoritative allowlist: ONLY statistical trace-rate Lula manifests
-    # (`a52`, `a53`, `a92`) can report `insufficient_traffic` or `startup_grace`.
-    # Any structural or unknown manifest claiming either state is promoted to a failure.
-    valid_insufficient_controls = [
-        c for c in insufficient_controls_raw if c in STATISTICAL_TRACE_LULA_SPECS
-    ]
+    # (`a52`, `a53`, `a92`) can report `insufficient_traffic`, `insufficient_sample`,
+    # or `startup_grace`. Any structural or unknown manifest claiming any of those
+    # states (or duplicated across states) is promoted to a failure.
+    valid_insufficient_controls = list(
+        dict.fromkeys(
+            c for c in insufficient_controls_raw if c in STATISTICAL_TRACE_LULA_SPECS
+        )
+    )
     invalid_insufficient_controls = [
         c for c in insufficient_controls_raw if c not in STATISTICAL_TRACE_LULA_SPECS
+    ]
+    valid_insufficient_sample_controls = list(
+        dict.fromkeys(
+            c for c in insufficient_sample_raw if c in STATISTICAL_TRACE_LULA_SPECS
+        )
+    )
+    invalid_insufficient_sample_controls = [
+        c for c in insufficient_sample_raw if c not in STATISTICAL_TRACE_LULA_SPECS
+    ]
+    overlapping_insufficient = [
+        c
+        for c in valid_insufficient_sample_controls
+        if c in set(valid_insufficient_controls)
     ]
     invalid_startup_grace_controls = [
         c for c in startup_grace_controls_raw if c not in STATISTICAL_TRACE_LULA_SPECS
@@ -1321,6 +1485,8 @@ async def _handle_lula_audit_post_custody(
             [
                 *failed_controls_list,
                 *invalid_insufficient_controls,
+                *invalid_insufficient_sample_controls,
+                *overlapping_insufficient,
                 *invalid_startup_grace_controls,
             ]
         )
@@ -1330,9 +1496,16 @@ async def _handle_lula_audit_post_custody(
     has_pass_prefix = bool(
         re.search(r"\blula_audit\s+pass\s*:", scrubbed_summary, re.IGNORECASE)
     )
-    has_insufficient_prefix = bool(
+    has_insufficient_traffic_prefix = bool(
         re.search(
             r"\blula_audit\s+insufficient_traffic\s*:",
+            scrubbed_summary,
+            re.IGNORECASE,
+        )
+    )
+    has_insufficient_sample_prefix = bool(
+        re.search(
+            r"\blula_audit\s+insufficient_sample\s*:",
             scrubbed_summary,
             re.IGNORECASE,
         )
@@ -1359,24 +1532,46 @@ async def _handle_lula_audit_post_custody(
         and not_satisfied == 0
         and len(effective_failed_controls) == 0
         and len(valid_insufficient_controls) == 0
+        and len(valid_insufficient_sample_controls) == 0
         and (event.insufficient_traffic_count or 0) == 0
+        and (event.insufficient_sample_count or 0) == 0
         and satisfied_count >= evaluated_count
         and not summary_indicated_fail
     )
 
-    is_insufficient_traffic_only = (
+    has_any_insufficient_prefix = (
+        has_insufficient_sample_prefix
+        if len(valid_insufficient_sample_controls) > 0
+        else has_insufficient_traffic_prefix
+    )
+    is_insufficient_evidence_only = (
         not is_clean_pass
         and not corpus_floor_breach
         and (event.failed_count or 0) == 0
         and (event.not_satisfied_count or 0) == 0
         and len(effective_failed_controls) == 0
-        and len(valid_insufficient_controls) > 0
+        and (
+            len(valid_insufficient_controls) + len(valid_insufficient_sample_controls)
+            > 0
+        )
+        and len(insufficient_controls_raw) == len(valid_insufficient_controls)
+        and len(insufficient_sample_raw) == len(valid_insufficient_sample_controls)
         and (
             event.insufficient_traffic_count is None
             or event.insufficient_traffic_count == len(valid_insufficient_controls)
         )
-        and satisfied_count + len(valid_insufficient_controls) == evaluated_count
-        and has_insufficient_prefix
+        and (
+            event.insufficient_sample_count is None
+            or event.insufficient_sample_count
+            == len(valid_insufficient_sample_controls)
+        )
+        and (
+            satisfied_count
+            + len(valid_insufficient_controls)
+            + len(valid_insufficient_sample_controls)
+            == evaluated_count
+        )
+        and has_any_insufficient_prefix
         and "FAIL" not in summary_upper
         and m_failed_block is None
     )
@@ -1384,16 +1579,26 @@ async def _handle_lula_audit_post_custody(
     if is_clean_pass:
         effective_not_satisfied_gauge = 0
         effective_insufficient_gauge = 0
+        effective_insufficient_sample_gauge = 0
         run_outcome = "pass"
-    elif is_insufficient_traffic_only:
+    elif is_insufficient_evidence_only:
         effective_not_satisfied_gauge = 0
         effective_insufficient_gauge = len(valid_insufficient_controls)
-        run_outcome = "insufficient_traffic"
+        effective_insufficient_sample_gauge = len(valid_insufficient_sample_controls)
+        run_outcome = (
+            "insufficient_sample"
+            if len(valid_insufficient_sample_controls) > 0
+            else "insufficient_traffic"
+        )
     else:
         effective_insufficient_gauge = len(valid_insufficient_controls)
+        effective_insufficient_sample_gauge = len(valid_insufficient_sample_controls)
         unaccounted_failures = max(
             0,
-            evaluated_count - satisfied_count - len(valid_insufficient_controls),
+            evaluated_count
+            - satisfied_count
+            - len(valid_insufficient_controls)
+            - len(valid_insufficient_sample_controls),
         )
         effective_not_satisfied_gauge = max(
             event.not_satisfied_count or 0,
@@ -1414,14 +1619,25 @@ async def _handle_lula_audit_post_custody(
         LULA_AUDIT_INSUFFICIENT_TRAFFIC_CONTROLS.set(
             float(effective_insufficient_gauge)
         )
+    if LULA_AUDIT_INSUFFICIENT_SAMPLE_CONTROLS is not None:
+        LULA_AUDIT_INSUFFICIENT_SAMPLE_CONTROLS.set(
+            float(effective_insufficient_sample_gauge)
+        )
     if not idempotent_replay and LULA_AUDIT_RUNS_TOTAL is not None:
         LULA_AUDIT_RUNS_TOTAL.labels(outcome=run_outcome).inc()
+    # Separate statistical satisfaction (strictly `26/26` `is_clean_pass`,
+    # POAM-2026-234) from auditor & structural liveness (`>= 26` evaluated,
+    # `failed_count == 0`, including statistical `insufficient_traffic` /
+    # `insufficient_sample` runs on quiet clusters).
+    now_epoch = datetime.now(tz=timezone.utc).timestamp()
     if is_clean_pass and LULA_AUDIT_LAST_PASS_TIMESTAMP_SECONDS is not None:
-        LULA_AUDIT_LAST_PASS_TIMESTAMP_SECONDS.set(
-            datetime.now(tz=timezone.utc).timestamp()
-        )
+        LULA_AUDIT_LAST_PASS_TIMESTAMP_SECONDS.set(now_epoch)
+    if (
+        is_clean_pass or is_insufficient_evidence_only
+    ) and LULA_AUDIT_LAST_HEALTHY_RUN_TIMESTAMP_SECONDS is not None:
+        LULA_AUDIT_LAST_HEALTHY_RUN_TIMESTAMP_SECONDS.set(now_epoch)
 
-    if is_clean_pass or is_insufficient_traffic_only or idempotent_replay:
+    if is_clean_pass or is_insufficient_evidence_only or idempotent_replay:
         return
 
     reasons: list[str] = []
@@ -1434,6 +1650,16 @@ async def _handle_lula_audit_post_custody(
         reasons.append(
             "non-statistical controls rejected from insufficient_traffic="
             f"{','.join(invalid_insufficient_controls)}"
+        )
+    if invalid_insufficient_sample_controls:
+        reasons.append(
+            "non-statistical controls rejected from insufficient_sample="
+            f"{','.join(invalid_insufficient_sample_controls)}"
+        )
+    if overlapping_insufficient:
+        reasons.append(
+            "overlapping insufficient_traffic and insufficient_sample controls="
+            f"{','.join(overlapping_insufficient)}"
         )
     if effective_not_satisfied_gauge > 0:
         reasons.append(f"not_satisfied={effective_not_satisfied_gauge}")
@@ -1488,7 +1714,13 @@ async def _handle_lula_audit_post_custody(
     audit_id = f"lula-audit-{receipt_hash[:16]}"
     try:
         notifier = create_notifier()
-        await notifier.send_critical_alert(findings, audit_id)
+        delivered = (await notifier.send_critical_alert(findings, audit_id)) is True
+        if not delivered:
+            logger.error(
+                "[infra/events] Notifier did not confirm external delivery for CRITICAL "
+                "lula_audit event (record_hash=%s)",
+                receipt_hash,
+            )
     except Exception as notify_exc:
         logger.error(
             "[infra/events] Notifier transport failed after CRITICAL lula_audit log "
@@ -1888,6 +2120,16 @@ async def get_metrics(
     try:
         metrics = await get_compliance_metrics(control_id, window_hours)
         return metrics
+    except (EvidenceCustodyIntegrityError, NonEvidentiaryAttestationError) as exc:
+        logger.critical(
+            "[compliance-bridge] 🚨 Custody integrity error for %s: %s",
+            control_id,
+            exc,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "custody_integrity_error", "message": str(exc)},
+        ) from exc
     except Exception as exc:
         logger.error(
             "[compliance-bridge] Failed to fetch metrics for %s: %s", control_id, exc
@@ -1896,6 +2138,51 @@ async def get_metrics(
             status_code=500,
             detail={"error": "METRICS_FETCH_FAILED", "message": str(exc)},
         )
+
+
+async def _resolve_cm6_posture(window_hours: int) -> Cm6ThresholdsPosture:
+    try:
+        return await get_cm6_thresholds_posture(window_hours=window_hours)
+    except (EvidenceCustodyIntegrityError, NonEvidentiaryAttestationError) as exc:
+        logger.critical("[cm6] 🚨 Custody integrity error: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "custody_integrity_error", "message": str(exc)},
+        ) from exc
+    except Exception as exc:
+        logger.error("[cm6] Failed to read CM-6 thresholds custody stream: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "cm6_custody_unavailable", "message": str(exc)},
+        ) from exc
+
+
+@app.get(
+    "/v1/compliance/cm6",
+    response_model=Cm6ThresholdsPosture,
+    tags=["compliance"],
+    summary="Get NIST SP 800-53 CM-6 thresholds-digest posture from evidence stream",
+)
+async def get_compliance_cm6(
+    window_hours: int = Query(
+        default=168, ge=1, le=720, description="Cold-store look-back window in hours"
+    ),
+) -> Cm6ThresholdsPosture:
+    return await _resolve_cm6_posture(window_hours)
+
+
+@app.get(
+    "/v1/config/cm6",
+    response_model=Cm6ThresholdsPosture,
+    tags=["compliance"],
+    summary="Get NIST SP 800-53 CM-6 thresholds-digest posture (alias)",
+)
+async def get_config_cm6(
+    window_hours: int = Query(
+        default=168, ge=1, le=720, description="Cold-store look-back window in hours"
+    ),
+) -> Cm6ThresholdsPosture:
+    return await _resolve_cm6_posture(window_hours)
 
 
 # ---------------------------------------------------------------------------
@@ -2573,14 +2860,16 @@ async def defer_inject(
         )
 
     # Build enriched context with confidence_score for Phase-3 replay
-    enriched_context = body.injection_data or {}
+    enriched_context = dict(body.injection_data or {})
     enriched_context["confidence_score"] = body.confidence_score
 
     try:
-        queue = get_shared_defer_queue(redis_url)
+        from src.gateway.governance.defer_queue import (
+            DeferReason,
+            get_required_quorum,
+        )
 
-        # Stream B security gates: prevent bypassing dual-control via injection
-        from src.gateway.governance.defer_queue import DeferReason, get_required_quorum
+        queue = get_shared_defer_queue(redis_url)
 
         # Fetch token to check defer_reason and approval status
         token = await queue.get(defer_id)
@@ -2668,6 +2957,20 @@ async def defer_inject(
                     "reason": "confidence still below threshold after injection",
                 },
             )
+        elif result == ReplayResult.DEFER_QUEUE_UNAVAILABLE:
+            raise HTTPException(
+                status_code=503,
+                detail={"error": "DEFER_QUEUE_UNAVAILABLE", "defer_id": defer_id},
+            )
+        elif result != ReplayResult.ADMITTED:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "DEFER_REPLAY_UNEXPECTED_RESULT",
+                    "defer_id": defer_id,
+                    "result": str(getattr(result, "value", result)),
+                },
+            )
 
         # result == ReplayResult.ADMITTED - proceed with resolution
         # Retrieve the resolved token for audit metadata
@@ -2693,9 +2996,16 @@ async def defer_inject(
         # NOT from Python's built-in ConnectionError.  Detect by errno or message
         # so the integration test's skip guard fires on 503 instead of 500:
         #   if r.status_code == 503: pytest.skip("Redis db=1 unavailable")
+        from redis.exceptions import RedisError
+
+        from src.gateway.governance.governor.errors import DeferQueueUnavailableError
+
         exc_str = str(exc)
         is_conn_err = (
-            isinstance(exc, (ConnectionError, OSError))
+            isinstance(
+                exc,
+                (ConnectionError, OSError, RedisError, DeferQueueUnavailableError),
+            )
             or "Connect call failed" in exc_str
             or "Connection refused" in exc_str
             or "Cannot assign requested address" in exc_str
@@ -2734,13 +3044,15 @@ async def defer_inject(
 
 
 class DeferEscalateRequest(BaseModel):
-    """Request body for human operator approval of a deferred execution (POAM-2026-196).
+    """Request body for human operator approval of a deferred execution (POAM-2026-210).
 
     Self-asserted identity fields (``operator_urn``, ``session_id``, ``auth_method``)
     are forbidden in the body and extracted exclusively from verified human OIDC
     credentials via ``require_human_operator_identity``. Under an enforcing
-    ``DeploymentPosture``, ``client_data_json`` and ``challenge_binding`` are
-    mandatory and verified against ``ApprovalRecord.verify_webauthn_challenge()``.
+    ``DeploymentPosture``, all five W3C WebAuthn assertion fields (``credential_id``,
+    ``client_data_json``, ``authenticator_data``, ``signature``, ``challenge_binding``)
+    are mandatory regardless of ``operator.channel_provenance`` and verified
+    cryptographically against ``ApprovalRecord.verify_webauthn_challenge()``.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -2755,15 +3067,15 @@ class DeferEscalateRequest(BaseModel):
     )
     credential_id: str | None = Field(
         default=None,
-        description="Optional base64url-encoded WebAuthn credential ID.",
+        description="Base64url-encoded WebAuthn credential ID (mandatory in enforcing postures).",
     )
     authenticator_data: str | None = Field(
         default=None,
-        description="Optional base64url-encoded WebAuthn authenticatorData.",
+        description="Base64url-encoded WebAuthn authenticatorData >=37 bytes (mandatory in enforcing postures).",
     )
     signature: str | None = Field(
         default=None,
-        description="Optional base64url-encoded WebAuthn assertion signature.",
+        description="Base64url-encoded asymmetric WebAuthn assertion signature (mandatory in enforcing postures).",
     )
 
 
@@ -2777,21 +3089,41 @@ async def defer_escalate(
     body: DeferEscalateRequest,
     operator: OperatorPrincipal = Depends(require_human_operator_identity),
 ) -> JSONResponse:
-    """Escalate a DEFER-parked token with verified human operator approval.
+    """Escalate a DEFER-parked token with verified human operator + WebAuthn approval.
 
     Authenticates human operators via ``require_human_operator_identity`` (out-of-band
     ``kid``-verified OIDC JWT in ``CAGE_TRUSTED_OPERATOR_IDENTITIES``; does not
     require workload ``CAGE_INTERNAL_TOKEN``). Workload SVID identities are
-    refused with HTTP 403, and under an enforcing ``DeploymentPosture`` both
-    ``client_data_json`` and ``challenge_binding`` are mandatory.
+    refused with HTTP 403, and under an enforcing ``DeploymentPosture`` all five
+    W3C WebAuthn assertion fields are mandatory and verified cryptographically
+    against out-of-band registered operator public keys, independent of
+    ``operator.channel_provenance``.
     """
     # POAM-2026-196 (F-40, F-41): Defense-in-depth check for direct callers.
     operator = ensure_human_operator_principal(operator)
 
     from src.gateway.governance.env_posture import DeploymentPosture
+    from src.gateway.governance.webauthn_verifier import (
+        WebAuthnConfigError,
+        load_webauthn_verifier_config_from_env,
+    )
 
-    if DeploymentPosture.from_env().is_enforcing() and (
-        not (body.client_data_json and body.client_data_json.strip())
+    enforcing = DeploymentPosture.from_env().is_enforcing()
+    has_any_webauthn_field = any(
+        val is not None
+        for val in (
+            body.credential_id,
+            body.client_data_json,
+            body.authenticator_data,
+            body.signature,
+            body.challenge_binding,
+        )
+    )
+    if enforcing and (
+        not (body.credential_id and body.credential_id.strip())
+        or not (body.client_data_json and body.client_data_json.strip())
+        or not (body.authenticator_data and body.authenticator_data.strip())
+        or not (body.signature and body.signature.strip())
         or not (body.challenge_binding and body.challenge_binding.strip())
     ):
         raise HTTPException(
@@ -2799,12 +3131,30 @@ async def defer_escalate(
             detail={
                 "error": "WEBAUTHN_BINDING_REQUIRED",
                 "message": (
-                    "client_data_json and challenge_binding are mandatory in "
-                    "enforcing postures (POAM-2026-196)."
+                    "credential_id, client_data_json, authenticator_data, signature, "
+                    "and challenge_binding are mandatory in enforcing postures "
+                    "(POAM-2026-196 / POAM-2026-210)."
                 ),
                 "defer_id": defer_id,
             },
         )
+
+    if enforcing or has_any_webauthn_field:
+        try:
+            load_webauthn_verifier_config_from_env()
+        except WebAuthnConfigError as cfg_exc:
+            logger.error(
+                "[defer/escalate] Out-of-band WebAuthn trust configuration unavailable: %s",
+                cfg_exc,
+            )
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "WEBAUTHN_TRUST_UNCONFIGURED",
+                    "message": str(cfg_exc),
+                    "defer_id": defer_id,
+                },
+            ) from cfg_exc
 
     redis_url = _resolve_defer_redis_url()
 
@@ -2835,6 +3185,15 @@ async def defer_escalate(
             authenticator_data=body.authenticator_data,
             signature=body.signature,
         )
+    except WebAuthnConfigError as cfg_exc:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "WEBAUTHN_TRUST_UNCONFIGURED",
+                "message": str(cfg_exc),
+                "defer_id": defer_id,
+            },
+        ) from cfg_exc
     except (ValidationError, ValueError) as val_exc:
         raise HTTPException(
             status_code=400,
@@ -2851,6 +3210,15 @@ async def defer_escalate(
         # Use approve() instead of resolve() for dual-control
         try:
             status, token = await queue.approve(defer_id, approval_record)
+        except WebAuthnConfigError as cfg_exc:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "WEBAUTHN_TRUST_UNCONFIGURED",
+                    "message": str(cfg_exc),
+                    "defer_id": defer_id,
+                },
+            ) from cfg_exc
         except ValueError as val_exc:
             msg = str(val_exc)
             status_code = 403 if "Separation-of-duties" in msg else 400

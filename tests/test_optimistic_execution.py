@@ -93,7 +93,7 @@ async def test_optimistic_execution_interruption(
         side="buy",
         type="market",
         confidence=0.99,
-        transaction_id=tx_id,
+        idempotency_key=tx_id,
     )
     seal = await generate_seal(
         "execute_trade", order.model_dump(exclude_none=True), record_hash="e" * 64
@@ -134,7 +134,7 @@ async def test_optimistic_execution_success(mock_redis, slow_executor_setup, moc
         side="buy",
         type="market",
         confidence=0.99,
-        transaction_id=tx_id,
+        idempotency_key=tx_id,
     )
     seal = await generate_seal(
         "execute_trade", order.model_dump(exclude_none=True), record_hash="e" * 64

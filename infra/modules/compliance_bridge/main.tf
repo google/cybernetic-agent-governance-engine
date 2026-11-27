@@ -78,6 +78,21 @@ resource "kubernetes_deployment" "compliance_bridge" {
       condition     = !contains(["staging", "prod", "production"], lower(var.cage_env)) || lower(trimspace(var.evidence_cold_store)) == "null" || trimspace(var.evidence_cold_store_location) != ""
       error_message = "CAGE Invariant (SC-7 / GDPR Art. 44 / MAS TRM §4.2 / POAM-2026-220): under an enforcing posture with durable cold storage, compliance-bridge requires a non-empty evidence_cold_store_location (the WORM bucket's immutable cloud location)."
     }
+
+    precondition {
+      condition     = !strcontains(var.webauthn_credentials_json, "PRIVATE KEY")
+      error_message = "CAGE Invariant (IA-2 / POAM-2026-210): webauthn_credentials_json must contain only asymmetric public keys (never PRIVATE KEY material)."
+    }
+
+    precondition {
+      condition = !contains(["staging", "prod", "production"], lower(var.cage_env)) || (
+        contains(["pubsub", "webhook", "slack", "pagerduty"], lower(trimspace(var.alert_channel))) &&
+        (lower(trimspace(var.alert_channel)) != "pubsub" || can(regex("^projects/[a-z][a-z0-9-]{4,28}[a-z0-9]/topics/[A-Za-z][A-Za-z0-9-_.~%+]{2,254}$", trimspace(var.alert_pubsub_topic)))) &&
+        (!contains(["webhook", "slack"], lower(trimspace(var.alert_channel))) || var.alert_webhook_configured) &&
+        (lower(trimspace(var.alert_channel)) != "pagerduty" || var.pagerduty_routing_key_configured)
+      )
+      error_message = "CAGE Invariant (IR-6 / AU-5 / CA-7 / POAM-2026-230): under an enforcing posture, compliance-bridge alert_channel must be 'pubsub', 'webhook', 'slack', or 'pagerduty' (never unset or 'console') with its destination configured. Set compliance_alert_channel = \"pubsub\" and alert_pubsub_topic = \"projects/<project-id>/topics/<topic>\" (or compliance_alert_webhook_url / pagerduty_routing_key) in gitignored infra/targets/gcp-gke/terraform.auto.tfvars (see terraform.auto.tfvars.example and AL-01 in docs/BREAKING_CHANGES.md)."
+    }
   }
 
   metadata {
@@ -197,6 +212,11 @@ resource "kubernetes_deployment" "compliance_bridge" {
           }
 
           env {
+            name  = "LULA_AUDIT_MAX_AGE_SECONDS"
+            value = tostring(var.lula_audit_max_age_seconds)
+          }
+
+          env {
             name = "LANGFUSE_PUBLIC_KEY"
             value_from {
               secret_key_ref {
@@ -290,11 +310,32 @@ resource "kubernetes_deployment" "compliance_bridge" {
           }
 
           env {
+            name  = "COMPLIANCE_ALERT_PUBSUB_TOPIC"
+            value = var.alert_pubsub_topic
+          }
+
+          env {
+            name  = "ALERT_HEARTBEAT_INTERVAL_SECONDS"
+            value = tostring(var.alert_heartbeat_interval_seconds)
+          }
+
+          env {
             name = "COMPLIANCE_ALERT_WEBHOOK_URL"
             value_from {
               secret_key_ref {
                 name     = "compliance-alert-secrets"
                 key      = "webhook-url"
+                optional = true
+              }
+            }
+          }
+
+          env {
+            name = "PAGERDUTY_ROUTING_KEY"
+            value_from {
+              secret_key_ref {
+                name     = "compliance-alert-secrets"
+                key      = "pagerduty-routing-key"
                 optional = true
               }
             }
@@ -449,6 +490,24 @@ resource "kubernetes_deployment" "compliance_bridge" {
             content {
               name  = "CAGE_OPERATOR_JWKS_JSON"
               value = trimspace(var.operator_jwks_json)
+            }
+          }
+
+          env {
+            name  = "CAGE_WEBAUTHN_RP_ID"
+            value = trimspace(var.webauthn_rp_id)
+          }
+
+          env {
+            name  = "CAGE_WEBAUTHN_ALLOWED_ORIGINS"
+            value = join(",", [for o in var.webauthn_allowed_origins : trimspace(o) if trimspace(o) != ""])
+          }
+
+          dynamic "env" {
+            for_each = trimspace(var.webauthn_credentials_json) != "" ? [1] : []
+            content {
+              name  = "CAGE_WEBAUTHN_CREDENTIALS_JSON"
+              value = trimspace(var.webauthn_credentials_json)
             }
           }
 

@@ -66,6 +66,23 @@ def _is_valid_non_negative_number(value: Any) -> bool:
 
 logger = logging.getLogger(__name__)
 
+_CODE_PROVIDER_UNAVAILABLE = "BOUNDING_PROVIDER_UNAVAILABLE"
+
+
+def _provider_unavailable_result(
+    contract_id: str,
+    reason: str,
+    **finding_fields: Any,
+) -> ContractResult:
+    """Build a fail-closed INFRASTRUCTURE ContractResult for provider/capability outages."""
+    return ContractResult(
+        contract_id=contract_id,
+        admitted=False,
+        severity=ContractSeverity.INFRASTRUCTURE,
+        code=_CODE_PROVIDER_UNAVAILABLE,
+        findings=[{"reason": reason, **finding_fields}],
+    )
+
 
 # ============================================================================
 # B1 — Maximum Single-Order Notional Value
@@ -497,34 +514,20 @@ def contract_b3_liquidity_depth(
             symbol=request.symbol, venue=request.venue, side=request.side
         )
     except UnconfiguredEnforcingProviderError as e:
-        return ContractResult(
-            contract_id=contract_id,
-            admitted=False,
-            severity=ContractSeverity.HARD_BLOCK,
-            findings=[
-                {
-                    "reason": "Market data provider unconfigured in enforcing posture",
-                    "symbol": request.symbol,
-                    "venue": request.venue,
-                    "error": str(e),
-                }
-            ],
+        return _provider_unavailable_result(
+            contract_id,
+            "Market data provider unconfigured in enforcing posture",
+            symbol=request.symbol,
+            venue=request.venue,
+            error=str(e),
         )
     except RuntimeError as e:
-        # Provider unavailable → fail-closed with HITL escalation
-        return ContractResult(
-            contract_id=contract_id,
-            admitted=False,
-            severity=ContractSeverity.HITL_ESCALATE,
-            findings=[
-                {
-                    "reason": "Market data provider unavailable",
-                    "symbol": request.symbol,
-                    "venue": request.venue,
-                    "error": str(e),
-                    "action": "Escalate to human review — cannot verify liquidity depth",
-                }
-            ],
+        return _provider_unavailable_result(
+            contract_id,
+            "Market data provider unavailable",
+            symbol=request.symbol,
+            venue=request.venue,
+            error=str(e),
         )
 
     # Validate depth data structure
@@ -717,32 +720,18 @@ def contract_b5_volatility_sizing(
             symbol=request.symbol, window_days=vol_window_days
         )
     except UnconfiguredEnforcingProviderError as e:
-        return ContractResult(
-            contract_id=contract_id,
-            admitted=False,
-            severity=ContractSeverity.HARD_BLOCK,
-            findings=[
-                {
-                    "reason": "Market data provider unconfigured in enforcing posture",
-                    "symbol": request.symbol,
-                    "error": str(e),
-                }
-            ],
+        return _provider_unavailable_result(
+            contract_id,
+            "Market data provider unconfigured in enforcing posture",
+            symbol=request.symbol,
+            error=str(e),
         )
     except RuntimeError as e:
-        # Provider unavailable → fail-closed with HITL escalation
-        return ContractResult(
-            contract_id=contract_id,
-            admitted=False,
-            severity=ContractSeverity.HITL_ESCALATE,
-            findings=[
-                {
-                    "reason": "Market data provider unavailable",
-                    "symbol": request.symbol,
-                    "error": str(e),
-                    "action": "Escalate to human review — cannot verify volatility",
-                }
-            ],
+        return _provider_unavailable_result(
+            contract_id,
+            "Market data provider unavailable",
+            symbol=request.symbol,
+            error=str(e),
         )
 
     # Validate volatility data structure
@@ -911,34 +900,20 @@ def contract_b8_twap_slippage(
             window_seconds=twap_window_seconds,
         )
     except UnconfiguredEnforcingProviderError as e:
-        return ContractResult(
-            contract_id=contract_id,
-            admitted=False,
-            severity=ContractSeverity.HARD_BLOCK,
-            findings=[
-                {
-                    "reason": "Market data provider unconfigured in enforcing posture",
-                    "symbol": request.symbol,
-                    "venue": request.venue,
-                    "error": str(e),
-                }
-            ],
+        return _provider_unavailable_result(
+            contract_id,
+            "Market data provider unconfigured in enforcing posture",
+            symbol=request.symbol,
+            venue=request.venue,
+            error=str(e),
         )
     except RuntimeError as e:
-        # Provider unavailable → fail-closed with HITL escalation
-        return ContractResult(
-            contract_id=contract_id,
-            admitted=False,
-            severity=ContractSeverity.HITL_ESCALATE,
-            findings=[
-                {
-                    "reason": "Market data provider unavailable",
-                    "symbol": request.symbol,
-                    "venue": request.venue,
-                    "error": str(e),
-                    "action": "Escalate to human review — cannot verify TWAP slippage",
-                }
-            ],
+        return _provider_unavailable_result(
+            contract_id,
+            "Market data provider unavailable",
+            symbol=request.symbol,
+            venue=request.venue,
+            error=str(e),
         )
 
     # Validate TWAP data structure
@@ -1194,7 +1169,9 @@ def contract_b7_audit_trail_sealing(request: BoundedTradeRequest) -> ContractRes
 
     Per Phase 5 Master Plan Section 4.7:
     - Severity: HARD_BLOCK (audit integrity invariant)
-    - Reuses KMS signer and provenance chain infrastructure
+    - Checks only that the KMS signer module is importable; it does not
+      sign or chain anything itself, and it does not use
+      ``provenance_chain.py`` (an unwired library, POAM-2026-246)
     - Fails closed if KMS signer module is unavailable
 
     Args:
@@ -1219,17 +1196,11 @@ def contract_b7_audit_trail_sealing(request: BoundedTradeRequest) -> ContractRes
         if KMSGovernanceSigner is None:
             raise ImportError("KMS signer module unavailable")
     except (ImportError, Exception) as e:
-        return ContractResult(
-            contract_id=contract_id,
-            admitted=False,
-            severity=ContractSeverity.HARD_BLOCK,
-            findings=[
-                {
-                    "reason": "KMS signer module unavailable",
-                    "error": str(e),
-                    "note": "Cannot execute unauditable trade",
-                }
-            ],
+        return _provider_unavailable_result(
+            contract_id,
+            "KMS signer module unavailable",
+            error=str(e),
+            note="Cannot execute unauditable trade",
         )
 
     return ContractResult(
@@ -1361,22 +1332,20 @@ def contract_b10_rollback_window(
             rollback_window_seconds=request.rollback_window_seconds,
         )
     except UnconfiguredEnforcingProviderError as e:
-        return ContractResult(
-            contract_id=contract_id,
-            admitted=False,
-            severity=ContractSeverity.HARD_BLOCK,
-            findings=[
-                {
-                    "reason": "Rollback capability provider unconfigured in enforcing posture",
-                    "symbol": request.symbol,
-                    "venue": request.venue,
-                    "error": str(e),
-                }
-            ],
+        return _provider_unavailable_result(
+            contract_id,
+            "Rollback capability provider unconfigured in enforcing posture",
+            symbol=request.symbol,
+            venue=request.venue,
+            error=str(e),
         )
     except RuntimeError as e:
-        return _b10_window_closed(
-            request, "Rollback capability provider unavailable", error=str(e)
+        return _provider_unavailable_result(
+            contract_id,
+            "Rollback capability provider unavailable",
+            symbol=request.symbol,
+            venue=request.venue,
+            error=str(e),
         )
 
     if not capability.get("supported", False):

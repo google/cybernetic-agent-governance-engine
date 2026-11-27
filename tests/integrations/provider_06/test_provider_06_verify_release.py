@@ -543,6 +543,10 @@ async def test_verify_release_preserves_signed_refusal_on_release_refused(
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    "src.integrations.provider_06.adapter:Provider06AgentIntegrityAdapter.verify_release#self._handle_technical_error_response(",
+    "src.integrations.provider_06.adapter:Provider06AgentIntegrityAdapter._handle_technical_error_response#error_code = raw_code",
+)
 async def test_verify_release_fails_closed_on_technical_error_response(
     tmp_path: Path,
 ) -> None:
@@ -591,6 +595,11 @@ async def test_verify_release_fails_closed_on_technical_error_response(
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    "src.integrations.provider_06.lifecycle:SidecarHealthCheck.check_readiness_detail#retry_after = int(raw_retry)",
+    "src.integrations.provider_06.lifecycle:SidecarHealthCheck.check_readiness_detail#reasons = tuple(raw_reasons)",
+    "src.integrations.provider_06.lifecycle:SidecarHealthCheck.check_readiness_detail#probe NOT OK —",
+)
 async def test_check_readiness_detail_parses_503_reasons_and_retry_after() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
@@ -739,3 +748,84 @@ async def test_verify_release_unsigned_adapter_branch_denies() -> None:
     assert outcome.admitted is False
     assert outcome.receipt_verified is False
     assert outcome.released_response is None
+
+
+@pytest.mark.asyncio
+async def test_file_jwks_client_rejects_extended_manifest_when_authority_keys_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Extended CageReceiptTrustManifestV1 must fail closed without persisting generation when authority_keys is empty."""
+    monkeypatch.delenv("CAGE_AGENT_INTEGRITY_AUTHORITY_KEYS", raising=False)
+    attacker_authority_sk = Ed25519PrivateKey.generate()
+    attacker_receipt_sk = Ed25519PrivateKey.generate()
+    manifest_path = tmp_path / "jwks.json"
+    state_path = tmp_path / "manifest_state.json"
+
+    forged_manifest = _build_signed_trust_manifest(
+        authority_sk=attacker_authority_sk,
+        receipt_sk=attacker_receipt_sk,
+        generation=(1 << 53),
+    )
+    manifest_path.write_bytes(jcs_canonicalize_plan(forged_manifest))
+
+    client = FileJWKSClient(
+        manifest_url=manifest_path,
+        authority_keys={},
+        manifest_state_path=state_path,
+    )
+    with pytest.raises(ValueError, match="authority keys are required"):
+        await client.get_key("cage-receipt-ed25519-2026-04")
+    assert not state_path.exists()
+    assert client.manifest_extension is None
+
+
+@pytest.mark.asyncio
+async def test_enforcing_posture_requires_non_cleartext_manifest_extension_and_hmac(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """In enforcing posture, http:// manifest URLs, plain unsigned JWKS, and missing HMAC secrets fail closed."""
+    monkeypatch.setenv("CAGE_ENV", "production")
+
+    with pytest.raises(ValueError, match="https:// or local volume file://"):
+        FileJWKSClient(manifest_url="http://insecure.example.com/jwks.json")
+
+    plain_jwks_path = tmp_path / "plain_jwks.json"
+    receipt_sk = Ed25519PrivateKey.generate()
+    pub_bytes = receipt_sk.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+    plain_jwks_path.write_bytes(
+        jcs_canonicalize_plan(
+            {
+                "keys": [
+                    {
+                        "alg": "EdDSA",
+                        "crv": "Ed25519",
+                        "kid": "k1",
+                        "kty": "OKP",
+                        "use": "sig",
+                        "x": _b64url_encode(pub_bytes),
+                    }
+                ]
+            }
+        )
+    )
+    enforcing_client = FileJWKSClient(manifest_url=plain_jwks_path)
+    with pytest.raises(ValueError, match="missing required"):
+        await enforcing_client.get_key("k1")
+
+    called = False
+
+    def _unreachable_handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal called
+        called = True
+        return httpx.Response(200, json={})
+
+    adapter = Provider06AgentIntegrityAdapter(
+        endpoint="https://sidecar.example.com",
+        transport=httpx.MockTransport(_unreachable_handler),
+        use_verify_release=True,
+    )
+    outcome = await adapter.verify_release({"response": {"content": "test"}})
+    assert outcome.admitted is False
+    assert called is False
+    assert outcome.error is not None
+    assert "HMAC secret is required" in outcome.error

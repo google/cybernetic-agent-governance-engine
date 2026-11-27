@@ -132,22 +132,37 @@ class TestScoreConfabulation:
 class TestIsConfabulationBlocked:
     """is_confabulation_blocked must correctly apply the threshold."""
 
+    @pytest.mark.covers(
+        "src.gateway.governance.confabulation_scorer:is_confabulation_blocked#return val < CONFIDENCE_THRESHOLD"
+    )
     def test_blocked_below_threshold(self):
         """Confidence below threshold triggers a block."""
         assert is_confabulation_blocked(0.94) is True
 
+    @pytest.mark.covers(
+        "src.gateway.governance.confabulation_scorer:is_confabulation_blocked#return val < CONFIDENCE_THRESHOLD"
+    )
     def test_not_blocked_at_threshold(self):
         """Confidence exactly at threshold does not trigger a block."""
         assert is_confabulation_blocked(CONFIDENCE_THRESHOLD) is False
 
+    @pytest.mark.covers(
+        "src.gateway.governance.confabulation_scorer:is_confabulation_blocked#return val < CONFIDENCE_THRESHOLD"
+    )
     def test_not_blocked_above_threshold(self):
         """Confidence above threshold does not trigger a block."""
         assert is_confabulation_blocked(0.99) is False
 
+    @pytest.mark.covers(
+        "src.gateway.governance.confabulation_scorer:is_confabulation_blocked#return val < CONFIDENCE_THRESHOLD"
+    )
     def test_zero_confidence_is_blocked(self):
         """Zero confidence is always blocked."""
         assert is_confabulation_blocked(0.0) is True
 
+    @pytest.mark.covers(
+        "src.gateway.governance.confabulation_scorer:is_confabulation_blocked#return val < CONFIDENCE_THRESHOLD"
+    )
     def test_perfect_confidence_is_not_blocked(self):
         """Perfect confidence (1.0) is never blocked."""
         assert is_confabulation_blocked(1.0) is False

@@ -144,6 +144,10 @@ async def test_input_pii_redaction_runs_before_get_nemo_rails(
     assert call_order == ["redact_pii", "get_nemo_rails", "validate_with_nemo"]
 
 
+@pytest.mark.covers(
+    "src.gateway.governance.langgraph_harness.nemo_node_factory:create_nemo_guardrail_node.nemo_guardrail_node#Input PII scan failed in enforcing posture",
+    "src.gateway.governance.langgraph_harness.nemo_node_factory:create_nemo_guardrail_node.nemo_guardrail_node#GUARDRAIL_ERROR: {exc}",
+)
 @pytest.mark.asyncio
 async def test_input_pii_failure_fails_closed_in_enforcing_posture_when_nemo_disabled(
     monkeypatch: pytest.MonkeyPatch,

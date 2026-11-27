@@ -196,12 +196,18 @@ def parse_jwks_payload(payload: Any, *, max_keys: int = 64) -> dict[str, PublicK
     return parsed_keys
 
 
+class _AuthoritativeJwksRejectionError(RoutingSealVerificationError):
+    """Raised when an HTTP 200 JWKS response is malformed, empty, or contains invalid keys."""
+
+
 class JwksKeyResolver:
     """Out-of-band JWKS trust-anchor resolver with bounded staleness and single-flight refresh.
 
-    Enforces monotonic ``jwks_ttl_s`` refresh, rate-limits unknown-``kid`` refresh
-    retries against forged-``kid`` floods, rejects HTTP ``304`` responses, replaces
-    key maps atomically on rotation/revocation, and evicts cached keys fail-closed
+    Enforces monotonic ``jwks_ttl_s`` refresh, rate-limits both unknown-``kid``
+    and failed expired-TTL refresh retries against thundering-herd floods,
+    rejects HTTP ``304`` responses, replaces key maps atomically on
+    rotation/revocation, immediately evicts cached keys on authoritative HTTP
+    ``200`` empty/invalid JWKS responses, and evicts cached keys fail-closed
     once ``max_jwks_staleness_s`` elapses during a JWKS endpoint outage.
     """
 
@@ -230,6 +236,7 @@ class JwksKeyResolver:
         self._keys: dict[str, PublicKey] = {}
         self._fetched_at: float | None = None
         self._last_unknown_kid_refresh_at: float | None = None
+        self._last_failed_refresh_at: float | None = None
         self._lock = asyncio.Lock()
 
     def _evict_if_beyond_max_staleness(self, now: float) -> bool:
@@ -258,10 +265,71 @@ class JwksKeyResolver:
         try:
             raw_json = response.json()
         except Exception as exc:
-            raise RoutingSealVerificationError(
+            raise _AuthoritativeJwksRejectionError(
                 f"Invalid JSON from JWKS endpoint: {exc}"
             ) from exc
-        return parse_jwks_payload(raw_json, max_keys=self._max_keys)
+        try:
+            return parse_jwks_payload(raw_json, max_keys=self._max_keys)
+        except RoutingSealVerificationError as exc:
+            raise _AuthoritativeJwksRejectionError(str(exc)) from exc
+
+    def _resolve_during_failed_refresh_cooldown(
+        self, kid: str, now: float
+    ) -> PublicKey:
+        """Serve bounded-stale cached key or fail closed while failed-refresh cooldown is active."""
+        self._evict_if_beyond_max_staleness(now)
+        if self._fetched_at is not None and kid in self._keys:
+            return self._keys[kid]
+        raise RoutingSealVerificationError(
+            f"Unable to verify GovernanceEnvelope kid={kid!r} "
+            "(JWKS refresh cooldown active)"
+        )
+
+    def _handle_transient_refresh_failure(
+        self,
+        kid: str,
+        refresh_err: Exception,
+        *,
+        is_unknown_kid_retry: bool,
+        evicted_before_fetch: bool,
+    ) -> PublicKey:
+        """Record failed refresh cooldown and return bounded-stale key or raise fail-closed."""
+        after_err = self._clock()
+        self._last_failed_refresh_at = after_err
+        if is_unknown_kid_retry:
+            self._last_unknown_kid_refresh_at = after_err
+        evicted_after_err = self._evict_if_beyond_max_staleness(after_err)
+        if evicted_before_fetch or evicted_after_err or self._fetched_at is None:
+            raise RoutingSealVerificationError(
+                f"Unable to verify GovernanceEnvelope kid={kid!r}; "
+                f"JWKS refresh failed with no fresh cached trust anchor: {refresh_err}"
+            ) from refresh_err
+        cached = self._keys.get(kid)
+        if cached is None:
+            raise RoutingSealVerificationError(
+                f"GovernanceEnvelope signed by unknown kid={kid!r} "
+                f"and JWKS refresh failed: {refresh_err}"
+            ) from refresh_err
+        return cached
+
+    def _handle_authoritative_rejection(
+        self,
+        kid: str,
+        auth_err: _AuthoritativeJwksRejectionError,
+        *,
+        is_unknown_kid_retry: bool,
+    ) -> PublicKey:
+        """Evict all cached keys immediately on authoritative HTTP 200 empty/invalid JWKS."""
+        after_err = self._clock()
+        self._keys.clear()
+        self._fetched_at = None
+        self._last_failed_refresh_at = after_err
+        if is_unknown_kid_retry:
+            self._last_unknown_kid_refresh_at = after_err
+        raise RoutingSealVerificationError(
+            f"Authoritative JWKS rejection while resolving kid={kid!r}; "
+            f"evicted cached trust anchors: {auth_err}"
+        ) from auth_err
 
     async def resolve_key(self, kid: str, http_client: httpx.AsyncClient) -> PublicKey:
         """Resolve ``kid`` from the bounded JWKS cache, refreshing inline when needed."""
@@ -297,36 +365,32 @@ class JwksKeyResolver:
                         f"GovernanceEnvelope signed by unknown kid={kid!r} "
                         "(JWKS unknown-kid refresh cooldown active)"
                     )
+            elif (
+                self._last_failed_refresh_at is not None
+                and (now - self._last_failed_refresh_at) < self._min_refresh_interval_s
+            ):
+                return self._resolve_during_failed_refresh_cooldown(kid, now)
 
             is_unknown_kid_retry = cache_fresh
             evicted_before_fetch = self._evict_if_beyond_max_staleness(now)
             try:
                 fresh_keys = await self._fetch_jwks(http_client)
+            except _AuthoritativeJwksRejectionError as auth_err:
+                return self._handle_authoritative_rejection(
+                    kid, auth_err, is_unknown_kid_retry=is_unknown_kid_retry
+                )
             except Exception as refresh_err:
-                after_err = self._clock()
-                if is_unknown_kid_retry:
-                    self._last_unknown_kid_refresh_at = after_err
-                evicted_after_err = self._evict_if_beyond_max_staleness(after_err)
-                if (
-                    evicted_before_fetch
-                    or evicted_after_err
-                    or self._fetched_at is None
-                ):
-                    raise RoutingSealVerificationError(
-                        f"Unable to verify GovernanceEnvelope kid={kid!r}; "
-                        f"JWKS refresh failed with no fresh cached trust anchor: {refresh_err}"
-                    ) from refresh_err
-                cached = self._keys.get(kid)
-                if cached is None:
-                    raise RoutingSealVerificationError(
-                        f"GovernanceEnvelope signed by unknown kid={kid!r} "
-                        f"and JWKS refresh failed: {refresh_err}"
-                    ) from refresh_err
-                return cached
+                return self._handle_transient_refresh_failure(
+                    kid,
+                    refresh_err,
+                    is_unknown_kid_retry=is_unknown_kid_retry,
+                    evicted_before_fetch=evicted_before_fetch,
+                )
 
             fetch_completed_at = self._clock()
             self._keys = fresh_keys
             self._fetched_at = fetch_completed_at
+            self._last_failed_refresh_at = None
             resolved = self._keys.get(kid)
             if resolved is None:
                 self._last_unknown_kid_refresh_at = fetch_completed_at

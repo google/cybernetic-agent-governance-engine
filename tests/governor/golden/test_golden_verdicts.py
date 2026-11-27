@@ -35,6 +35,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from src.gateway.governance.governor.sealing import SealedAction
 from tests.fixtures.approval import granted_approval
 from tests.governor.golden.fixtures import (
     SCENARIOS,
@@ -126,10 +127,11 @@ async def _execute_scenario_entry_point(
                         else None
                     )
                     seal_issued = False
-            elif isinstance(res, str):
+            elif isinstance(res, SealedAction):
+                # govern / revalidate_post_hitl: the committing run sealed.
                 outcome = "ALLOW"
                 first_violation_code = None
-                seal_issued = bool(res)
+                seal_issued = bool(res.seal)
             else:
                 outcome = str(res)
                 first_violation_code = None

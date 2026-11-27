@@ -321,6 +321,9 @@ def test_record_is_always_unverified_and_cannot_be_upgraded() -> None:
     assert attestation.metadata["reliance_status"] == "ELIGIBLE"
 
 
+@pytest.mark.covers(
+    "src.gateway.governance.warrant.reliance:RelianceRecord.__post_init__#must be a non-empty string"
+)
 @pytest.mark.parametrize(
     "field", ["norm_id", "required_governing_version", "provider_name"], ids=str
 )
@@ -360,7 +363,9 @@ async def test_allow_seal_evidence_carries_the_eligible_reliance_record(
     governor = _governor(StaticWarrantSource({warrant.norm_id: warrant}))
     params = _trade()
 
-    seal = await governor.govern(_ACTION, params)
+    governed = await governor.govern(_ACTION, params)
+    seal = governed.seal
+    assert governed.params == params  # no server input is bound for this action
 
     (decision,) = await chain.records("GOVERNANCE_DECISION")
     assert decision["record_hash"] == _record_hash_of(seal)
@@ -408,7 +413,7 @@ async def test_tampered_reliance_record_breaks_seal_verification(
 ) -> None:
     governor = _governor(StaticWarrantSource.eligible())
     params = _trade()
-    seal = await governor.govern(_ACTION, params)
+    seal = (await governor.govern(_ACTION, params)).seal
     (decision,) = await chain.records("GOVERNANCE_DECISION")
 
     payload = _payload(decision)
@@ -435,7 +440,7 @@ async def test_dropping_the_reliance_record_breaks_seal_verification(
 ) -> None:
     governor = _governor(StaticWarrantSource.eligible())
     params = _trade()
-    seal = await governor.govern(_ACTION, params)
+    seal = (await governor.govern(_ACTION, params)).seal
     (decision,) = await chain.records("GOVERNANCE_DECISION")
 
     payload = _payload(decision)
@@ -446,6 +451,10 @@ async def test_dropping_the_reliance_record_breaks_seal_verification(
         rs.verify_seal_against_evidence(seal, _ACTION, params, stripped, prev_hash="")
 
 
+@pytest.mark.covers(
+    "src.gateway.governance.routing_seal:generate_seal_with_evidence#reliance_evidence = _strict_json(",
+    "src.gateway.governance.routing_seal:_strict_json#is not a JSON value",
+)
 async def test_generate_seal_refuses_non_json_reliance_before_committing(
     chain: SimpleNamespace,
 ) -> None:
@@ -547,11 +556,13 @@ async def test_narrow_seal_carries_the_narrowed_runs_reliance(
     engine = ClassificationEngine(NarrowerRegistry([_Clamp()]), narrow_enabled=True)
     governor = _governor(source, _AmountCap(limit=50.0), classifier=engine)
 
-    assert await governor.govern(_ACTION, _trade(amount=500.0)) == "sealed-narrow"
+    governed = await governor.govern(_ACTION, _trade(amount=500.0))
+    assert governed.seal == "sealed-narrow"
 
     (seal,) = sealed
     assert seal["path"] == "govern_narrow"
     assert seal["params"]["amount"] == 50.0
+    assert governed.params == seal["params"]  # returned params are the sealed ones
     (record,) = seal["reliance"]
     assert record.reliance_status is RelianceStatus.ELIGIBLE
     # The narrowed re-run re-checks reliance through the cache; the warrant
@@ -888,6 +899,14 @@ async def test_refusal_blocks_and_is_counted_when_the_sink_fails(
     )
 
 
+@pytest.mark.covers(
+    "src.gateway.governance.evidence.stream:commit_decision_evidence#Evidence sink is None",
+    'src.gateway.governance.evidence.stream:commit_decision_evidence#"ingest" in resolved_sink.__dict__',
+    "src.gateway.governance.evidence.stream:EvidenceStreamSink.ingest_sync#Redis connection not established",
+    "src.gateway.governance.governor.verdicts:publish_refusal#Failed to publish refusal receipt",
+    "src.gateway.governance.governor.verdicts:publish_deferral#Failed to publish deferral evidence",
+    "src.gateway.governance.governor.verdicts:handle_post_hitl_defer#Failed to publish post-approval deferral evidence",
+)
 async def test_refusal_and_deferral_fail_closed_when_sink_returns_none_or_is_missing_or_disconnected(
     chain: SimpleNamespace,
     monkeypatch: pytest.MonkeyPatch,
@@ -981,7 +1000,7 @@ async def test_unwarranted_seal_evidence_is_unchanged(chain: SimpleNamespace) ->
         domain_tiers=(TradeConfidenceTier(_UNWARRANTED),),
     )
     params = _trade()
-    seal = await governor.govern(_ACTION, params)
+    seal = (await governor.govern(_ACTION, params)).seal
 
     (decision,) = await chain.records("GOVERNANCE_DECISION")
     assert set(_payload(decision)) == _LEGACY_DECISION_KEYS

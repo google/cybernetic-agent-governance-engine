@@ -334,13 +334,13 @@ class ParameterMappingModel(BaseModel):
 
     Example YAML::
 
-        forward.transaction_id: compensating.target_tx_id
+        forward.idempotency_key: compensating.target_tx_id
         forward.amount: compensating.refund_amount
 
     Both keys must follow the pattern ``forward.<key>`` or ``compensating.<key>``.
     """
 
-    forward_key: str  # e.g. "transaction_id" from the forward action's context_data
+    forward_key: str  # e.g. "idempotency_key" from the forward action's context_data
     compensating_key: str  # e.g. "target_tx_id" expected by the compensating API call
 
     @field_validator("forward_key", "compensating_key")
@@ -350,7 +350,7 @@ class ParameterMappingModel(BaseModel):
 
     @classmethod
     def from_yaml_dict(cls, raw: dict[str, str]) -> list[ParameterMappingModel]:
-        """Parse {'forward.transaction_id': 'compensating.target_tx_id', ...}."""
+        """Parse {'forward.idempotency_key': 'compensating.target_tx_id', ...}."""
         mappings = []
         for fwd, comp in raw.items():
             fwd_key = fwd.removeprefix("forward.")
@@ -375,10 +375,10 @@ class SagaModel(BaseModel):
           execution_type: mcp_tool          # 'mcp_tool' | 'local'
           mcp_tool_name: execute_action_tool  # required when execution_type=mcp_tool
           # State keys sent as the tool's arguments; required when
-          # execution_type=mcp_tool and must include transaction_id.
-          mcp_arguments: [transaction_id, amount]
+          # execution_type=mcp_tool and must include idempotency_key.
+          mcp_arguments: [idempotency_key, amount]
           parameter_mapping:
-            forward.transaction_id: compensating.target_tx_id
+            forward.idempotency_key: compensating.target_tx_id
             forward.amount: compensating.refund_amount
     """
 
@@ -432,10 +432,10 @@ class SagaModel(BaseModel):
             raise ValueError(
                 "SagaModel: mcp_tool_name is required when execution_type='mcp_tool'."
             )
-        if "transaction_id" not in self.mcp_arguments:
+        if "idempotency_key" not in self.mcp_arguments:
             raise ValueError(
                 "SagaModel: mcp_arguments must list the state keys sent to the MCP "
-                "tool, including transaction_id, when execution_type='mcp_tool'."
+                "tool, including idempotency_key, when execution_type='mcp_tool'."
             )
         return self
 
@@ -1310,26 +1310,14 @@ def generate_python(cs: ControlStructureModel) -> str:
                     f'                    message="Missing required param `{param}`.",',
                     "                    kind=ViolationKind.HARD,",
                     "                )",
-                    "            if isinstance(val, bool) or not isinstance(val, (int, float, str)):",
+                    f'            res = _parse_numeric_value(val, "param `{param}`", "{uca_code}")',
+                    "            if isinstance(res, Violation):",
+                    "                return res",
+                    "            if res > threshold:",
                     "                return Violation(",
                     '                    tier="stpa",',
                     f'                    code="{uca_code}",',
-                    f'                    message="Invalid non-numeric param `{param}`.",',
-                    "                    kind=ViolationKind.HARD,",
-                    "                )",
-                    "            f_val = float(val)",
-                    "            if not math.isfinite(f_val):",
-                    "                return Violation(",
-                    '                    tier="stpa",',
-                    f'                    code="{uca_code}",',
-                    f'                    message="Non-finite param `{param}`.",',
-                    "                    kind=ViolationKind.HARD,",
-                    "                )",
-                    "            if f_val > threshold:",
-                    "                return Violation(",
-                    '                    tier="stpa",',
-                    f'                    code="{uca_code}",',
-                    f'                    message=f"{uca.description} ({{f_val:.4f}} > {{threshold}})",',
+                    f'                    message=f"{uca.description} ({{res:.4f}} > {{threshold}})",',
                     "                    kind=ViolationKind.HARD,",
                     "                )",
                 ]
@@ -1354,22 +1342,10 @@ def generate_python(cs: ControlStructureModel) -> str:
                     "                    kind=ViolationKind.HARD,",
                     "                )",
                     "            for key_name, raw_val in candidates:",
-                    "                if isinstance(raw_val, bool) or not isinstance(raw_val, (int, float, str)):",
-                    "                    return Violation(",
-                    '                        tier="stpa",',
-                    f'                        code="{uca_code}",',
-                    '                        message=f"Invalid non-numeric param `{key_name}`.",',
-                    "                        kind=ViolationKind.HARD,",
-                    "                    )",
-                    "                f_val = float(raw_val)",
-                    "                if not math.isfinite(f_val):",
-                    "                    return Violation(",
-                    '                        tier="stpa",',
-                    f'                        code="{uca_code}",',
-                    '                        message=f"Non-finite param `{key_name}`.",',
-                    "                        kind=ViolationKind.HARD,",
-                    "                    )",
-                    f"                eff_val = f_val * 100.0 if (key_name in {norm_tuple_str} and 0.0 < f_val <= 1.0) else f_val",
+                    f'                res = _parse_numeric_value(raw_val, f"param `{{key_name}}`", "{uca_code}")',
+                    "                if isinstance(res, Violation):",
+                    "                    return res",
+                    f"                eff_val = res * 100.0 if (key_name in {norm_tuple_str} and 0.0 < res <= 1.0) else res",
                     "                if eff_val > threshold:",
                     "                    return Violation(",
                     '                        tier="stpa",',
@@ -1400,22 +1376,10 @@ def generate_python(cs: ControlStructureModel) -> str:
                 f'                        message="Boolean param `{param}` is not a valid numeric value.",',
                 "                        kind=ViolationKind.HARD,",
                 "                    )",
-                "                if not isinstance(val, (int, float, str)):",
-                "                    return Violation(",
-                '                        tier="stpa",',
-                f'                        code="{uca_code}",',
-                f'                        message="Invalid non-numeric param `{param}`.",',
-                "                        kind=ViolationKind.HARD,",
-                "                    )",
-                "                f_val = float(val)",
-                "                if not math.isfinite(f_val):",
-                "                    return Violation(",
-                '                        tier="stpa",',
-                f'                        code="{uca_code}",',
-                f'                        message="Non-finite param `{param}`.",',
-                "                        kind=ViolationKind.HARD,",
-                "                    )",
-                f"                if f_val > {cond.threshold}:",
+                f'                res = _parse_numeric_value(val, "param `{param}`", "{uca_code}")',
+                "                if isinstance(res, Violation):",
+                "                    return res",
+                f"                if res > {cond.threshold}:",
                 "                    return Violation(",
                 '                        tier="stpa",',
                 f'                        code="{uca_code}",',
@@ -1436,26 +1400,14 @@ def generate_python(cs: ControlStructureModel) -> str:
                 f'                    message="Missing required param `{param}`.",',
                 "                    kind=ViolationKind.HARD,",
                 "                )",
-                "            if isinstance(val, bool) or not isinstance(val, (int, float, str)):",
+                f'            res = _parse_numeric_value(val, "param `{param}`", "{uca_code}")',
+                "            if isinstance(res, Violation):",
+                "                return res",
+                "            if res < threshold:",
                 "                return Violation(",
                 '                    tier="stpa",',
                 f'                    code="{uca_code}",',
-                f'                    message="Invalid non-numeric param `{param}`.",',
-                "                    kind=ViolationKind.HARD,",
-                "                )",
-                "            f_val = float(val)",
-                "            if not math.isfinite(f_val):",
-                "                return Violation(",
-                '                    tier="stpa",',
-                f'                    code="{uca_code}",',
-                f'                    message="Non-finite param `{param}`.",',
-                "                    kind=ViolationKind.HARD,",
-                "                )",
-                "            if f_val < threshold:",
-                "                return Violation(",
-                '                    tier="stpa",',
-                f'                    code="{uca_code}",',
-                f'                    message=f"{uca.description} ({{f_val:.4f}} < {{threshold}})",',
+                f'                    message=f"{uca.description} ({{res:.4f}} < {{threshold}})",',
                 "                    kind=ViolationKind.HARD,",
                 "                )",
             ]
@@ -1481,22 +1433,10 @@ def generate_python(cs: ControlStructureModel) -> str:
                 f'                        message="Boolean param `{param}` is not a valid numeric value.",',
                 "                        kind=ViolationKind.HARD,",
                 "                    )",
-                "                if not isinstance(val, (int, float, str)):",
-                "                    return Violation(",
-                '                        tier="stpa",',
-                f'                        code="{uca_code}",',
-                f'                        message="Invalid non-numeric param `{param}`.",',
-                "                        kind=ViolationKind.HARD,",
-                "                    )",
-                "                f_val = float(val)",
-                "                if not math.isfinite(f_val):",
-                "                    return Violation(",
-                '                        tier="stpa",',
-                f'                        code="{uca_code}",',
-                f'                        message="Non-finite param `{param}`.",',
-                "                        kind=ViolationKind.HARD,",
-                "                    )",
-                f"                if f_val < {cond.threshold}:",
+                f'                res = _parse_numeric_value(val, "param `{param}`", "{uca_code}")',
+                "                if isinstance(res, Violation):",
+                "                    return res",
+                f"                if res < {cond.threshold}:",
                 "                    return Violation(",
                 '                        tier="stpa",',
                 f'                        code="{uca_code}",',
@@ -1573,22 +1513,12 @@ def generate_python(cs: ControlStructureModel) -> str:
                 "                    kind=ViolationKind.HARD,",
                 "                )",
                 "            if lhs_val is not None and rhs_val is not None:",
-                "                if any(isinstance(v, bool) or not isinstance(v, (int, float, str)) for v in (lhs_val, rhs_val)):",
-                "                    return Violation(",
-                '                        tier="stpa",',
-                f'                        code="{uca_code}",',
-                f'                        message="Invalid non-numeric composite param `{lhs_param}` or `{rhs_param}`.",',
-                "                        kind=ViolationKind.HARD,",
-                "                    )",
-                "                f_lhs = float(lhs_val)",
-                "                f_rhs = float(rhs_val)",
-                "                if not (math.isfinite(f_lhs) and math.isfinite(f_rhs)):",
-                "                    return Violation(",
-                '                        tier="stpa",',
-                f'                        code="{uca_code}",',
-                f'                        message="Non-finite composite param `{lhs_param}` or `{rhs_param}`.",',
-                "                        kind=ViolationKind.HARD,",
-                "                    )",
+                f'                f_lhs = _parse_numeric_value(lhs_val, "composite param `{lhs_param}`", "{uca_code}")',
+                "                if isinstance(f_lhs, Violation):",
+                "                    return f_lhs",
+                f'                f_rhs = _parse_numeric_value(rhs_val, "composite param `{rhs_param}`", "{uca_code}")',
+                "                if isinstance(f_rhs, Violation):",
+                "                    return f_rhs",
                 f'                if f_lhs < 0 or f_rhs < 0 or f_lhs > _resolve_threshold("{thresh_ref}") * f_rhs:',
                 "                    return Violation(",
                 '                        tier="stpa",',
@@ -1604,9 +1534,11 @@ def generate_python(cs: ControlStructureModel) -> str:
             f'            logger.error("Error evaluating {uca.id}: %s", exc)',
             "            return Violation(",
             '                tier="stpa",',
-            f'                code="{uca_code}",',
-            '                message=f"Evaluation error — failing closed ({exc}).",',
-            "                kind=ViolationKind.HARD,",
+            '                code="STPA_ERROR",',
+            f'                message=f"{uca.id} evaluation error — failing closed ({{exc}}).",',
+            "                kind=ViolationKind.INFRASTRUCTURE,",
+            '                infra_dependency="stpa",',
+            '                infra_error_code="stpa_evaluation_error",',
             "            )",
             "",
         ]
@@ -1637,6 +1569,34 @@ from src.gateway.governance.schemas.thresholds import THRESHOLDS
 from src.gateway.governance.stpa_validator import STPAValidator, UcaRule
 
 logger = logging.getLogger("Gateway.Governance.GeneratedSTPAValidator")
+
+
+def _parse_numeric_value(raw: Any, label: str, code: str) -> float | Violation:
+    """Parse a finite non-boolean numeric param or return a HARD input Violation."""
+    if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
+        return Violation(
+            tier="stpa",
+            code=code,
+            message=f"Invalid non-numeric {{label}}.",
+            kind=ViolationKind.HARD,
+        )
+    try:
+        parsed = float(raw)
+    except (TypeError, ValueError):
+        return Violation(
+            tier="stpa",
+            code=code,
+            message=f"Invalid non-numeric {{label}}.",
+            kind=ViolationKind.HARD,
+        )
+    if not math.isfinite(parsed):
+        return Violation(
+            tier="stpa",
+            code=code,
+            message=f"Non-finite {{label}}.",
+            kind=ViolationKind.HARD,
+        )
+    return parsed
 
 
 def _resolve_threshold(path: str) -> float:
@@ -1847,9 +1807,9 @@ def generate_langgraph(cs: ControlStructureModel) -> str:
         "# Helpers",
         "# ---------------------------------------------------------------------------",
         "",
-        "def _derive_idempotency_key(transaction_id: str, action: str) -> str:",
+        "def _derive_idempotency_key(idempotency_key: str, action: str) -> str:",
         '    """Deterministically derive an idempotency key for a compensating action."""',
-        '    raw = f"{transaction_id}:{action}"',
+        '    raw = f"{idempotency_key}:{action}"',
         "    return hashlib.sha256(raw.encode()).hexdigest()[:32]",
         "",
         "",
@@ -1914,7 +1874,7 @@ def generate_langgraph(cs: ControlStructureModel) -> str:
                 "    arguments: dict[str, Any] = {",
                 f"        k: v for k, v in state.items() if k in {keys_tuple_src}",
                 "    }",
-                '    tx_id: str = str(arguments.get("transaction_id") or "")',
+                '    tx_id: str = str(arguments.get("idempotency_key") or "")',
             ]
             intent_context_src = "dict(arguments)"
             step2_lines = [
@@ -1963,7 +1923,7 @@ def generate_langgraph(cs: ControlStructureModel) -> str:
                 "    # mcp_arguments in the YAML and regenerate with:",
                 "    #   python -m src.gateway.governance.stpa_compiler compile",
                 "    result: dict[str, Any] = {}  # STUB: replace before production",
-                '    tx_id: str = result.get("transaction_id", "")',
+                '    tx_id: str = result.get("idempotency_key", "")',
             ]
             unknown_outcome_doc = []
 

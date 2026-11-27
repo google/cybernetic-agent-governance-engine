@@ -7,7 +7,7 @@
   },
   "experiment": "provider-06-agent-integrity-verification-conformance",
   "protectedFiles": {
-    "src/integrations/provider_06/adapter.py": "9c73efd19f8955c6da03726926b46cde74b784770011f949e5b007c6735aae7e",
+    "src/integrations/provider_06/adapter.py": "3f06e6c70167595050c01b97cf80ddd467ddf92b289d0940b86a474eff97ea4c",
     "src/integrations/provider_06/mock_endpoint.py": "236e8646b603a79b4a6016a5d963b39cb23b696942a200de33c985384f55283d",
     "third_party/agent-integrity/schemas/integrity-envelope.schema.json": "ea5e92b16d54403bbfa2a18e27d065442d20033184e24caa589145666a58c328",
     "third_party/agent-integrity/schemas/integrity-receipt.schema.json": "cf328f2476c1f5b6a47c52c4680fef853a2b4738c655c78e5fed4150c5110379"
@@ -19,7 +19,7 @@
     "cageBase": "364e91b8164584062b434d72ee31719fa75d1a7b",
     "cageEvidenceBinding": "pinned-manifest-plus-protected-file-sha256",
     "generatorVersion": 2,
-    "protectedBaselineSha256": "d305871ad572260c431a61b543b33a19fea5d115c7aff77e4e565f41b4979146"
+    "protectedBaselineSha256": "082793920ba3b3f499bd4aded2542108683e8cfde642877ea2b6b79b21e4f7d4"
   },
   "requiredScenariosPassed": 7,
   "requiredScenariosTotal": 7,

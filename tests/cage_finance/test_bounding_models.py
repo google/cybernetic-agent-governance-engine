@@ -36,17 +36,19 @@ class TestContractSeverity:
     """Tests for ContractSeverity enum."""
 
     def test_three_severity_levels_exist(self):
-        """ContractSeverity must have exactly three levels per Phase 5 plan."""
-        assert len(ContractSeverity) == 3
+        """ContractSeverity must include policy severities and INFRASTRUCTURE (FA-3)."""
+        assert len(ContractSeverity) == 4
         assert ContractSeverity.HARD_BLOCK == "HARD_BLOCK"
         assert ContractSeverity.HITL_ESCALATE == "HITL_ESCALATE"
         assert ContractSeverity.ADVISORY == "ADVISORY"
+        assert ContractSeverity.INFRASTRUCTURE == "INFRASTRUCTURE"
 
     def test_severity_is_string_enum(self):
         """ContractSeverity must be string-valued for JSON serialization."""
         assert isinstance(ContractSeverity.HARD_BLOCK.value, str)
         assert isinstance(ContractSeverity.HITL_ESCALATE.value, str)
         assert isinstance(ContractSeverity.ADVISORY.value, str)
+        assert isinstance(ContractSeverity.INFRASTRUCTURE.value, str)
 
 
 class TestContractResult:
@@ -161,7 +163,7 @@ class TestBoundedTradeRequest:
             trader_role="autonomous",
             jurisdiction="US",
             rollback_window_seconds=300,
-            transaction_id="txn-12345",
+            idempotency_key="txn-12345",
         )
         assert req.symbol == "AAPL"
         assert req.amount == 1000.0
@@ -321,7 +323,7 @@ class TestBoundedTradeRequest:
             side="buy",
             venue="NASDAQ",
             jurisdiction="US",
-            transaction_id="txn-abc123",
+            idempotency_key="txn-abc123",
         )
         d = req.to_dict()
         assert d["symbol"] == "AAPL"
@@ -329,7 +331,7 @@ class TestBoundedTradeRequest:
         assert d["side"] == "buy"
         assert d["venue"] == "NASDAQ"
         assert d["jurisdiction"] == "US"
-        assert d["transaction_id"] == "txn-abc123"
+        assert d["idempotency_key"] == "txn-abc123"
         assert d["trader_role"] == "autonomous"
         assert d["rollback_window_seconds"] == 300
 

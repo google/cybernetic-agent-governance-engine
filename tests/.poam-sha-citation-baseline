@@ -1,0 +1,1220 @@
+{
+  "baseline": 171,
+  "class_counts": {
+    "ambiguous_abbreviation": 0,
+    "chronology_undatable": 19,
+    "chronology_violation": 20,
+    "closure_date_unparseable": 9,
+    "dead_commit_claim": 45,
+    "label_type_mismatch": 0,
+    "paired_main_not_ancestor": 3,
+    "paired_missing_pr": 1,
+    "unlabelled_kind": 0,
+    "unlabelled_unresolved": 74
+  },
+  "detector_sha256": "aace09e1be5826bdee4651d85607568b18aae8b616cbd6d072d1e33593af9aaa",
+  "history": [
+    {
+      "after_baseline": 214,
+      "after_class_counts": {
+        "ambiguous_abbreviation": 0,
+        "chronology_undatable": 9,
+        "chronology_violation": 7,
+        "closure_date_unparseable": 69,
+        "dead_commit_claim": 45,
+        "label_type_mismatch": 0,
+        "paired_main_not_ancestor": 3,
+        "paired_missing_pr": 1,
+        "unlabelled_kind": 0,
+        "unlabelled_unresolved": 80
+      },
+      "before_baseline": null,
+      "before_class_counts": null,
+      "before_detector_sha256": null,
+      "detector_sha256": "ec17e080e2eb3c0da204ff3b830a6de8e29c1d61a36a75f3fe480a2d4325fdc7",
+      "event": "initial_baseline",
+      "reason": "Initial baseline over docs/POAM.md and docs/compliance/**/POAM_*.md at main 1279cf95: standing citation debt recorded per class; dead_commit_claim and chronology_violation are burned down first by correcting the POA&M citations in a follow-up change."
+    },
+    {
+      "after_baseline": 208,
+      "after_class_counts": {
+        "ambiguous_abbreviation": 0,
+        "chronology_undatable": 9,
+        "chronology_violation": 7,
+        "closure_date_unparseable": 69,
+        "dead_commit_claim": 45,
+        "label_type_mismatch": 0,
+        "paired_main_not_ancestor": 3,
+        "paired_missing_pr": 1,
+        "unlabelled_kind": 0,
+        "unlabelled_unresolved": 74
+      },
+      "before_baseline": 214,
+      "before_class_counts": {
+        "ambiguous_abbreviation": 0,
+        "chronology_undatable": 9,
+        "chronology_violation": 7,
+        "closure_date_unparseable": 69,
+        "dead_commit_claim": 45,
+        "label_type_mismatch": 0,
+        "paired_main_not_ancestor": 3,
+        "paired_missing_pr": 1,
+        "unlabelled_kind": 0,
+        "unlabelled_unresolved": 80
+      },
+      "before_detector_sha256": "ec17e080e2eb3c0da204ff3b830a6de8e29c1d61a36a75f3fe480a2d4325fdc7",
+      "detector_sha256": "ec17e080e2eb3c0da204ff3b830a6de8e29c1d61a36a75f3fe480a2d4325fdc7",
+      "event": "update",
+      "reason": "Close Wave 0 POAM items (#768, #742/#839, #749, #806/#830, #825, #871)"
+    },
+    {
+      "after_baseline": 171,
+      "after_class_counts": {
+        "ambiguous_abbreviation": 0,
+        "chronology_undatable": 19,
+        "chronology_violation": 20,
+        "closure_date_unparseable": 9,
+        "dead_commit_claim": 45,
+        "label_type_mismatch": 0,
+        "paired_main_not_ancestor": 3,
+        "paired_missing_pr": 1,
+        "unlabelled_kind": 0,
+        "unlabelled_unresolved": 74
+      },
+      "before_baseline": 208,
+      "before_class_counts": {
+        "ambiguous_abbreviation": 0,
+        "chronology_undatable": 9,
+        "chronology_violation": 7,
+        "closure_date_unparseable": 69,
+        "dead_commit_claim": 45,
+        "label_type_mismatch": 0,
+        "paired_main_not_ancestor": 3,
+        "paired_missing_pr": 1,
+        "unlabelled_kind": 0,
+        "unlabelled_unresolved": 74
+      },
+      "before_detector_sha256": "ec17e080e2eb3c0da204ff3b830a6de8e29c1d61a36a75f3fe480a2d4325fdc7",
+      "detector_sha256": "aace09e1be5826bdee4651d85607568b18aae8b616cbd6d072d1e33593af9aaa",
+      "event": "recompute",
+      "reason": "POAM-2026-250: require pipe delimiters in _TABLE_SEP_RE and remove intra-table blank lines in Closed Findings on post-#880 main."
+    }
+  ],
+  "schema_version": 1,
+  "standing_debt_policy": "Non-regression ratchet over standing POA&M citation debt: no new violation identity may appear and no class count may rise. dead_commit_claim (closure or remediation evidence resolving to no object reachable from main) and chronology_violation (evidence landed after the closure date) are the serious classes and are burned down first by correcting the citations.",
+  "violations": {
+    "02a865b717ec5aa14decba0b": {
+      "class": "dead_commit_claim",
+      "context": "fail-closed replay rejection (commit <> ). covered by tests/test",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "88fa9d7"
+    },
+    "03a24553a78b1c3b9372877c": {
+      "class": "unlabelled_unresolved",
+      "context": "4. 098 ( <> , 72574529 ):",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "9c68a6e8"
+    },
+    "0495beb547af4d1c84d449c1": {
+      "class": "unlabelled_unresolved",
+      "context": "refined in 319c702d ( <> ) to reject single-licensed",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "867fdb8b"
+    },
+    "06629375940a4db208f06cdf": {
+      "class": "unlabelled_unresolved",
+      "context": "| <> | poam-2026-043, poam-2026-046 |",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "88fa9d7"
+    },
+    "06ead5daa2f05158e25a85b9": {
+      "class": "chronology_violation",
+      "context": "on 2026-10-02. remediation commits: <> (#345, discrepancy floor), 980e1ace",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "ea92089e"
+    },
+    "094929af59c47919d54ad852": {
+      "class": "dead_commit_claim",
+      "context": "- commits <> ( gateway ) and",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "ad9ba9c7"
+    },
+    "0c155ac904277fbf64ce067c": {
+      "class": "unlabelled_unresolved",
+      "context": "as 41125826815 instead of <> , and every row",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "41125558418"
+    },
+    "0d3414306370994b54d687d9": {
+      "class": "dead_commit_claim",
+      "context": "feat/cage-ai600-ai600-1-implementation (commits c014337 – <> ). ai600-001, ai600-002, ai600-003,",
+      "count": 1,
+      "file": "docs/compliance/us_fed/POAM_US_FED.md",
+      "subject": "51f6c25"
+    },
+    "0dcd68bee9116b3cf8020f2a": {
+      "class": "unlabelled_unresolved",
+      "context": "| 9c68a6e8 , <> | poam-2026-098 | github;",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "72574529"
+    },
+    "11aa8553012fdd32b98897c7": {
+      "class": "chronology_violation",
+      "context": "on 2026-10-02. remediation commit: <> (#349). | 2026-10-02 |",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "0f7c00a9"
+    },
+    "1224dc0ba9a1c13d87e18521": {
+      "class": "dead_commit_claim",
+      "context": "in redis db=1 (commit <> ). covered by tests/test",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "88fa9d7"
+    },
+    "1232898ef230a52aef3df1ba": {
+      "class": "unlabelled_unresolved",
+      "context": "scans ( 42872701291 , <> ), and tests/test vulnerability",
+      "count": 1,
+      "file": "docs/compliance/us_fed/POAM_US_FED.md",
+      "subject": "43102243741"
+    },
+    "13593826b5bde69baa34d184": {
+      "class": "closure_date_unparseable",
+      "context": "<> closed instance ( 2026-11-21",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "row"
+    },
+    "1366ea01381cd6e2bf5bd8f9": {
+      "class": "unlabelled_unresolved",
+      "context": "| <> | poam-2026-079, poam-2026-080 |",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "f566e9e"
+    },
+    "13eda89991c0c8b5ad19c596": {
+      "class": "unlabelled_unresolved",
+      "context": "test-fast on fix/paper-verify-findings at <> : 6203 passed, 107",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "72574529"
+    },
+    "166db0afcf357162ca112a54": {
+      "class": "chronology_violation",
+      "context": "— ws-c merged as <> (#349).",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "0f7c00a9"
+    },
+    "18d23493e90ac2b27435653a": {
+      "class": "unlabelled_unresolved",
+      "context": "| <> | poam-2026-011 | nowhere",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "c8d66189a94cb782f4e0f61e14e05e341d27a8f6"
+    },
+    "1e7f3b852b4c47aa2e031c5e": {
+      "class": "unlabelled_unresolved",
+      "context": "through wif), provider 05 <> (10 passed), provider 08",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "41234042599"
+    },
+    "1fb8c322fdce0bf4fbadd345": {
+      "class": "closure_date_unparseable",
+      "context": "75fe0ac4 / pr #148): <> closed poam-2026-071 on 2026-09-05",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "row"
+    },
+    "1fe8110739a338a65775657c": {
+      "class": "unlabelled_unresolved",
+      "context": "the 2026-08-27 closure ( <> ) resolves nowhere in",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "c8d66189a94cb782f4e0f61e14e05e341d27a8f6"
+    },
+    "203a02aa663f04db61b01b54": {
+      "class": "dead_commit_claim",
+      "context": "). closed 2026-10-03 ( <> , #391 e1f46eca )",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "9c68a6e8"
+    },
+    "2054afe05a963bf2bd2b6ea5": {
+      "class": "closure_date_unparseable",
+      "context": "dual-project telemetry isolation.~~ ✅ <> closed (verified 2026-09-22). enforced",
+      "count": 1,
+      "file": "docs/compliance/universal/POAM_ISO42001.md",
+      "subject": "row"
+    },
+    "21fb652c1e5d965ce2b66617": {
+      "class": "chronology_violation",
+      "context": "remediation commits: 8b1e803d , <> . | 2026-08-27 |",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "54d307e2"
+    },
+    "24547b2bb39ebc05a21aa0b1": {
+      "class": "chronology_undatable",
+      "context": "remediated in #724 ( <> ) and #726 (",
+      "count": 2,
+      "file": "docs/POAM.md",
+      "subject": "e1421593"
+    },
+    "25fd2f2dea410784b7d2940a": {
+      "class": "unlabelled_unresolved",
+      "context": "| <> , b2369c6 , 9d5d61a",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "e0f7700"
+    },
+    "271f57c6b2e015d0cc2e60de": {
+      "class": "dead_commit_claim",
+      "context": "e0f7700 , b2369c6 , <> , 9d5d61a . |",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "f566e9e"
+    },
+    "27978b9633d2233657e9f81e": {
+      "class": "unlabelled_unresolved",
+      "context": "123570375167 from ci.yml and <> from license guard.yml ,",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "123570378192"
+    },
+    "281d7aba5989e20afe11d590": {
+      "class": "unlabelled_unresolved",
+      "context": "here, and .gitleaks.toml allowlists <> (every tracked file searched,",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "e608f3ac"
+    },
+    "2885d42f29854c10af99e671": {
+      "class": "dead_commit_claim",
+      "context": "#697 41f9f945 , #724 <> ), reconciled per-workload networkpolicy",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "e1421593"
+    },
+    "28fe1dce958244676a516263": {
+      "class": "unlabelled_unresolved",
+      "context": "1. 095 ( <> ): generate seal() in",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "9c68a6e8"
+    },
+    "31b008f4bc6c405d77fc413a": {
+      "class": "unlabelled_unresolved",
+      "context": ") was reconstructed as <> instead of 41125558418 ,",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "41125826815"
+    },
+    "31c9ad073f9f70cb6a117feb": {
+      "class": "unlabelled_unresolved",
+      "context": "closure. the first run, <> ( main at 2e6ffbac",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "41362761903"
+    },
+    "33be22a3ff0abf72077b2c1c": {
+      "class": "dead_commit_claim",
+      "context": "verified on #623 ( <> targeting fix/linkerd-cni-repair , 40",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "2c22152dbe663fe3c61f3a1ae28f96494ce93101"
+    },
+    "36d5cab9c97cd123faa50b1f": {
+      "class": "unlabelled_unresolved",
+      "context": "eu-ecb-bycomp-0007 , 0c2d40d7 , <> , 2f94e8b5 ) relied",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "c6fc7ee5"
+    },
+    "374bdb520369532ccc743807": {
+      "class": "unlabelled_unresolved",
+      "context": "retargeted to main ( <> ), the lint job",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "6f61cd02"
+    },
+    "39ad89363c383c1a030d3fd3": {
+      "class": "unlabelled_unresolved",
+      "context": "commits 1902c92c and pre-rewrite <> at main.tf (49c0d09a:infra/targets/gcp-gke/main.tf) line",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "e608f3ac"
+    },
+    "3caaa28bd4e5b7f3cb934969": {
+      "class": "unlabelled_unresolved",
+      "context": "them. this document cites <> in poam-2026-150, poam-2026-160 and",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "e608f3ac"
+    },
+    "3e9e66c278210078392ab3d0": {
+      "class": "chronology_undatable",
+      "context": "remediated in #725 ( <> ), verified live in",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "cb4f7d3a"
+    },
+    "4015b1765fa548f2c347f339": {
+      "class": "unlabelled_unresolved",
+      "context": "commits of the replaced <> line is in main",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "e608f3ac"
+    },
+    "41549d4a33e2e2a22f5d6bf2": {
+      "class": "paired_main_not_ancestor",
+      "context": "same pattern: its head <> passed pytest logic tests",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "8230fefb"
+    },
+    "41c04c5c69db9f11f4fc5532": {
+      "class": "unlabelled_unresolved",
+      "context": "eu-ecb-bycomp-0007 , 0c2d40d7 , <> , and 2f94e8b5 from",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "c6fc7ee5"
+    },
+    "430284e430bfa9bdb3deecfb": {
+      "class": "chronology_violation",
+      "context": "reservationtoken . remediation commit: <> . covered by tests/cage",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "9a7fabe7"
+    },
+    "468fa975984844100b786a06": {
+      "class": "unlabelled_unresolved",
+      "context": "closed on 2026-10-03 ( <> , #391 e1f46eca )",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "9c68a6e8"
+    },
+    "48bf8483c389ac2a5b855a38": {
+      "class": "dead_commit_claim",
+      "context": "invariants were remediated in <> and 72574529 ( #391",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "9c68a6e8"
+    },
+    "4aa9b1379906a2613536093a": {
+      "class": "unlabelled_unresolved",
+      "context": "| <> | poam-2026-080 | github;",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "420854f"
+    },
+    "4dfeadb1f35ec00847ee5772": {
+      "class": "unlabelled_unresolved",
+      "context": "| ad9ba9c7 , <> | poam-2026-083 | nowhere",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "8d2ccf03"
+    },
+    "4fc91689f3d2196c98b02dd0": {
+      "class": "closure_date_unparseable",
+      "context": "dual-project telemetry isolation.~~ ✅ <> closed (verified 2026-09-22). fallback",
+      "count": 1,
+      "file": "docs/compliance/us_fed/POAM_US_FED.md",
+      "subject": "row"
+    },
+    "50a15aa39036a4e0c4f27b69": {
+      "class": "unlabelled_unresolved",
+      "context": "098 ( 9c68a6e8 , <> ):",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "72574529"
+    },
+    "51f948bafd29514c07ba275c": {
+      "class": "dead_commit_claim",
+      "context": "remediated in 9c68a6e8 and <> ( #391 , e1f46eca",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "72574529"
+    },
+    "5365d2056351946975c4ec37": {
+      "class": "unlabelled_unresolved",
+      "context": ", c6fc7ee5 , and <> from holds to weaker",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "2f94e8b5"
+    },
+    "552344b8c72c3a2e45e774ee": {
+      "class": "chronology_violation",
+      "context": "2 st-1. remediation commits: <> , 54d307e2 . |",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "8b1e803d"
+    },
+    "55ab087796ce5a0bec9faa67": {
+      "class": "closure_date_unparseable",
+      "context": "in tests/test reconciliation daemon.py.~~ <> closed as part of",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "row"
+    },
+    "5915f1be02f0a2706fb34f8a": {
+      "class": "unlabelled_unresolved",
+      "context": "shares no ancestor with <> , the commit main",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "751ce907"
+    },
+    "5a2ebf14f54cf9248727db76": {
+      "class": "chronology_undatable",
+      "context": "and violated rule (commit <> ). covered by tests/test",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "88fa9d7"
+    },
+    "5af5d3d309c3a73da23aa839": {
+      "class": "chronology_undatable",
+      "context": "dd272b23 ), #724 ( <> ), and #733 (",
+      "count": 2,
+      "file": "docs/POAM.md",
+      "subject": "e1421593"
+    },
+    "5c31169f6a71d35160b53cd6": {
+      "class": "unlabelled_unresolved",
+      "context": "13:16:14z , rev 9, <> ). both unmanaged resources",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "5fd5b688f5"
+    },
+    "5c50db24e12e8ab04c93be50": {
+      "class": "dead_commit_claim",
+      "context": "b2369c6 , f566e9e , <> .",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "9d5d61a"
+    },
+    "5c8d91b8f9ca0b60c88df104": {
+      "class": "dead_commit_claim",
+      "context": "sbom.yml on #849 ( <> , actions run 44950732100",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "13e44240"
+    },
+    "5d286a520713651386bf3a01": {
+      "class": "chronology_violation",
+      "context": "conformance suite. remediation commit: <> . covered by tests/integrations/provider",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "9a7fabe7"
+    },
+    "5e039feb75354d400ab23e93": {
+      "class": "dead_commit_claim",
+      "context": "remediated in #725 ( <> ), verified in certified",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "cb4f7d3a"
+    },
+    "60ad3dd96f10820507dd34ae": {
+      "class": "chronology_undatable",
+      "context": "config failclosed.py). remediation commit: <> . | 2026-09-28 |",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "8bdd5b2"
+    },
+    "629fb9cf03f688bf8d9aafd0": {
+      "class": "unlabelled_unresolved",
+      "context": "2026-10-25t02:44:44z , revision 8, <> , image: gcr.io/<project>/governed-financial-advisor@sha256:57743807de9a10bc86274238d0d08a49c9646d574c90377d5630a86dd5d581cf ),",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "565bd8fdb7"
+    },
+    "639699dae0f35344646fd793": {
+      "class": "chronology_undatable",
+      "context": "). closed 2026-10-03 ( <> , #391 e1f46eca )",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "9c68a6e8"
+    },
+    "64a6179d1e7b69c7c7032b31": {
+      "class": "dead_commit_claim",
+      "context": "closed in #768 ( <> , 2026-11-15 , actions",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "e3e253b9"
+    },
+    "64ab9674237316578e9c049f": {
+      "class": "unlabelled_unresolved",
+      "context": "(10 passed), provider 08 <> (4 passed). the four",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "41233869303"
+    },
+    "695696c6824414a7dd354087": {
+      "class": "chronology_violation",
+      "context": "was corrected. remediation commit: <> . | 2026-08-27 |",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "9a7fabe7"
+    },
+    "6c1fd32faaa8a818fc47f135": {
+      "class": "dead_commit_claim",
+      "context": "remediation commits: e0f7700 , <> , f566e9e , 9d5d61a",
+      "count": 2,
+      "file": "docs/POAM.md",
+      "subject": "b2369c6"
+    },
+    "6d78326b3fe890c91526021a": {
+      "class": "chronology_undatable",
+      "context": "while pr #623 (commit <> ) targeted the non-",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "2c22152dbe663fe3c61f3a1ae28f96494ce93101"
+    },
+    "708403ba7a0472b39be0dbf4": {
+      "class": "chronology_violation",
+      "context": "detail section). remediation commit: <> (#421). sell inputs from",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "fa7d594b"
+    },
+    "7162685681110af85ed03f6f": {
+      "class": "chronology_violation",
+      "context": "chain.py . remediation commit: <> . | 2026-08-27 |",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "9a7fabe7"
+    },
+    "7195db78b1043879fe67db79": {
+      "class": "chronology_violation",
+      "context": "middleware.py . remediation commit: <> . | 2026-08-27 |",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "9a7fabe7"
+    },
+    "72deb9750f676fac2d7b4b2b": {
+      "class": "unlabelled_unresolved",
+      "context": "pytest logic tests ( <> ), and its squash",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "124965009484"
+    },
+    "757ffd02a5cfeef387690f6f": {
+      "class": "chronology_violation",
+      "context": "— ws-b merged as <> (#345) and ws-a as",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "ea92089e"
+    },
+    "75ad769ed9a8a508fa9c1e1a": {
+      "class": "unlabelled_unresolved",
+      "context": "rows ( eu-ecb-bycomp-0007 , <> , c6fc7ee5 , 2f94e8b5",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "0c2d40d7"
+    },
+    "774dca811e3585b890b57b69": {
+      "class": "dead_commit_claim",
+      "context": "bind receipt ingestion (commit <> ). covered by tests/integrations/provider",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "88fa9d7"
+    },
+    "7b1fd11850a9bb416903bb3b": {
+      "class": "chronology_violation",
+      "context": "\"pausedbudgetexceeded\") . verification commit: <> (superseded by ffd99995 ,",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "4d587fdc"
+    },
+    "7dbfbd61c442c2da04d73b6b": {
+      "class": "chronology_undatable",
+      "context": "verified on #623 ( <> targeting fix/linkerd-cni-repair , 40",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "2c22152dbe663fe3c61f3a1ae28f96494ce93101"
+    },
+    "7e33fa95ee3578ffac1c210f": {
+      "class": "unlabelled_unresolved",
+      "context": "2. 096 ( <> ): the reconciler runs",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "9c68a6e8"
+    },
+    "7ff9efdec07b1849de94d9f8": {
+      "class": "unlabelled_unresolved",
+      "context": "commits on fix/paper-verify-findings : <> . squash sha: record",
+      "count": 2,
+      "file": "docs/POAM.md",
+      "subject": "9c68a6e8"
+    },
+    "801abc846d01fc95790c3c7a": {
+      "class": "dead_commit_claim",
+      "context": "on branch feat/cage-ai600-ai600-1-implementation (commits <> – 51f6c25 ). ai600-001,",
+      "count": 1,
+      "file": "docs/compliance/us_fed/POAM_US_FED.md",
+      "subject": "c014337"
+    },
+    "802ed474e532c68934ca2d63": {
+      "class": "dead_commit_claim",
+      "context": "and violated rule (commit <> ). covered by tests/test",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "88fa9d7"
+    },
+    "83bc0546e0036f3e19a347ed": {
+      "class": "dead_commit_claim",
+      "context": "b2369c6 , f566e9e , <> . | 2026-09-27 (updated",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "9d5d61a"
+    },
+    "85ad6066a89aff82353ae6ab": {
+      "class": "chronology_undatable",
+      "context": "remediation commits: e0f7700 , <> , f566e9e , 9d5d61a",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "b2369c6"
+    },
+    "8635d435bb8502ae5a5d7e1e": {
+      "class": "unlabelled_unresolved",
+      "context": "| <> , 72574529 | poam-2026-098",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "9c68a6e8"
+    },
+    "866fcf27b6822e2abb98c8f6": {
+      "class": "dead_commit_claim",
+      "context": "remediated in #725 ( <> ), verified live in",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "cb4f7d3a"
+    },
+    "86d4fc7098ab53c7a10f9b86": {
+      "class": "unlabelled_unresolved",
+      "context": "ed9d4c02 on main , <> on #1 – #15",
+      "count": 4,
+      "file": "docs/POAM.md",
+      "subject": "42f3594a"
+    },
+    "8849aaac11fd350d1e5d7577": {
+      "class": "unlabelled_unresolved",
+      "context": "| <> , 8d2ccf03 | poam-2026-083",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "ad9ba9c7"
+    },
+    "8a667821bfb412f10153b34e": {
+      "class": "chronology_violation",
+      "context": "on 2026-10-02. remediation commit: <> (#348). | 2026-10-02 |",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "9e40dade"
+    },
+    "8e0bec98d7bdeba54a3de482": {
+      "class": "dead_commit_claim",
+      "context": "regex on #602 ( <> ), license-check caught forbiddenfruit",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "34fffce3"
+    },
+    "8e6de5506a2645ab88b53dde": {
+      "class": "unlabelled_unresolved",
+      "context": "e0f7700 , b2369c6 , <> | poam-2026-079 | nowhere",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "9d5d61a"
+    },
+    "8ef53fad27ce57da57d59749": {
+      "class": "unlabelled_unresolved",
+      "context": "of the stack ( <> ) and a four-branch",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "d99dbeb3"
+    },
+    "91d4fc9d1c08a2a89bfe8d9c": {
+      "class": "dead_commit_claim",
+      "context": "to deferqueue (2026-10-01, commit <> ): symbolicgovernor.validate action() runs",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "9d5d61a"
+    },
+    "91db6f8ae50d1197f93c8a5d": {
+      "class": "unlabelled_unresolved",
+      "context": "#747 updated silently to <> on 2026-11-15t08:39z ), and",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "d91c31aa"
+    },
+    "94cc62c83539cf066dee4537": {
+      "class": "unlabelled_unresolved",
+      "context": "2026-10-25t13:16:14z , revision 9, <> ).",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "5fd5b688f5"
+    },
+    "95d03ef415cacd92269f472e": {
+      "class": "chronology_undatable",
+      "context": "compliance/lula/lula-validation-ac2.yaml (../compliance/lula/lula-validation-ac2.yaml). remediation commits: <> , b2369c6 , f566e9e",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "e0f7700"
+    },
+    "97cd5b9313be125318f397c9": {
+      "class": "closure_date_unparseable",
+      "context": "closure status (2026-11-01 — <> closed). all three closure",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "row"
+    },
+    "9ab338f69f4e8545933dd24a": {
+      "class": "unlabelled_unresolved",
+      "context": "2026-11-01. the first run, <> ( main at 2e6ffbac",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "41362761903"
+    },
+    "9c032f3982ef893fdb8de83b": {
+      "class": "dead_commit_claim",
+      "context": "dd272b23 ), #724 ( <> ), and #733 (",
+      "count": 2,
+      "file": "docs/POAM.md",
+      "subject": "e1421593"
+    },
+    "9c748769a64979762b6a62b2": {
+      "class": "unlabelled_unresolved",
+      "context": "| <> | poam-2026-080 | nowhere",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "8df072e"
+    },
+    "a1004b4e5405397b7b6e21cc": {
+      "class": "unlabelled_unresolved",
+      "context": "it on main ( <> ).",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "124967332730"
+    },
+    "a72ab2e1b88e1934ad827fa6": {
+      "class": "chronology_violation",
+      "context": "dual-schema apparatus. remediation commit: <> . covered by tests/test",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "9a7fabe7"
+    },
+    "a762985fd969965ec7375113": {
+      "class": "dead_commit_claim",
+      "context": "remediated in #724 ( <> ) and #726 (",
+      "count": 2,
+      "file": "docs/POAM.md",
+      "subject": "e1421593"
+    },
+    "a8e3adb001936f5bc9464d21": {
+      "class": "unlabelled_unresolved",
+      "context": "(49c0d09a:infra/targets/gcp-gke/main.tf):411 ( 1902c92c / <> , removed at head",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "e608f3ac"
+    },
+    "aa32dc83178b7b4ae25f74a6": {
+      "class": "chronology_violation",
+      "context": "as poam-2026-091. remediation commit: <> (#351). qualification (2026-10-31, poam-2026-156",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "e3f1f7ff"
+    },
+    "acf4e41623445c90989be857": {
+      "class": "unlabelled_unresolved",
+      "context": "| <> | poam-2026-081 | workstation",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "8bdd5b2"
+    },
+    "ad781bce512581c56d13d37e": {
+      "class": "dead_commit_claim",
+      "context": "commit ( #617 , <> , merged on main",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "248aaee9"
+    },
+    "add8eea8e4e8af43fa95b466": {
+      "class": "chronology_undatable",
+      "context": "b2369c6 , f566e9e , <> . | 2026-09-27 (updated",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "9d5d61a"
+    },
+    "af7592d3d0d41cd02b175498": {
+      "class": "dead_commit_claim",
+      "context": "ssp exporter.py). remediation commit: <> .",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "8bdd5b2"
+    },
+    "b0931ce4dbe7b0e2c571d989": {
+      "class": "dead_commit_claim",
+      "context": ", including #608 ( <> , 2026-10-31 ), which",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "2f9c0f38"
+    },
+    "b2358f765062c2eb3b39afc2": {
+      "class": "chronology_undatable",
+      "context": "verified on #623 ( <> / 7e2ddaec ). |",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "2c22152d"
+    },
+    "b362c7cc5c67c9561a4b3dde": {
+      "class": "unlabelled_unresolved",
+      "context": "--all , poam-2026-119 ), <> , 420854f .",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "f566e9e"
+    },
+    "b3d8dc77f7bdb8d0424b1f0d": {
+      "class": "dead_commit_claim",
+      "context": "config failclosed.py). remediation commit: <> . | 2026-09-28 |",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "8bdd5b2"
+    },
+    "b40135c368e448c83f7f2fc7": {
+      "class": "chronology_undatable",
+      "context": "e0f7700 , b2369c6 , <> , 9d5d61a . |",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "f566e9e"
+    },
+    "b4823e44a54e7b83fce26a9c": {
+      "class": "dead_commit_claim",
+      "context": "( 2026-11-15 , #768 <> ): red-before-green confirmed live",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "6f04ba7d"
+    },
+    "b71d09fe1496b5b0657ab09e": {
+      "class": "unlabelled_unresolved",
+      "context": "the pre-rewrite line ( <> ) referenced by pull-request",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "e608f3ac"
+    },
+    "b823bc9dc73aebe9d5f17659": {
+      "class": "chronology_violation",
+      "context": "— ws-d merged as <> (#348).",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "9e40dade"
+    },
+    "b8481901b71c5342c8fb394f": {
+      "class": "unlabelled_unresolved",
+      "context": "poam-2026-160 and poam-2026-162 and <> here, and .gitleaks.toml allowlists",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "90824861"
+    },
+    "ba98acfb2dc712cc837616e5": {
+      "class": "chronology_violation",
+      "context": "test postures. remediation commit: <> . covered by tests/test",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "9a7fabe7"
+    },
+    "bfcd34dcb8bb5d62b28a5b52": {
+      "class": "unlabelled_unresolved",
+      "context": "2026-10-25t02:18:43z , revision 7, <> ), kubectl set image",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "6ffbd5569"
+    },
+    "c01b14fc793a5fe08cb84223": {
+      "class": "chronology_violation",
+      "context": "asserted one. remediation commit: <> . covered by tests/integrations/provider",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "9a7fabe7"
+    },
+    "c1121911b1dad1f7e7659ef0": {
+      "class": "dead_commit_claim",
+      "context": "while pr #623 (commit <> ) targeted the non-",
+      "count": 2,
+      "file": "docs/POAM.md",
+      "subject": "2c22152dbe663fe3c61f3a1ae28f96494ce93101"
+    },
+    "c54b9a700d3514c9130352c9": {
+      "class": "unlabelled_unresolved",
+      "context": ", 2026-10-31): provider 01 <> (8 passed; the job",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "41233853779"
+    },
+    "c8a098572b0fa2bfb439ce46": {
+      "class": "unlabelled_unresolved",
+      "context": "follow-up restates 0c2d40d7 and <> in sp800-53-component-definition.yaml (../compliance/oscal/sp800-53-component-definition.yaml) to",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "2f94e8b5"
+    },
+    "c8bf777e48f6ffd6cf920e94": {
+      "class": "dead_commit_claim",
+      "context": "infra/modules/gateway/deployment/templates/deployment.yaml (../infra/modules/gateway/deployment/templates/deployment.yaml) ( #724 <> , #726 851edcd3 ),",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "e1421593"
+    },
+    "ca750060d43c1f2c1659febb": {
+      "class": "unlabelled_unresolved",
+      "context": "0c2d40d7 , c6fc7ee5 , <> ) relied on test",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "2f94e8b5"
+    },
+    "cafd798f96d01e4fe862d08d": {
+      "class": "unlabelled_unresolved",
+      "context": "), and also in <> on #1 – #15",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "e608f3ac"
+    },
+    "cb0d9cffb2a84a20f83e4e35": {
+      "class": "unlabelled_unresolved",
+      "context": "| e0f7700 , <> , 9d5d61a | poam-2026-079",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "b2369c6"
+    },
+    "cd74a7ec6bdd80739c88be42": {
+      "class": "dead_commit_claim",
+      "context": "(../infra/modules/service mesh/main.tf) ( #725 <> ), verified live across",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "cb4f7d3a"
+    },
+    "ceae27d5940100d1805b4cce": {
+      "class": "dead_commit_claim",
+      "context": "compliance/lula/lula-validation-ac2.yaml (../compliance/lula/lula-validation-ac2.yaml). remediation commits: <> , b2369c6 , f566e9e",
+      "count": 2,
+      "file": "docs/POAM.md",
+      "subject": "e0f7700"
+    },
+    "d0c346f921152e75e98e9305": {
+      "class": "unlabelled_unresolved",
+      "context": "password in 1902c92c / <> ( poam-2026-160 / poam-2026-162",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "e608f3ac"
+    },
+    "d24b0dbe91e85af30831a1ea": {
+      "class": "chronology_undatable",
+      "context": "in redis db=1 (commit <> ). covered by tests/test",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "88fa9d7"
+    },
+    "d274482d0688a107617b4bd6": {
+      "class": "dead_commit_claim",
+      "context": "#1 – #15 ( <> ), which are not",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "e608f3ac"
+    },
+    "d3e7b96a32c88c990a27610f": {
+      "class": "closure_date_unparseable",
+      "context": "virtualenv lives inside it. <> closed for test sessions",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "row"
+    },
+    "d488dd7fa06a36d12eab148a": {
+      "class": "unlabelled_unresolved",
+      "context": "poam-2026-119 ), f566e9e , <> .",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "420854f"
+    },
+    "d59d9e0bf610415662db06dc": {
+      "class": "chronology_undatable",
+      "context": "bind receipt ingestion (commit <> ). covered by tests/integrations/provider",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "88fa9d7"
+    },
+    "d64e80ff3fd24bc6858f93db": {
+      "class": "unlabelled_unresolved",
+      "context": ", regrades eu-ecb-bycomp-0007 , <> , c6fc7ee5 , and",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "0c2d40d7"
+    },
+    "d78462643b56ca3b2b5986ad": {
+      "class": "paired_main_not_ancestor",
+      "context": "or with #15's head <> : get /repos/{owner}/{repo}/compare/… returned",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "694bbf37"
+    },
+    "dae0411eaaa23b985230d2a0": {
+      "class": "unlabelled_unresolved",
+      "context": "( gateway ) and <> ( compliance-bridge ) were",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "8d2ccf03"
+    },
+    "df20b3ab0669d8aab7bae5e8": {
+      "class": "dead_commit_claim",
+      "context": "authorizationpolicy coverage), #724 ( <> , native initcontainers opa",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "e1421593"
+    },
+    "e32dff8ffa8a5f71f5391f2d": {
+      "class": "dead_commit_claim",
+      "context": "scanned in #849 ( <> run 44950732100 / job",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "13e44240"
+    },
+    "e4b2136bdc4d980fb8b2e4c3": {
+      "class": "unlabelled_unresolved",
+      "context": "( #654 rebased to <> and answered on 2026-11-20t05:50z",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "35a49d0f"
+    },
+    "e5e668be951679d1dded592c": {
+      "class": "unlabelled_unresolved",
+      "context": "at 1902c92c instead of <> . of the 217",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "e608f3ac"
+    },
+    "e62a7416ab6873d13832b3ed": {
+      "class": "unlabelled_unresolved",
+      "context": "utc, moved main from <> , the merge of",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "90824861"
+    },
+    "e79a6f28637f65c66b56df44": {
+      "class": "closure_date_unparseable",
+      "context": "silently when absent.~~ ✅ <> closed (verified 2026-09-22; scope",
+      "count": 2,
+      "file": "docs/compliance/universal/POAM_ISO42001.md",
+      "subject": "row"
+    },
+    "ea6ea21bd1b65d7d046e6ca1": {
+      "class": "unlabelled_unresolved",
+      "context": "mainline sbom/cve scans ( <> , 43102243741 ), and",
+      "count": 1,
+      "file": "docs/compliance/us_fed/POAM_US_FED.md",
+      "subject": "42872701291"
+    },
+    "ea9c61474687de7129ecee06": {
+      "class": "unlabelled_unresolved",
+      "context": "3. 097 ( <> ): an atomic lua",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "9c68a6e8"
+    },
+    "eab6e3b803af236cab8d3538": {
+      "class": "unlabelled_unresolved",
+      "context": "passing sbom.yml (../.github/workflows/sbom.yml) ( <> , actions run 44958875155",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "bc8e6f26"
+    },
+    "ec8377432b7696b1773da2ef": {
+      "class": "chronology_undatable",
+      "context": "fail-closed replay rejection (commit <> ). covered by tests/test",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "88fa9d7"
+    },
+    "ed69ecf09e889c0d9ffc81a9": {
+      "class": "dead_commit_claim",
+      "context": "sha ( 1902c92c , <> ) in .gitleaks.toml (../.gitleaks.toml)",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "e608f3ac"
+    },
+    "eeebb227f46aeb52fd60ca09": {
+      "class": "paired_missing_pr",
+      "context": "to e5376b58 / sub-commit <> ). together these argue",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "b3fd2353"
+    },
+    "f2b1c3da3fb2c89a43d11d02": {
+      "class": "dead_commit_claim",
+      "context": "verified on #623 ( <> / 7e2ddaec ). |",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "2c22152d"
+    },
+    "f40c4e58afd279061c4524d6": {
+      "class": "unlabelled_unresolved",
+      "context": "for both on 2026-11-02. <> itself is not in",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "90824861"
+    },
+    "f4cbd33f21d045145122c3c0": {
+      "class": "chronology_undatable",
+      "context": "remediated in #725 ( <> ), verified in certified",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "cb4f7d3a"
+    },
+    "f535e2c2fb5ef9ef3cd13e20": {
+      "class": "unlabelled_unresolved",
+      "context": "/ job 136987863741 and <> run 44958875155 / job",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "bc8e6f26"
+    },
+    "f546b58994fdf0f24fe8f885": {
+      "class": "chronology_violation",
+      "context": "( 9c68a6e8 , #391 <> ) on de5534ac:deployment/k8s/reconciliation-worker.yaml and",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "e1f46eca"
+    },
+    "f85b66f46d682468ae59bcc4": {
+      "class": "unlabelled_unresolved",
+      "context": "the 2026-11-20 follow-up restates <> and 2f94e8b5 in sp800-53-component-definition.yaml",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "0c2d40d7"
+    },
+    "f9012515bc57c1b337992fc7": {
+      "class": "dead_commit_claim",
+      "context": "inverted since #312 / <> ) | updated to",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "0b8d7e12"
+    },
+    "fd3a33f4814f182a91ad981d": {
+      "class": "dead_commit_claim",
+      "context": "e0f7700 , b2369c6 , <> , 9d5d61a .",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "f566e9e"
+    },
+    "fec8ae5eb5ff1cdd6d0c3bf5": {
+      "class": "paired_main_not_ancestor",
+      "context": "on its head ( <> ), its pre-merge record",
+      "count": 1,
+      "file": "docs/POAM.md",
+      "subject": "b310ed8c"
+    }
+  }
+}

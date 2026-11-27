@@ -28,7 +28,14 @@ import logging
 import threading
 from typing import Any
 
+from src.gateway.governance.env_posture import is_enforcing, resolve_posture
+
 logger = logging.getLogger(__name__)
+
+
+class PresidioUnavailableError(RuntimeError):
+    """Raised when Presidio PII engines are unavailable in an enforcing posture."""
+
 
 # Identity-bearing entities only. DATE_TIME, LOCATION and NRP are not
 # redacted: on their own they do not identify a person, and redacting them
@@ -52,10 +59,83 @@ _PII_ENTITIES: list[str] = [
 _presidio_analyzer: Any = None
 _presidio_anonymizer: Any = None
 _presidio_init_done: bool = False
+_presidio_init_error: BaseException | None = None
 _presidio_init_lock = threading.Lock()
+_tldextract_offline_done: bool = False
+_tldextract_init_lock = threading.Lock()
 
 
-def ensure_presidio_engines() -> None:
+def _raise_if_enforcing_unavailable(
+    cause: BaseException | None = None,
+    *,
+    require_anonymizer: bool = True,
+) -> None:
+    """Fail closed in enforcing postures when Presidio engines are missing."""
+    missing = _presidio_analyzer is None or (
+        require_anonymizer and _presidio_anonymizer is None
+    )
+    if not missing:
+        return
+    if is_enforcing(resolve_posture()):
+        detail = cause or _presidio_init_error
+        msg = "Presidio PII engines unavailable in enforcing posture" + (
+            f": {detail}" if detail is not None else ""
+        )
+        if cause is not None:
+            raise PresidioUnavailableError(msg) from cause
+        raise PresidioUnavailableError(msg)
+
+
+def configure_offline_tldextract() -> Any:
+    """Replace ``tldextract``'s global extractor with an offline snapshot-only instance.
+
+    ``presidio_analyzer.predefined_recognizers.EmailRecognizer.validate_result``
+    calls module-level ``tldextract.extract()``, which delegates to
+    ``tldextract.tldextract.TLD_EXTRACTOR``. At import time ``tldextract``
+    constructs ``TLD_EXTRACTOR`` with ``suffix_list_urls=PUBLIC_SUFFIX_LIST_URLS``,
+    ``cache_fetch_timeout=None``, and ``cache_dir=get_cache_dir()``. On an
+    air-gapped runner or a default-deny egress pod without a populated cache,
+    the first email regex match stalls across two outbound HTTPS URLs for two
+    full TCP SYN retry cycles (~254 s), and an existing cache directory on a
+    ``readOnlyRootFilesystem`` fails ``FileLock`` with ``EROFS``.
+
+    Setting ``suffix_list_urls=()`` and ``cache_dir=None`` (both by mutating any
+    pre-existing ``TLD_EXTRACTOR`` instance in place for bound-object callers
+    and by replacing ``tldextract.tldextract.TLD_EXTRACTOR``) forces immediate
+    in-memory loading of the wheel's bundled ``.tld_set_snapshot`` with zero
+    outbound network requests and zero filesystem writes (POAM-2026-248).
+    """
+    global _tldextract_offline_done
+    import tldextract
+    import tldextract.cache as _tldextract_cache
+    import tldextract.tldextract as _tldextract_mod
+
+    current = getattr(_tldextract_mod, "TLD_EXTRACTOR", None)
+    if (
+        _tldextract_offline_done
+        and current is not None
+        and getattr(current, "suffix_list_urls", None) == ()
+        and not getattr(getattr(current, "_cache", None), "enabled", True)
+    ):
+        return current
+    with _tldextract_init_lock:
+        prev = getattr(_tldextract_mod, "TLD_EXTRACTOR", None)
+        if prev is not None:
+            prev.suffix_list_urls = ()
+            prev.fallback_to_snapshot = True
+            prev._cache = _tldextract_cache.DiskCache(None)
+            prev._extractor = None
+        offline_extractor = tldextract.TLDExtract(
+            suffix_list_urls=(),
+            cache_dir=None,
+            fallback_to_snapshot=True,
+        )
+        _tldextract_mod.TLD_EXTRACTOR = offline_extractor
+        _tldextract_offline_done = True
+        return offline_extractor
+
+
+def ensure_presidio_engines(*, require_anonymizer: bool = True) -> None:
     """Lazy-initialise Microsoft Presidio engines once on first use.
 
     All callers (``redact_pii``, ``get_presidio_engines``, ``get_analyzer_patch``,
@@ -64,14 +144,24 @@ def ensure_presidio_engines() -> None:
     once per process. Guarded by ``_presidio_init_lock`` so concurrent threads
     never observe ``_presidio_init_done=True`` while ``_presidio_analyzer`` is
     still ``None``.
+
+    In enforcing postures (``production``, ``staging``, or unknown ``CAGE_ENV``),
+    initialisation failures or unset engines raise
+    :class:`PresidioUnavailableError` rather than degrading to pass-through
+    (POAM-2026-147).
     """
     global _presidio_analyzer, _presidio_anonymizer, _presidio_init_done
+    global _presidio_init_error
     if _presidio_init_done:
+        _raise_if_enforcing_unavailable(require_anonymizer=require_anonymizer)
         return
     with _presidio_init_lock:
         if _presidio_init_done:
+            _raise_if_enforcing_unavailable(require_anonymizer=require_anonymizer)
             return
+        init_exc: BaseException | None = None
         try:
+            configure_offline_tldextract()
             import spacy as _spacy
             from presidio_analyzer import AnalyzerEngine
             from presidio_analyzer.nlp_engine import NlpEngineProvider
@@ -105,23 +195,29 @@ def ensure_presidio_engines() -> None:
                 default_score_threshold=0.3,
             )
             _presidio_anonymizer = AnonymizerEngine()
+            _presidio_init_error = None
             logger.info(
                 "✅ Presidio PII engines initialised (model=%s, entities=%d)",
                 _spacy_model,
                 len(_PII_ENTITIES),
             )
-        except ImportError:
+        except ImportError as exc:
+            init_exc = exc
+            _presidio_init_error = exc
             logger.warning(
-                "⚠️ Presidio not available — input-side PII scan disabled (graceful degradation). "
+                "⚠️ Presidio not available — input-side PII scan disabled in non-enforcing posture. "
                 "Install presidio-analyzer, presidio-anonymizer, and a spaCy model to enable."
             )
         except Exception as _presidio_init_exc:
+            init_exc = _presidio_init_exc
+            _presidio_init_error = _presidio_init_exc
             logger.warning(
-                "⚠️ Presidio engine initialisation failed — input-side PII scan disabled: %s",
+                "⚠️ Presidio engine initialisation failed: %s",
                 _presidio_init_exc,
             )
         finally:
             _presidio_init_done = True
+        _raise_if_enforcing_unavailable(init_exc, require_anonymizer=require_anonymizer)
 
 
 def get_presidio_engines() -> tuple[Any, Any]:
@@ -134,8 +230,9 @@ def redact_pii(text: str) -> tuple[str, list[str]]:
     """Replace identity PII in ``text`` with ``<ENTITY_TYPE>`` tokens.
 
     Returns the redacted text and the sorted entity types found. When the
-    Presidio engines are unavailable the text is returned unchanged. Engine
-    errors propagate; each caller decides how to fail.
+    Presidio engines are unavailable, non-enforcing postures return the text
+    unchanged; enforcing postures fail closed with
+    :class:`PresidioUnavailableError`.
     """
     ensure_presidio_engines()
     if _presidio_analyzer is None or _presidio_anonymizer is None:
@@ -161,7 +258,7 @@ def redact_pii(text: str) -> tuple[str, list[str]]:
 
 def get_analyzer_patch() -> Any:
     """Return the shared Presidio ``AnalyzerEngine`` singleton for NeMo SDD hooks."""
-    ensure_presidio_engines()
+    ensure_presidio_engines(require_anonymizer=False)
     return _presidio_analyzer
 
 
@@ -176,7 +273,7 @@ def build_presidio_sdd_action() -> Any:
     ) -> list:
         if not text:
             return []
-        ensure_presidio_engines()
+        ensure_presidio_engines(require_anonymizer=False)
         if _presidio_analyzer is None:
             return []
         results = _presidio_analyzer.analyze(
@@ -185,3 +282,13 @@ def build_presidio_sdd_action() -> Any:
         return [r for r in results if r.score >= score_threshold]
 
     return detect_sensitive_data
+
+
+# Eagerly neutralize tldextract's live PSL URLs on module import (including
+# when src.integrations.nemo.manager imports build_presidio_sdd_action at
+# import time) before any AnalyzerEngine — ours or NeMo's — can reach
+# EmailRecognizer.validate_result() (POAM-2026-248).
+try:
+    configure_offline_tldextract()
+except ImportError:
+    pass

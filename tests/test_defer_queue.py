@@ -1026,4 +1026,146 @@ async def test_cas_retry_exhaustion_returns_contention_aborted(fake_redis, monke
     assert updated_token is None, "Expected None token on contention abort"
 
 
+@pytest.mark.asyncio
+@pytest.mark.covers(
+    "src.compliance_bridge.main:defer_inject#elif result == ReplayResult.DEFER_QUEUE_UNAVAILABLE:"
+)
+async def test_defer_inject_fails_closed_503_on_defer_queue_unavailable(
+    fake_redis, monkeypatch
+):
+    """POST /v1/defer/{id}/inject must return 503 and emit zero DEFER_RESOLVED events when replay_evaluate returns DEFER_QUEUE_UNAVAILABLE."""
+    from fastapi import HTTPException
+
+    import src.compliance_bridge.main as cb_main
+    from src.gateway.governance.defer_queue import ReplayResult
+
+    queue = DeferQueue(fake_redis)
+    token = DeferToken(
+        defer_id="defer-iab01-unavailable",
+        thread_id="thread-iab01",
+        defer_reason=DeferReason.CONFIDENCE_BELOW_THRESHOLD,
+        confidence_score=0.55,
+        ttl_seconds=300,
+        opa_input_snapshot={"action": "test"},
+    )
+    await queue.park(token)
+
+    published_events: list[dict] = []
+
+    async def _capture_publish(evt: dict) -> None:
+        published_events.append(evt)
+
+    async def _unavailable_replay(_q, _did, _ctx):
+        return ReplayResult.DEFER_QUEUE_UNAVAILABLE
+
+    monkeypatch.setattr(cb_main.event_bus, "publish", _capture_publish)
+    monkeypatch.setattr(
+        cb_main,
+        "_get_replay_evaluate",
+        lambda: (_unavailable_replay, ReplayResult),
+    )
+    monkeypatch.setattr(
+        "src.gateway.governance.defer_queue.get_shared_defer_queue",
+        lambda _url: queue,
+    )
+
+    body = cb_main.DeferResolveRequest(
+        injection_data={"source": "test"}, confidence_score=0.92
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        await cb_main.defer_inject(
+            defer_id=token.defer_id,
+            body=body,
+            _token="test-internal-token",
+        )
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.detail["error"] == "DEFER_QUEUE_UNAVAILABLE"
+    assert published_events == []
+    still_parked = await queue.get(token.defer_id)
+    assert still_parked is not None
+    assert still_parked.resolved_at_utc is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.covers(
+    "src.compliance_bridge.main:defer_inject#DEFER_REPLAY_UNEXPECTED_RESULT",
+    "src.compliance_bridge.main:defer_inject#[defer/inject] Redis connection error:",
+)
+async def test_defer_inject_fails_closed_503_on_unexpected_replay_result_and_queue_error(
+    fake_redis, monkeypatch
+):
+    """defer_inject must reject unknown ReplayResult values and map DeferQueueUnavailableError to 503."""
+    from fastapi import HTTPException
+
+    import src.compliance_bridge.main as cb_main
+    from src.gateway.governance.defer_queue import ReplayResult
+    from src.gateway.governance.governor.errors import DeferQueueUnavailableError
+
+    queue = DeferQueue(fake_redis)
+    token = DeferToken(
+        defer_id="defer-iab01-unexpected",
+        thread_id="thread-iab01-2",
+        defer_reason=DeferReason.CONFIDENCE_BELOW_THRESHOLD,
+        confidence_score=0.55,
+        ttl_seconds=300,
+        opa_input_snapshot={"action": "test"},
+    )
+    await queue.park(token)
+
+    async def _sentinel_replay(_q, _did, _ctx):
+        return "UNKNOWN_FUTURE_VARIANT"
+
+    monkeypatch.setattr(
+        cb_main,
+        "_get_replay_evaluate",
+        lambda: (_sentinel_replay, ReplayResult),
+    )
+    monkeypatch.setattr(
+        "src.gateway.governance.defer_queue.get_shared_defer_queue",
+        lambda _url: queue,
+    )
+
+    body = cb_main.DeferResolveRequest(injection_data={}, confidence_score=0.95)
+    with pytest.raises(HTTPException) as sentinel_exc:
+        await cb_main.defer_inject(
+            defer_id=token.defer_id,
+            body=body,
+            _token="test-internal-token",
+        )
+    assert sentinel_exc.value.status_code == 503
+    assert sentinel_exc.value.detail["error"] == "DEFER_REPLAY_UNEXPECTED_RESULT"
+
+    async def _failing_get(_did: str):
+        raise DeferQueueUnavailableError(
+            "Valkey READONLY replica",
+            defer_reason="CONFIDENCE_BELOW_THRESHOLD",
+        )
+
+    monkeypatch.setattr(queue, "get", _failing_get)
+    with pytest.raises(HTTPException) as err_exc:
+        await cb_main.defer_inject(
+            defer_id=token.defer_id,
+            body=body,
+            _token="test-internal-token",
+        )
+    assert err_exc.value.status_code == 503
+    assert err_exc.value.detail["error"] == "DEFER_QUEUE_UNAVAILABLE"
+
+    from redis.exceptions import ReadOnlyError
+
+    async def _readonly_get(_did: str):
+        raise ReadOnlyError("READONLY You can't write against a read only replica.")
+
+    monkeypatch.setattr(queue, "get", _readonly_get)
+    with pytest.raises(HTTPException) as ro_exc:
+        await cb_main.defer_inject(
+            defer_id=token.defer_id,
+            body=body,
+            _token="test-internal-token",
+        )
+    assert ro_exc.value.status_code == 503
+    assert ro_exc.value.detail["error"] == "DEFER_QUEUE_UNAVAILABLE"
+
+
 pytestmark = [pytest.mark.unit, pytest.mark.local]

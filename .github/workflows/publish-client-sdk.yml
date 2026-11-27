@@ -119,18 +119,9 @@ jobs:
       - name: Verify cage-conformance proof sync
         run: python3 scripts/check_conformance_sync.py
 
-      - name: Build CAGE Client SDK Wheel & Sdist
+      - name: Build CAGE Client SDK Wheel & Sdist (Two-Phase Smoke)
         if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/client-v')
-        run: |
-          cd packages/cage-client
-          rm -rf dist
-          uv build
-          CLIENT_VERSION=$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
-          SMOKE_VENV="$(mktemp -d)/wheel-venv"
-          uv venv "$SMOKE_VENV"
-          uv pip install --python "$SMOKE_VENV/bin/python" "dist/cage_client-${CLIENT_VERSION}-py3-none-any.whl"
-          "$SMOKE_VENV/bin/python" -I -c "import cage_client; assert cage_client.__version__ == '${CLIENT_VERSION}', cage_client.__version__; print('Verified built wheel:', cage_client.__file__, cage_client.__version__)"
-          rm -rf "$(dirname "$SMOKE_VENV")"
+        run: bash scripts/smoke_test_client_wheel.sh
 
       - name: Build CAGE Conformance Verifier Wheel & Sdist
         if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/conformance-v')
@@ -193,13 +184,37 @@ jobs:
           CONF_VERSION=$(python3 -c 'import tomllib; print(tomllib.load(open("packages/cage-conformance/pyproject.toml", "rb"))["project"]["version"])')
           CONF_IMAGE="ghcr.io/google/cybernetic-agent-governance-engine/cage-conformance"
           cat > packages/cage-conformance/Dockerfile.pkg <<'EOF'
-          FROM python:3.12-slim
+          ARG WOLFI_BASE=cgr.dev/chainguard/wolfi-base@sha256:f15fea2f49cb14dceaea491fcbde0d35e0c190126a744ac05a9838440d47d994
+          ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.13.8@sha256:5cc1805e2426484abca4ad46ea783bab281fdb225fd82d8ce6d66a81254bac85
+
+          FROM ${UV_IMAGE} AS uv
+
+          FROM ${WOLFI_BASE} AS builder
+          WORKDIR /app
+          RUN apk upgrade --no-cache && apk add --no-cache python-3.12
+          COPY --from=uv /uv /bin/uv
+          ENV UV_PYTHON=/usr/bin/python3.12 \
+              UV_PYTHON_DOWNLOADS=never \
+              UV_LINK_MODE=copy
+          RUN uv venv --python /usr/bin/python3.12 /app/.venv
+          COPY dist/ /dist/
+          RUN uv pip install --python /app/.venv --no-cache --no-deps /dist/*.whl
+
+          FROM ${WOLFI_BASE}
           LABEL org.opencontainers.image.title="cage-conformance"
           LABEL org.opencontainers.image.description="Standalone Conformance Verifier for CAGE Governance Traces, Evidence Streams, and Partner Endpoints"
           LABEL org.opencontainers.image.source="https://github.com/google/cybernetic-agent-governance-engine"
           LABEL org.opencontainers.image.licenses="Apache-2.0"
-          COPY dist/ /dist/
-          RUN pip install --no-cache-dir --no-deps /dist/*.whl
+          WORKDIR /app
+          RUN apk upgrade --no-cache \
+              && apk add --no-cache ca-certificates-bundle python-3.12 \
+              && (grep -q '^nonroot:' /etc/group || addgroup -g 65532 nonroot) \
+              && (grep -q '^nonroot:' /etc/passwd || adduser -D -H -u 65532 -G nonroot -s /sbin/nologin nonroot)
+          COPY --from=builder /app/.venv /app/.venv
+          ENV VIRTUAL_ENV=/app/.venv \
+              PATH="/app/.venv/bin:$PATH" \
+              PYTHONUNBUFFERED=1 \
+              PYTHONDONTWRITEBYTECODE=1
           USER 65532:65532
           ENTRYPOINT ["cage-conformance"]
           EOF
@@ -217,8 +232,36 @@ jobs:
             --adapter-commit "${COMMIT_SHA::12}" \
             --runner-org "Google LLC" \
             --runner-identity "publish-client-sdk@github-actions"
+          TRIVY_VERSION="0.69.3"
+          TRIVY_SHA256="1816b632dfe529869c740c0913e36bd1629cb7688bd5634f4a858c1d57c88b75"
+          curl --proto '=https' --tlsv1.2 -sSfL --retry 5 --retry-connrefused \
+            -o "${RUNNER_TEMP}/trivy.tar.gz" \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          echo "${TRIVY_SHA256}  ${RUNNER_TEMP}/trivy.tar.gz" | sha256sum -c -
+          sudo tar -xzf "${RUNNER_TEMP}/trivy.tar.gz" -C /usr/local/bin trivy
+          rm -f "${RUNNER_TEMP}/trivy.tar.gz"
+          trivy image \
+            --format cyclonedx \
+            --output sbom-cage-conformance.cdx.json \
+            "${CONF_IMAGE}:${CONF_VERSION}"
+          trivy image \
+            --format table \
+            --severity CRITICAL,HIGH \
+            --ignore-unfixed \
+            --ignorefile .trivyignore \
+            --show-suppressed \
+            --exit-code 1 \
+            "${CONF_IMAGE}:${CONF_VERSION}"
           docker push "${CONF_IMAGE}:${CONF_VERSION}"
           docker push "${CONF_IMAGE}:latest"
+
+      - name: Upload cage-conformance SBOM artifact
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/conformance-v')
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sbom-cage-conformance-${{ github.sha }}
+          path: sbom-cage-conformance.cdx.json
+          retention-days: 90
 
       # Intentionally disabled: PYPI_TRUSTED_PUBLISHING_ENABLED is left unset by policy
       # (see SECURITY.md § Package Distribution Channels — GitHub Releases & GHCR only).

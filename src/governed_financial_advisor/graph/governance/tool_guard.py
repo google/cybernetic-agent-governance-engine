@@ -12,373 +12,199 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Gateway pre-execution guard for advisor tool-executor nodes.
+"""Advisor-specific governance policy hooks for ``cage_client.langgraph.governed_tool_node``.
 
-The advisor is an untrusted, zero-identity client of the CAGE gateway
-(POAM-2026-080): it holds no governor, no signer and no routing-seal secret.
-Every tool call a subgraph wants to run is therefore submitted to the
-gateway's ``POST /governance/validate-action`` endpoint through the advisor's
-standard :class:`GatewayClient` before the wrapped node may execute it. The
-gateway authenticates this caller by its mesh workload identity, not by any
-secret the advisor holds.
+Generic preview/execute mediation, batch idempotency key derivation, ``ToolMessage``
+pairing, single-use ``approval_token`` redemption, and retryable vs. terminal
+``CommitOutcome`` branching live in ``cage_client.langgraph.governed_tool_node``.
+This module holds **only** advisor-specific policy:
 
-``validate-action`` only routes: it commits nothing and mints no seal. The
-committing run happens in the gateway when the governed tool executes, so an
-ALLOW here is advice, never authority.
-
-Fail-closed contract, per batch:
-
-* every call ``ALLOW`` or ``NARROW`` → the wrapped node runs the batch;
-* in a graph with an approval path, a single-call batch answered
-  ``REQUIRE_APPROVAL`` with a ``deferred_id`` →
-  no tool runs; ``governance_status`` becomes ``REQUIRE_APPROVAL`` and the
-  ``deferred_id`` is stored so the graph can pause for a human;
-* a refusal (403 / DENY), DEFER, an unknown verdict, a
-  ``REQUIRE_APPROVAL`` without a ``deferred_id``, an HTTP error, a timeout or
-  an unreachable gateway → the whole batch is refused.
-
-Once a human has approved (``approval_decision.approved`` and a
-``deferred_id`` in state), the guard does not re-ask ``validate-action``: it
-forwards the ``deferred_id`` in each tool call's arguments and the gateway
-consumes that approval exactly once, re-validating the fresh params. The
-advisor never decides that an approval holds.
-
-A ``deferred_id`` the model put in a tool call never counts: it is removed
-from the call ``validate-action`` previews and from every call the wrapped
-node executes. Only the approved resume above adds one, so an ALLOW for one
-call can never redeem an approval the model named (GHSA-w39v-5v7h-fxg9).
-
-Every refused call is answered with a ``ToolMessage`` so the conversation
-stays well-formed.
-
-Before anything else, every ``execute_trade_action`` call's ``transaction_id``
-is replaced by a UUIDv5 derived from the LangGraph thread and the tool call
-id, whatever the model supplied. A re-run of the same tool call (a graph
-retry or a resumed checkpoint) therefore resubmits the same idempotency key,
-and the gateway executes that trade at most once. The key names the call,
-not the order, so the guard previews, and reuses verdicts for, the order
-without it.
+1. **Drift revalidation:** single-trade ``routing_verdict_cache`` reuse
+   (:func:`lookup_cached_trade_preview`), substrate ``policy_version_id`` drift
+   recovery (:func:`preview_trade_with_drift_revalidation`), and canonical trade
+   plan/intent extraction (:func:`extract_trader_plan_steps`, :func:`canonical_trade_intent`).
+2. **``REFUSAL_DESCRIPTIONS``:** imported canonically from ``cage_client.outcomes``.
+3. **Trade-description allowlisting:** :func:`describe_trade` reads only
+   ``side``, ``symbol``, ``amount``, and ``currency`` so no ``deferred_id`` or
+   internal handle can enter LangGraph ``ToolMessage`` prompts (:func:`advisor_tool_message`).
 """
 
 from __future__ import annotations
 
-import functools
 import logging
-import uuid
-from collections.abc import Awaitable, Callable
-from typing import Any, Protocol
+from collections.abc import Mapping, Sequence
+from typing import Any
 
-from langchain_core.messages import AIMessage, ToolMessage
-from langgraph.config import get_config
+from cage_client import CageClient, GovernanceDecision, PreviewResult
+from cage_client.outcomes import (
+    INDETERMINATE_STATUSES,
+    REFUSAL_DESCRIPTIONS,
+    CommitOutcome,
+    CommitStatus,
+)
 
-from src.gateway.governance.decisions import GovernanceDecision
 from src.governed_financial_advisor.graph.nodes.trade_contract import (
     TRADE_ACTION,
-    TRADE_TOOL,
+    extract_trade_steps,
     reusable_allow_verdict,
 )
 from src.governed_financial_advisor.infrastructure.gateway_client import GatewayClient
+from src.governed_financial_advisor.models.principal import principal_header_value
+from src.governed_financial_advisor.utils.context import user_context
 
 logger = logging.getLogger(__name__)
 
-
-class NodeFn(Protocol):
-    """A LangGraph node: called with the graph state (by name), returns an update."""
-
-    def __call__(self, state: Any) -> Awaitable[dict[str, Any]]: ...
-
-
 GOVERNANCE_ALLOWED = "ALLOWED"
 GOVERNANCE_DENIED = "DENIED"
-GOVERNANCE_REQUIRE_APPROVAL = GovernanceDecision.REQUIRE_APPROVAL.value
+GOVERNANCE_UNAVAILABLE = "UNAVAILABLE"
+GOVERNANCE_REQUIRE_APPROVAL = "REQUIRE_APPROVAL"
 
-#: Verdicts under which the wrapped node may execute the batch.
-_EXECUTABLE_VERDICTS = frozenset({GovernanceDecision.ALLOW, GovernanceDecision.NARROW})
+#: State key under which governed_tool_node stores per-call CommitOutcome dicts.
+COMMIT_OUTCOMES = "commit_outcomes"
 
-#: Namespace of the UUIDv5 transaction ids derived for trade tool calls.
-_TRANSACTION_ID_NAMESPACE = uuid.uuid5(
-    uuid.NAMESPACE_URL, "urn:cage:advisor:execute_trade_action:transaction_id"
+#: Advisor-owned state fields cleared on every governance mediation exit.
+ADVISOR_EXTRA_CLEAR_KEYS: tuple[str, ...] = (
+    "deferred_step_ids",
+    "routing_verdict_cache",
+    "governance_envelope",
 )
 
+#: Advisor-owned TOCTOU state cleared only on terminal completion/refusal (preserved across HITL park).
+ADVISOR_TERMINAL_CLEAR_KEYS: tuple[str, ...] = ("hitl_reference_quote",)
 
-async def authorize_action(
-    action: str, params: dict[str, Any]
-) -> tuple[dict[str, Any] | None, str | None]:
-    """Ask the gateway how one action must be routed.
 
-    Returns:
-        ``(result, None)`` when the gateway answered ``ALLOW``/``NARROW``, or
-        ``REQUIRE_APPROVAL`` with a ``deferred_id``; otherwise
-        ``(None, reason)``. Never raises: every failure mode is reported as a
-        refusal reason so callers cannot fail open by accident.
+def advisor_principal_extractor(state: Mapping[str, Any]) -> str:
+    """Resolve the active advisor caller principal without fabricating a default."""
+    explicit = state.get("principal")
+    if isinstance(explicit, str) and explicit.strip():
+        return explicit.strip()
+    if explicit is not None and (not isinstance(explicit, str) or not explicit.strip()):
+        return ""
+    resolved = principal_header_value(user_context.get())
+    return resolved if resolved else ""
+
+
+def canonical_trade_intent(args: Any) -> tuple[str, str, str, str]:
+    """Extract normalized ``(symbol, currency, side, amount_key)`` from trade tool args."""
+    mapping = args if isinstance(args, Mapping) else {}
+    symbol = str(mapping.get("symbol") or "").strip().upper()
+    currency = str(mapping.get("currency") or "USD").strip().upper()
+    side = str(mapping.get("side") or "buy").strip().lower()
+    raw_amount = mapping.get("amount")
+    if isinstance(raw_amount, (int, float)) and not isinstance(raw_amount, bool):
+        amount_key = f"{float(raw_amount):.8f}"
+    else:
+        amount_key = str(raw_amount or "").strip()
+    return (symbol, currency, side, amount_key)
+
+
+def extract_trader_plan_steps(plan: Mapping[str, Any]) -> Sequence[Mapping[str, Any]]:
+    """Extract canonical ``execute_trade`` steps from a parsed advisor execution plan."""
+    return extract_trade_steps(plan)
+
+
+def describe_trade(call: Mapping[str, Any]) -> str:
+    """Render a trade description from allowlisted params alone.
+
+    Only ``side``, ``symbol``, ``amount``, and ``currency`` are read, so no
+    other argument (in particular a ``deferred_id``) can reach prompt prose.
     """
-    try:
-        result = await GatewayClient().validate_action(action=action, params=params)
-    except Exception as exc:  # refusal (PermissionError), HTTP error, timeout: refuse
-        return None, f"{type(exc).__name__}: {exc}"
-    verdict = result.get("verdict") if isinstance(result, dict) else None
-    if verdict in _EXECUTABLE_VERDICTS:
-        return result, None
-    if verdict == GovernanceDecision.REQUIRE_APPROVAL:
-        if result.get("deferred_id"):
-            return result, None
-        return None, "gateway requires approval but parked no deferred_id"
-    return None, f"gateway returned verdict {verdict!r}, not ALLOW or NARROW"
+    raw_args = call.get("args")
+    args = raw_args if isinstance(raw_args, Mapping) else {}
+    side = str(args.get("side") or "buy").upper()
+    symbol = str(args.get("symbol") or "?")
+    amount, currency = args.get("amount"), args.get("currency")
+    notional = f" for {amount} {currency}" if amount is not None and currency else ""
+    return f"{side} {symbol}{notional}"
 
 
-def _pending_tool_calls(state: Any) -> list[dict[str, Any]]:
-    messages = state.get("messages") or []
-    if not messages:
-        return []
-    return list(getattr(messages[-1], "tool_calls", None) or [])
-
-
-def _approved_deferred_id(state: Any) -> str | None:
-    decision = state.get("approval_decision") or {}
-    deferred_id = state.get("deferred_id")
-    if deferred_id and isinstance(decision, dict) and decision.get("approved") is True:
-        return str(deferred_id)
+def advisor_tool_message(
+    call: Mapping[str, Any], event: str, outcome: CommitOutcome | None
+) -> str | None:
+    """Format handle-free advisor ``ToolMessage`` copy using :func:`describe_trade` and ``REFUSAL_DESCRIPTIONS``."""
+    trade = describe_trade(call)
+    if event == "approval_required":
+        return (
+            f"Nothing was executed. Your {trade} trade needs reviewer "
+            "approval at the compliance bridge; it is in your pending approvals."
+        )
+    if event == "awaiting_same_ticket" and outcome is not None:
+        if outcome.status is CommitStatus.DEFERRED:
+            return (
+                f"Nothing was executed. The gateway deferred your {trade} trade "
+                "after its approval; the approval is retained and nothing was spent. "
+                "Resume once the deferral has cleared; it remains in your pending approvals."
+            )
+        return (
+            f"Nothing was executed. Your {trade} trade is still awaiting reviewer "
+            "approval at the compliance bridge. Resume after a reviewer has "
+            "approved it; it remains in your pending approvals."
+        )
+    if event == "terminal_outcome":
+        if outcome is None or outcome.status in INDETERMINATE_STATUSES:
+            return (
+                f"The outcome of your {trade} trade could not be confirmed. Do not "
+                "submit it again until it has been reconciled."
+            )
+        if outcome.status is CommitStatus.DEFERRED:
+            reason = "the gateway deferred it and holds no approval for it"
+        elif outcome.redemption_refusal is not None:
+            reason = REFUSAL_DESCRIPTIONS.get(
+                outcome.redemption_refusal, outcome.redemption_refusal.value
+            )
+        else:
+            reason = "the gateway refused it"
+        return (
+            f"Nothing was executed. Your {trade} trade can't proceed: {reason}. "
+            "Submit a new request if you still want it."
+        )
     return None
 
 
-def _answer_all(
-    tool_calls: list[dict[str, Any]], reasons: dict[str, str], default: str
-) -> list[ToolMessage]:
-    return [
-        ToolMessage(
-            content=reasons.get(str(call.get("id")), default),
-            tool_call_id=call.get("id"),
-            name=call.get("name"),
-        )
-        for call in tool_calls
-    ]
-
-
-def _run_thread_id() -> str | None:
-    """The LangGraph ``thread_id`` of the current run, if there is one."""
-    try:
-        config = get_config()
-    except RuntimeError:  # not inside a LangGraph run
+def lookup_cached_trade_preview(
+    state: Mapping[str, Any], preview_params: Mapping[str, Any], batch_len: int
+) -> Mapping[str, Any] | None:
+    """Reuse a non-drifted single-trade ``ALLOW`` verdict cached by upstream gates."""
+    if batch_len != 1 or preview_params.get("action") != TRADE_ACTION:
         return None
-    thread_id = (config.get("configurable") or {}).get("thread_id")
-    return str(thread_id) if thread_id else None
+    cached_cache = state.get("routing_verdict_cache")
+    if cached_cache is None:
+        return None
+    return reusable_allow_verdict(cached_cache, dict(preview_params))
 
 
-def derive_transaction_id(
-    tool_call_id: str, *, thread_id: str | None, message_id: str | None
-) -> str:
-    """The deterministic UUIDv5 idempotency key of one trade tool call.
+async def preview_trade_with_drift_revalidation(
+    client: CageClient,
+    action: str,
+    params: Mapping[str, Any],
+    principal: str,
+    state: Mapping[str, Any],
+) -> PreviewResult:
+    """Call ``client.preview()`` and recover once on verified substrate policy-version drift."""
+    pin = state.get("policy_version_id")
+    active_pin = str(pin) if isinstance(pin, str) and pin.strip() else None
 
-    Scoped by the LangGraph thread; without one, by the ``AIMessage`` id.
-    """
-    scope = f"thread:{thread_id}" if thread_id else f"message:{message_id}"
-    return str(uuid.uuid5(_TRANSACTION_ID_NAMESPACE, f"{scope}|call:{tool_call_id}"))
-
-
-def _with_derived_transaction_ids(state: Any) -> Any:
-    """Return ``state`` whose trade tool calls carry derived ``transaction_id``s.
-
-    Only ``transaction_id`` changes; a model-supplied value is overridden.
-    """
-    messages = list(state.get("messages") or [])
-    if not messages:
-        return state
-    last = messages[-1]
-    calls = list(getattr(last, "tool_calls", None) or [])
-    if not any(call.get("name") == TRADE_TOOL for call in calls):
-        return state
-    thread_id = _run_thread_id()
-    message_id = getattr(last, "id", None)
-    rewritten = []
-    for call in calls:
-        if call.get("name") == TRADE_TOOL:
-            args = call.get("args")
-            call = {
-                **call,
-                "args": {
-                    **(args if isinstance(args, dict) else {}),
-                    "transaction_id": derive_transaction_id(
-                        str(call.get("id")), thread_id=thread_id, message_id=message_id
-                    ),
-                },
-            }
-        rewritten.append(call)
-    messages[-1] = last.model_copy(update={"tool_calls": rewritten})
-    return {**state, "messages": messages}
-
-
-def _without_model_deferred_id(args: Any) -> dict[str, Any]:
-    """Return a copy of a tool call's ``args`` without a ``deferred_id``."""
-    return {
-        k: v
-        for k, v in (args if isinstance(args, dict) else {}).items()
-        if k != "deferred_id"
-    }
-
-
-def _with_deferred_id(state: Any, deferred_id: str | None) -> Any:
-    """Return ``state`` whose last message's tool calls carry only ``deferred_id``.
-
-    Any ``deferred_id`` the model wrote into a call is dropped first. With
-    ``deferred_id=None`` (no human approval) the calls carry none at all.
-    """
-    messages = list(state.get("messages") or [])
-    last = messages[-1]
-    calls = []
-    for call in getattr(last, "tool_calls", None) or []:
-        args = _without_model_deferred_id(call.get("args"))
-        if deferred_id is not None:
-            args["deferred_id"] = deferred_id
-        calls.append({**call, "args": args})
-    messages[-1] = AIMessage(content=getattr(last, "content", ""), tool_calls=calls)
-    return {**state, "messages": messages}
-
-
-def gateway_tool_guard(
-    action: str, *, approvable: bool = False
-) -> Callable[[NodeFn], NodeFn]:
-    """Wrap a tool-executor node so it runs only as the gateway routes it.
-
-    Args:
-        action: Governance action name submitted to the gateway for every tool
-            call in the batch (e.g. ``"execute_trade"``).
-        approvable: Whether the wrapping graph has a human-approval path. When
-            False, ``REQUIRE_APPROVAL`` refuses the batch like any other
-            non-executable verdict.
-    """
-
-    def decorator(func: NodeFn) -> NodeFn:
-        @functools.wraps(func)
-        async def wrapper(state: Any) -> dict[str, Any]:
-            state = _with_derived_transaction_ids(state)
-            tool_calls = _pending_tool_calls(state)
-            if not tool_calls:
-                return {"messages": []}
-
-            approved_id = _approved_deferred_id(state) if approvable else None
-            if approved_id is not None and len(tool_calls) > 1:
-                return {
-                    "messages": _answer_all(
-                        tool_calls,
-                        {},
-                        "Governance refused this action: an approval covers exactly one call",
-                    ),
-                    "governance_status": GOVERNANCE_DENIED,
-                    "governance_envelope": None,
-                    "deferred_id": None,
-                    "approval_decision": None,
-                    "routing_verdict_cache": None,
-                }
-            if approved_id is not None:
-                # The gateway, not the advisor, decides whether the approval
-                # covers these params; the id is single-use on both sides.
-                result = await func(_with_deferred_id(state, approved_id))
-                return {
-                    **result,
-                    "governance_status": GOVERNANCE_ALLOWED,
-                    "governance_envelope": None,
-                    "deferred_id": None,
-                    "approval_decision": None,
-                    "routing_verdict_cache": None,
-                }
-
-            verdicts: list[dict[str, Any]] = []
-            refusals: dict[str, str] = {}
-            deferred_ids: dict[str, str] = {}
-            cached_cache = (
-                state.get("routing_verdict_cache")
-                if action == TRADE_ACTION and len(tool_calls) == 1
-                else None
+    for attempt in range(2):
+        token, _ = GatewayClient._set_preview_pin(active_pin)
+        try:
+            result = await client.preview(
+                action=action, parameters=dict(params), agent_id=principal
             )
+        finally:
+            GatewayClient._reset_preview_pin(token)
 
-            for call in tool_calls:
-                params: dict[str, Any] = {
-                    # never self-asserted by the model
-                    **_without_model_deferred_id(call.get("args")),
-                    "tool_name": call.get("name", ""),
-                }
-                if call.get("name") == TRADE_TOOL:
-                    # The derived idempotency key names the call, not the order.
-                    params.pop("transaction_id", None)
-                params.setdefault("action", action)
-                reused = (
-                    reusable_allow_verdict(cached_cache, params)
-                    if cached_cache is not None
-                    else None
-                )
-                if reused is not None:
-                    verdicts.append(reused)
-                    continue
-                verdict, reason = await authorize_action(action, params)
-                if verdict is None:
-                    refusals[str(call.get("id"))] = reason or "refused"
-                elif verdict.get("verdict") == GovernanceDecision.REQUIRE_APPROVAL:
-                    if not approvable:
-                        refusals[str(call.get("id"))] = (
-                            "gateway requires human approval"
-                        )
-                        continue
-                    deferred_ids[str(call.get("id"))] = str(verdict["deferred_id"])
-                else:
-                    verdicts.append(verdict)
+        if (
+            attempt == 0
+            and result.decision is GovernanceDecision.DENIED
+            and any(
+                "Substrate Policy Drift Detected" in str(v) for v in result.violations
+            )
+        ):
+            logger.warning(
+                "Substrate drift caught on verified 403 envelope; refreshing policy pin and replaying preview."
+            )
+            active_pin = await GatewayClient().get_policy_version()
+            continue
+        return result
 
-            if deferred_ids and len(tool_calls) > 1:
-                # An approval binds one call's params; batching it with others
-                # would forward the deferred_id to calls it does not cover.
-                for call_id in deferred_ids:
-                    refusals.setdefault(
-                        call_id, "a call that requires approval must be submitted alone"
-                    )
-            if refusals:
-                logger.warning(
-                    "Gateway refused %s for %d of %d tool call(s) — batch not executed: %s",
-                    action,
-                    len(refusals),
-                    len(tool_calls),
-                    refusals,
-                )
-                return {
-                    "messages": _answer_all(
-                        tool_calls,
-                        {
-                            k: f"Governance refused this action: {v}"
-                            for k, v in refusals.items()
-                        },
-                        "Governance refused this action: another tool call in the same batch was refused",
-                    ),
-                    "governance_status": GOVERNANCE_DENIED,
-                    "governance_envelope": None,
-                    "routing_verdict_cache": None,
-                }
-
-            if deferred_ids:
-                (deferred_id,) = deferred_ids.values()
-                logger.info(
-                    "Gateway requires approval for %s — batch parked as deferred_id=%s",
-                    action,
-                    deferred_id,
-                )
-                return {
-                    "messages": _answer_all(
-                        tool_calls,
-                        {},
-                        f"Awaiting human approval (deferred_id={deferred_id}); not executed.",
-                    ),
-                    "governance_status": GOVERNANCE_REQUIRE_APPROVAL,
-                    "governance_envelope": None,
-                    "deferred_id": deferred_id,
-                    "routing_verdict_cache": None,
-                }
-
-            # Execute exactly what was validated: no model-supplied deferred_id.
-            result = await func(_with_deferred_id(state, None))
-            return {
-                **result,
-                "governance_status": GOVERNANCE_ALLOWED,
-                "governance_envelope": verdicts[-1] if verdicts else None,
-                "routing_verdict_cache": None,
-            }
-
-        return wrapper
-
-    return decorator
+    return result

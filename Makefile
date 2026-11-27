@@ -121,6 +121,8 @@ lint:
 	@uv run python scripts/check_model_free_install.py
 	@echo "==> Verifying CAGE Client SDK dual-tree parity..."
 	@uv run python scripts/check_client_sdk_sync.py --verbose
+	@echo "==> Checking fail-closed test reachability markers (@pytest.mark.covers)..."
+	@uv run python scripts/check_fail_closed_coverage.py --verbose
 	@echo "✅ Lint checks passed."
 
 ## Run security scanning (lockfile check, Bandit SAST, pip-audit CVEs, Semgrep)
@@ -140,10 +142,14 @@ security:
 
 ## Run documentation integrity gates (mirrors CI gate G9; scope is DOC_SCOPE in the script)
 docs-check:
+	@echo "==> Checking discovered agent-injected instruction & rule file 24,000-byte truncation cap..."
+	@uv run python scripts/check_agents_size.py --verbose
 	@echo "==> Checking documentation references (broken links, dangling paths, stale symbols)..."
 	@uv run python scripts/check_doc_references.py
 	@echo "==> Checking monitoring, Lula, OSCAL, and TTM mechanism references..."
 	@uv run python scripts/check_mechanism_references.py --verbose
+	@echo "==> Checking SECURITY.md published-advisory fix traces against main ancestry..."
+	@uv run python scripts/check_advisory_traces.py --verbose
 	@echo "==> Checking vendor brand leakage into executable code..."
 	@uv run python scripts/check_vendor_brands.py --verbose
 	@echo "==> Checking domain literal leakage into kernel/integrations..."
@@ -156,20 +162,21 @@ docs-check:
 
 ## Fast local test run (no coverage, parallel) — the default developer shortcut
 test-fast:
-	uv run pytest tests/ -m "local or unit" -n auto --dist loadscope --no-cov -p no:langsmith -q
+	uv run pytest tests/ packages/cage-client/tests/ -m "local or unit" -n auto --dist loadscope --no-cov -p no:langsmith -q
 
 ## Run only tests that failed in the last run (fastest feedback loop)
 test-last-failed:
-	uv run pytest tests/ -m "local or unit" --lf --dist loadscope -n auto -q
+	uv run pytest tests/ packages/cage-client/tests/ -m "local or unit" --lf --dist loadscope -n auto -q
 
 ## Full local run with coverage (mirrors CI)
 test-coverage:
-	uv run pytest tests/ -m "local or unit" -n auto --dist loadscope -p no:langsmith -p no:langsmith_plugin --cov=src --cov-config=.coveragerc --cov-report=term-missing --cov-fail-under=70
+	uv run pytest tests/ packages/cage-client/tests/ -m "local or unit" -n auto --dist loadscope -p no:langsmith -p no:langsmith_plugin --cov=src --cov=cage_client --cov=packages/cage-conformance/src/cage_conformance --cov-context=test --cov-config=.coveragerc --cov-report=term-missing --cov-fail-under=70
+	uv run python scripts/check_fail_closed_coverage.py --verify-coverage .coverage --verbose
 
 ## Randomized test order (weekly, for dependency detection)
 ## Reproduce a failure: uv run pytest --randomly-seed=last
 test-random:
-	uv run pytest tests/ -m "local or unit" -n auto --dist loadscope -p randomly --randomly-seed=0 -q
+	uv run pytest tests/ packages/cage-client/tests/ -m "local or unit" -n auto --dist loadscope -p randomly --randomly-seed=0 -q
 
 ## Default: fast run
 test: test-fast
@@ -177,7 +184,7 @@ test: test-fast
 ## Legacy alias — run local (non-infrastructure) tests verbosely
 test-integration:
 	@echo "==> Running local (non-infrastructure) tests..."
-	@uv run pytest tests/ -v --tb=short -m local
+	@uv run pytest tests/ packages/cage-client/tests/ -v --tb=short -m local
 
 ## Run live external partner integration tests (requires partner credentials)
 test-partner:

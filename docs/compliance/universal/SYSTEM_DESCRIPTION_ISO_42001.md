@@ -130,16 +130,16 @@ A `risk_score` approaching 1.0 indicates high hallucination risk. Confabulation 
 
 **Source:** [`src/gateway/governance/causal/gatekeeper.py`](../../../src/gateway/governance/causal/gatekeeper.py)
 
-The causal gatekeeper applies a marginal risk boundary to prevent trades whose causal effect estimate pushes the system into an unsafe region:
+The causal gatekeeper applies a marginal risk boundary to prevent trades whose estimated marginal causal effect exceeds the configured risk budget:
 
 ```
-(0.5 + β × amount / normalization_scale) > CAUSAL_LOCK_RISK_BOUNDARY
+(β × amount / normalization_scale) > CAUSAL_LOCK_RISK_BOUNDARY
 ```
 
-β is fitted per normalised unit of trade amount (`normalization_scale`, $10,000 for finance), so the scale cancels; on the finance synthetic telemetry the boundary trips at about $9,144.
+β is fitted per normalised unit of trade amount (`normalization_scale`, $10,000 for finance), so the scale cancels; on the finance synthetic telemetry the boundary trips at about $9,144 (`$9,143.93`).
 
 Named constants:
-- `CAUSAL_LOCK_RISK_BOUNDARY = 0.95`
+- `CAUSAL_LOCK_RISK_BOUNDARY = 0.45`
 - `CAUSAL_LOCK_P_VALUE_THRESHOLD = 0.05`
 - `CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE = 0.2` (risk score per normalised unit of treatment)
 

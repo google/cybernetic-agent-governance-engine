@@ -36,6 +36,8 @@ variables {
 
   cage_env                     = "staging"
   evidence_cold_store_location = "us-central1"
+  alert_channel                = "pubsub"
+  alert_pubsub_topic           = "projects/hitl-test-project/topics/cage-alerts"
   trusted_operator_identities  = ["risk-officer-1@cage.example", "risk-officer-2@cage.example"]
   operator_oidc_issuer         = "https://idp.cage.example"
   operator_oidc_audience       = "cage-compliance-bridge"
@@ -179,4 +181,56 @@ run "enforcing_empty_cold_store_location_is_refused" {
     kubernetes_deployment.compliance_bridge,
   ]
 }
+
+run "enforcing_console_alert_channel_is_refused" {
+  command = plan
+
+  variables {
+    alert_channel = "console"
+  }
+
+  expect_failures = [
+    kubernetes_deployment.compliance_bridge,
+  ]
+}
+
+run "enforcing_pubsub_without_topic_is_refused" {
+  command = plan
+
+  variables {
+    alert_channel      = "pubsub"
+    alert_pubsub_topic = ""
+  }
+
+  expect_failures = [
+    kubernetes_deployment.compliance_bridge,
+  ]
+}
+
+run "enforcing_webhook_without_configured_secret_is_refused" {
+  command = plan
+
+  variables {
+    alert_channel            = "webhook"
+    alert_webhook_configured = false
+  }
+
+  expect_failures = [
+    kubernetes_deployment.compliance_bridge,
+  ]
+}
+
+run "enforcing_pagerduty_without_routing_key_is_refused" {
+  command = plan
+
+  variables {
+    alert_channel                    = "pagerduty"
+    pagerduty_routing_key_configured = false
+  }
+
+  expect_failures = [
+    kubernetes_deployment.compliance_bridge,
+  ]
+}
+
 

@@ -378,11 +378,13 @@ class TestAuditIngestAuth:
         "CAGE_INTERNAL_TOKEN": "secret-token",
         "CAGE_ENV": "staging",
         "CAGE_TRUSTED_OPERATOR_IDENTITIES": "operator:auditor@example.org",
-        # Synthetic, non-secret values satisfying the POAM-018 lifespan pre-flight.
+        # Synthetic, non-secret values satisfying the POAM-018 & POAM-2026-230 lifespan pre-flights.
         "LANGFUSE_COMPLIANCE_PUBLIC_KEY": "synthetic-compliance-public",
         "LANGFUSE_COMPLIANCE_SECRET_KEY": "synthetic-compliance-secret",
         "LANGFUSE_PUBLIC_KEY": "synthetic-app-public",
         "LANGFUSE_SECRET_KEY": "synthetic-app-secret",
+        "ALERT_CHANNEL": "pubsub",
+        "COMPLIANCE_ALERT_PUBSUB_TOPIC": "projects/cage-test-01/topics/cage-alerts",
     }
 
     @pytest.fixture(autouse=True)

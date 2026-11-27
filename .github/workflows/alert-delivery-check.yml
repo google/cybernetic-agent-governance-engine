@@ -1,0 +1,109 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Independent Scheduled Alert-Delivery Verification (POAM-2026-230 Property 4)
+#
+# Runs outside GKE, Cloud Monitoring, and Cloud Pub/Sub using keyless GitHub OIDC
+# Workload Identity Federation (`google_service_account.alert_verifier` in
+# `infra/targets/gcp-gke/wif.tf`). Any failure in:
+#   - runtime AlertPolicy channel bindings or channel-set equality,
+#   - synthetic `alert_pipeline_heartbeat` delivery to the terminal Pub/Sub sink, or
+#   - periodic in-cluster `compliance-bridge` notifier heartbeat freshness
+# fails this GitHub Actions workflow run directly — surfacing through GitHub's
+# independent workflow-failure channel rather than depending on the alert
+# channels under test.
+
+name: Scheduled Alert Delivery Verification
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      emit_ondemand_bridge_probe:
+        description: "Also publish an immediate synthetic compliance-bridge probe to CAGE_ALERT_VERIFY_PUBSUB_TOPIC"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: alert-delivery-check
+  cancel-in-progress: false
+
+jobs:
+  verify-alert-delivery:
+    name: Verify Cloud Monitoring & Notifier Pub/Sub Delivery
+    if: github.repository == 'google/cybernetic-agent-governance-engine' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Fail closed if verifier WIF or target variables are unset
+        env:
+          WIF_PROVIDER: ${{ secrets.CAGE_ALERT_VERIFIER_WIF_PROVIDER || vars.CAGE_ALERT_VERIFIER_WIF_PROVIDER }}
+          WIF_SA: ${{ secrets.CAGE_ALERT_VERIFIER_SERVICE_ACCOUNT || vars.CAGE_ALERT_VERIFIER_SERVICE_ACCOUNT }}
+          TARGET_PROJECT: ${{ secrets.CAGE_ALERT_VERIFY_GCP_PROJECT || vars.CAGE_ALERT_VERIFY_GCP_PROJECT }}
+          TARGET_SUBSCRIPTION: ${{ secrets.CAGE_ALERT_VERIFY_PUBSUB_SUBSCRIPTION || vars.CAGE_ALERT_VERIFY_PUBSUB_SUBSCRIPTION }}
+        run: |
+          set -euo pipefail
+          missing=()
+          [[ -z "${WIF_PROVIDER}" ]] && missing+=("CAGE_ALERT_VERIFIER_WIF_PROVIDER")
+          [[ -z "${WIF_SA}" ]] && missing+=("CAGE_ALERT_VERIFIER_SERVICE_ACCOUNT")
+          [[ -z "${TARGET_PROJECT}" ]] && missing+=("CAGE_ALERT_VERIFY_GCP_PROJECT")
+          [[ -z "${TARGET_SUBSCRIPTION}" ]] && missing+=("CAGE_ALERT_VERIFY_PUBSUB_SUBSCRIPTION")
+          if (( ${#missing[@]} > 0 )); then
+            echo "::error::[POAM-2026-230] Missing required repository secrets/variables for independent alert-delivery verification: ${missing[*]}"
+            exit 1
+          fi
+
+      - name: Mint short-lived GCP access token via keyless WIF
+        id: gcp_auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ secrets.CAGE_ALERT_VERIFIER_WIF_PROVIDER || vars.CAGE_ALERT_VERIFIER_WIF_PROVIDER }}
+          service_account: ${{ secrets.CAGE_ALERT_VERIFIER_SERVICE_ACCOUNT || vars.CAGE_ALERT_VERIFIER_SERVICE_ACCOUNT }}
+          token_format: access_token
+          create_credentials_file: false
+          export_environment_variables: false
+
+      - name: Verify runtime AlertPolicy bindings and terminal Pub/Sub heartbeat delivery
+        env:
+          GOOGLE_OAUTH_ACCESS_TOKEN: ${{ steps.gcp_auth.outputs.access_token }}
+          TARGET_PROJECT: ${{ secrets.CAGE_ALERT_VERIFY_GCP_PROJECT || vars.CAGE_ALERT_VERIFY_GCP_PROJECT }}
+          TARGET_CLUSTER: ${{ secrets.CAGE_ALERT_VERIFY_CLUSTER_NAME || vars.CAGE_ALERT_VERIFY_CLUSTER_NAME || 'cage-staging' }}
+          TARGET_SUBSCRIPTION: ${{ secrets.CAGE_ALERT_VERIFY_PUBSUB_SUBSCRIPTION || vars.CAGE_ALERT_VERIFY_PUBSUB_SUBSCRIPTION }}
+          EXPECTED_CHANNEL: ${{ secrets.CAGE_ALERT_VERIFY_EXPECTED_CHANNEL || vars.CAGE_ALERT_VERIFY_EXPECTED_CHANNEL }}
+          TARGET_TOPIC: ${{ secrets.CAGE_ALERT_VERIFY_PUBSUB_TOPIC || vars.CAGE_ALERT_VERIFY_PUBSUB_TOPIC }}
+          EMIT_PROBE: ${{ inputs.emit_ondemand_bridge_probe || false }}
+        run: |
+          set -euo pipefail
+          extra_args=()
+          if [[ -n "${EXPECTED_CHANNEL}" ]]; then
+            extra_args+=(--expected-channel "${EXPECTED_CHANNEL}")
+          fi
+          if [[ "${EMIT_PROBE}" == "true" && -n "${TARGET_TOPIC}" ]]; then
+            extra_args+=(--emit-bridge-heartbeat-topic "${TARGET_TOPIC}")
+          fi
+          python3 scripts/verify_alert_delivery.py \
+            --project "${TARGET_PROJECT}" \
+            --cluster-name "${TARGET_CLUSTER}" \
+            --subscription "${TARGET_SUBSCRIPTION}" \
+            "${extra_args[@]}"

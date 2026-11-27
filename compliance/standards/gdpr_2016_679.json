@@ -1,0 +1,784 @@
+{
+  "schema_version": 1,
+  "standard": "gdpr",
+  "title": "Regulation (EU) 2016/679 (General Data Protection Regulation)",
+  "source_url": "https://eur-lex.europa.eu/eli/reg/2016/679/oj",
+  "version": "Regulation (EU) 2016/679, OJ L 119, 4 May 2016",
+  "retrieved": "2026-11-23",
+  "source_quality": "primary",
+  "source_sha256": "962539af03738bf552319ff4ce42d69e5f95a576307c4dfed7bf87e81b646b9d",
+  "source_notes": "Verified against the Official Journal English XHTML text retrieved from EUR-Lex on 2026-11-23 (source_sha256 is the XHTML body digest). All 99 article titles (Articles 1–99) are verbatim Official Journal headings. Because Official Journal paragraphs and points carry no formal headings, the 25 paragraph/point rows (4(1), 5(1), 5(1)(a)–5(1)(f), 5(2), 6(1), 9(1), 9(2), 17(3), 17(3)(b), 17(3)(e), 22(1), 22(2), 22(2)(a)–22(2)(c), 22(3), 22(4), 35(1), 35(3), 35(3)(a)) use editorial descriptors or Official Journal parenthetical labels verified against the primary clause text.",
+  "license": "European Union legislation published in the Official Journal of the European Union; reuse authorized under Commission Decision 2011/833/EU (EUR-Lex, © European Union, 1998–2026). Only identifiers, article titles, and clause descriptors are retained here.",
+  "complete": true,
+  "rows": [
+    {
+      "id": "1",
+      "title": "Subject-matter and objectives",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "2",
+      "title": "Material scope",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "3",
+      "title": "Territorial scope",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "4",
+      "title": "Definitions",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "4(1)",
+      "title": "Definition of personal data",
+      "status": "active",
+      "kind": "point"
+    },
+    {
+      "id": "5",
+      "title": "Principles relating to processing of personal data",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "5(1)",
+      "title": "Principles relating to processing of personal data",
+      "status": "active",
+      "kind": "paragraph",
+      "children_complete": true
+    },
+    {
+      "id": "5(1)(a)",
+      "title": "Lawfulness, fairness and transparency",
+      "status": "active",
+      "kind": "point"
+    },
+    {
+      "id": "5(1)(b)",
+      "title": "Purpose limitation",
+      "status": "active",
+      "kind": "point"
+    },
+    {
+      "id": "5(1)(c)",
+      "title": "Data minimisation",
+      "status": "active",
+      "kind": "point"
+    },
+    {
+      "id": "5(1)(d)",
+      "title": "Accuracy",
+      "status": "active",
+      "kind": "point"
+    },
+    {
+      "id": "5(1)(e)",
+      "title": "Storage limitation",
+      "status": "active",
+      "kind": "point"
+    },
+    {
+      "id": "5(1)(f)",
+      "title": "Integrity and confidentiality",
+      "status": "active",
+      "kind": "point"
+    },
+    {
+      "id": "5(2)",
+      "title": "Accountability",
+      "status": "active",
+      "kind": "paragraph"
+    },
+    {
+      "id": "6",
+      "title": "Lawfulness of processing",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "6(1)",
+      "title": "Lawful bases for processing",
+      "status": "active",
+      "kind": "paragraph"
+    },
+    {
+      "id": "7",
+      "title": "Conditions for consent",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "8",
+      "title": "Conditions applicable to child's consent in relation to information society services",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "9",
+      "title": "Processing of special categories of personal data",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "9(1)",
+      "title": "Prohibition on processing special categories of personal data",
+      "status": "active",
+      "kind": "paragraph"
+    },
+    {
+      "id": "9(2)",
+      "title": "Exceptions permitting processing of special categories",
+      "status": "active",
+      "kind": "paragraph"
+    },
+    {
+      "id": "10",
+      "title": "Processing of personal data relating to criminal convictions and offences",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "11",
+      "title": "Processing which does not require identification",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "12",
+      "title": "Transparent information, communication and modalities for the exercise of the rights of the data subject",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "13",
+      "title": "Information to be provided where personal data are collected from the data subject",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "14",
+      "title": "Information to be provided where personal data have not been obtained from the data subject",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "15",
+      "title": "Right of access by the data subject",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "16",
+      "title": "Right to rectification",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "17",
+      "title": "Right to erasure ('right to be forgotten')",
+      "status": "active",
+      "kind": "article",
+      "aliases": [
+        "Right to be forgotten"
+      ]
+    },
+    {
+      "id": "17(3)",
+      "title": "Exceptions to the right to erasure",
+      "status": "active",
+      "kind": "paragraph"
+    },
+    {
+      "id": "17(3)(b)",
+      "title": "Compliance with a legal obligation or public-interest task",
+      "status": "active",
+      "kind": "point"
+    },
+    {
+      "id": "17(3)(e)",
+      "title": "Establishment, exercise or defence of legal claims",
+      "status": "active",
+      "kind": "point"
+    },
+    {
+      "id": "18",
+      "title": "Right to restriction of processing",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "19",
+      "title": "Notification obligation regarding rectification or erasure of personal data or restriction of processing",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "20",
+      "title": "Right to data portability",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "21",
+      "title": "Right to object",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "22",
+      "title": "Automated individual decision-making, including profiling",
+      "status": "active",
+      "kind": "article",
+      "aliases": [
+        "Automated decision-making",
+        "Profiling"
+      ],
+      "children_complete": true
+    },
+    {
+      "id": "22(1)",
+      "title": "Right not to be subject to solely automated decisions with legal or similarly significant effects",
+      "status": "active",
+      "kind": "paragraph"
+    },
+    {
+      "id": "22(2)",
+      "title": "Exceptions to the prohibition on solely automated decisions",
+      "status": "active",
+      "kind": "paragraph",
+      "children_complete": true
+    },
+    {
+      "id": "22(2)(a)",
+      "title": "Necessary for entering into or performance of a contract",
+      "status": "active",
+      "kind": "point"
+    },
+    {
+      "id": "22(2)(b)",
+      "title": "Authorised by Union or Member State law",
+      "status": "active",
+      "kind": "point"
+    },
+    {
+      "id": "22(2)(c)",
+      "title": "Based on the data subject's explicit consent",
+      "status": "active",
+      "kind": "point",
+      "aliases": [
+        "Explicit consent"
+      ]
+    },
+    {
+      "id": "22(3)",
+      "title": "Safeguards including human intervention and right to contest",
+      "status": "active",
+      "kind": "paragraph"
+    },
+    {
+      "id": "22(4)",
+      "title": "Restriction on automated decisions based on special categories",
+      "status": "active",
+      "kind": "paragraph"
+    },
+    {
+      "id": "23",
+      "title": "Restrictions",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "24",
+      "title": "Responsibility of the controller",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "25",
+      "title": "Data protection by design and by default",
+      "status": "active",
+      "kind": "article",
+      "aliases": [
+        "Privacy by design"
+      ]
+    },
+    {
+      "id": "26",
+      "title": "Joint controllers",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "27",
+      "title": "Representatives of controllers or processors not established in the Union",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "28",
+      "title": "Processor",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "29",
+      "title": "Processing under the authority of the controller or processor",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "30",
+      "title": "Records of processing activities",
+      "status": "active",
+      "kind": "article",
+      "aliases": [
+        "ROPA"
+      ]
+    },
+    {
+      "id": "31",
+      "title": "Cooperation with the supervisory authority",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "32",
+      "title": "Security of processing",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "33",
+      "title": "Notification of a personal data breach to the supervisory authority",
+      "status": "active",
+      "kind": "article",
+      "aliases": [
+        "Breach notification"
+      ]
+    },
+    {
+      "id": "34",
+      "title": "Communication of a personal data breach to the data subject",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "35",
+      "title": "Data protection impact assessment",
+      "status": "active",
+      "kind": "article",
+      "aliases": [
+        "DPIA"
+      ]
+    },
+    {
+      "id": "35(1)",
+      "title": "DPIA required where processing is likely to result in high risk",
+      "status": "active",
+      "kind": "paragraph"
+    },
+    {
+      "id": "35(3)",
+      "title": "Cases in which a DPIA is required",
+      "status": "active",
+      "kind": "paragraph"
+    },
+    {
+      "id": "35(3)(a)",
+      "title": "Systematic and extensive automated evaluation including profiling",
+      "status": "active",
+      "kind": "point"
+    },
+    {
+      "id": "36",
+      "title": "Prior consultation",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "37",
+      "title": "Designation of the data protection officer",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "38",
+      "title": "Position of the data protection officer",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "39",
+      "title": "Tasks of the data protection officer",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "40",
+      "title": "Codes of conduct",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "41",
+      "title": "Monitoring of approved codes of conduct",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "42",
+      "title": "Certification",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "43",
+      "title": "Certification bodies",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "44",
+      "title": "General principle for transfers",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "45",
+      "title": "Transfers on the basis of an adequacy decision",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "46",
+      "title": "Transfers subject to appropriate safeguards",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "47",
+      "title": "Binding corporate rules",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "48",
+      "title": "Transfers or disclosures not authorised by Union law",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "49",
+      "title": "Derogations for specific situations",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "50",
+      "title": "International cooperation for the protection of personal data",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "51",
+      "title": "Supervisory authority",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "52",
+      "title": "Independence",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "53",
+      "title": "General conditions for the members of the supervisory authority",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "54",
+      "title": "Rules on the establishment of the supervisory authority",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "55",
+      "title": "Competence",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "56",
+      "title": "Competence of the lead supervisory authority",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "57",
+      "title": "Tasks",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "58",
+      "title": "Powers",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "59",
+      "title": "Activity reports",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "60",
+      "title": "Cooperation between the lead supervisory authority and the other supervisory authorities concerned",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "61",
+      "title": "Mutual assistance",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "62",
+      "title": "Joint operations of supervisory authorities",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "63",
+      "title": "Consistency mechanism",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "64",
+      "title": "Opinion of the Board",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "65",
+      "title": "Dispute resolution by the Board",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "66",
+      "title": "Urgency procedure",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "67",
+      "title": "Exchange of information",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "68",
+      "title": "European Data Protection Board",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "69",
+      "title": "Independence",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "70",
+      "title": "Tasks of the Board",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "71",
+      "title": "Reports",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "72",
+      "title": "Procedure",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "73",
+      "title": "Chair",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "74",
+      "title": "Tasks of the Chair",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "75",
+      "title": "Secretariat",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "76",
+      "title": "Confidentiality",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "77",
+      "title": "Right to lodge a complaint with a supervisory authority",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "78",
+      "title": "Right to an effective judicial remedy against a supervisory authority",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "79",
+      "title": "Right to an effective judicial remedy against a controller or processor",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "80",
+      "title": "Representation of data subjects",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "81",
+      "title": "Suspension of proceedings",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "82",
+      "title": "Right to compensation and liability",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "83",
+      "title": "General conditions for imposing administrative fines",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "84",
+      "title": "Penalties",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "85",
+      "title": "Processing and freedom of expression and information",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "86",
+      "title": "Processing and public access to official documents",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "87",
+      "title": "Processing of the national identification number",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "88",
+      "title": "Processing in the context of employment",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "89",
+      "title": "Safeguards and derogations relating to processing for archiving purposes in the public interest, scientific or historical research purposes or statistical purposes",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "90",
+      "title": "Obligations of secrecy",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "91",
+      "title": "Existing data protection rules of churches and religious associations",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "92",
+      "title": "Exercise of the delegation",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "93",
+      "title": "Committee procedure",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "94",
+      "title": "Repeal of Directive 95/46/EC",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "95",
+      "title": "Relationship with Directive 2002/58/EC",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "96",
+      "title": "Relationship with previously concluded Agreements",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "97",
+      "title": "Commission reports",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "98",
+      "title": "Review of other Union legal acts on data protection",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "99",
+      "title": "Entry into force and application",
+      "status": "active",
+      "kind": "article"
+    }
+  ]
+}

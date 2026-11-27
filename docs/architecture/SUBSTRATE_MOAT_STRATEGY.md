@@ -137,7 +137,7 @@ However, there is no **public substrate contract** — a versioned, documented A
 **What is missing:**
 1. A **Substrate Contract Specification** — a versioned OpenAPI/gRPC schema defining the ingress surface for external policy specifications.
 2. A **Policy Version Pinning API** — the `policy_version_id` parameter in [`validate_action()`](../../src/gateway/governance/governor/governor.py) already enforces version pinning against `ControlRegistry.active_hash`, but this is not exposed as a public contract that external policy authors can use to pin their ACS/AAIF specs to a specific CAGE baseline.
-3. A **Developer SDK** — a thin client library that wraps the governance endpoint. *Partially closed:* the Python [`cage-client`](../../packages/cage-client/README.md) package (v0.2.0) wraps `POST /governance/validate-action` (`CageClient.validate_action`), fails closed, and ships a `@cage_guard` LangGraph adapter. No TypeScript SDK exists.
+3. A **Developer SDK** — a thin client library that wraps the governance endpoints. *Partially closed:* the Python [`cage-client`](../../packages/cage-client/README.md) package (`v0.5.0`) wraps preview verification over `POST /governance/validate-action` (`CageClient.validate_action`) and fails closed; the LangGraph node factory over preview and committing execution is tracked in `POAM-2026-251`, and no TypeScript SDK exists.
 
 ---
 

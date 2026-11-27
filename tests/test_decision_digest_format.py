@@ -324,6 +324,9 @@ def test_validator_accepts_a_sha256_hexdigest() -> None:
 
 
 @pytest.mark.parametrize("value", _NON_DIGESTS, ids=_NON_DIGEST_IDS)
+@pytest.mark.covers(
+    "src.gateway.governance.seams.digests:require_sha256_hex#raise ValueError("
+)
 def test_validator_refuses_a_non_digest_naming_the_field(value: Any) -> None:
     assert not is_sha256_hex(value)
     with pytest.raises(ValueError, match="SHA-256") as refused:
@@ -333,6 +336,9 @@ def test_validator_refuses_a_non_digest_naming_the_field(value: Any) -> None:
     assert _DIGEST not in message, "the refusal echoed the refused value"
 
 
+@pytest.mark.covers(
+    "src.gateway.governance.seams.digests:require_sha256_hex#raise ValueError("
+)
 async def test_validator_refuses_a_seal_without_echoing_it(seal: str) -> None:
     with pytest.raises(ValueError) as refused:
         require_sha256_hex(seal, field="governance_decision_digest")
@@ -357,6 +363,10 @@ def test_digest_module_imports_only_the_standard_library() -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.covers(
+    "src.gateway.governance.seams.actuation:ExecutionClearance.__post_init__",
+    "src.gateway.governance.seams.digests:require_sha256_hex#raise ValueError(",
+)
 async def test_clearance_refuses_through_the_shared_validator(seal: str) -> None:
     with pytest.raises(ValueError) as refused:
         _clearance(digest=seal, routing_seal=seal)
@@ -389,6 +399,10 @@ def test_directive_needs_exactly_one_digest() -> None:
         i for v, i in zip(_NON_DIGESTS, _NON_DIGEST_IDS, strict=True) if v is not None
     ],
 )
+@pytest.mark.covers(
+    "src.gateway.governance.seams.quarantine:QuarantineDirective.__post_init__#require_sha256_hex(",
+    "src.gateway.governance.seams.digests:require_sha256_hex#raise ValueError(",
+)
 def test_directive_refuses_a_non_digest_in_either_field(field: str, value: Any) -> None:
     with pytest.raises(ValueError, match="SHA-256") as refused:
         _directive(**{field: value})
@@ -396,6 +410,10 @@ def test_directive_refuses_a_non_digest_in_either_field(field: str, value: Any) 
 
 
 @pytest.mark.parametrize("field", _FIELDS)
+@pytest.mark.covers(
+    "src.gateway.governance.seams.quarantine:QuarantineDirective.__post_init__#require_sha256_hex(",
+    "src.gateway.governance.seams.digests:require_sha256_hex#raise ValueError(",
+)
 async def test_directive_refuses_a_seal_in_either_field(seal: str, field: str) -> None:
     with pytest.raises(ValueError, match="SHA-256") as refused:
         _directive(**{field: seal})
@@ -482,6 +500,9 @@ async def test_refusal_triggered_quarantine_records_the_refusal_proof_hash(
     assert denied.value.payload["quarantined"] is True
 
 
+@pytest.mark.covers(
+    "src.gateway.governance.governor.verdicts:handle_deny#QUARANTINE_DIRECTIVE_INVALID"
+)
 async def test_an_invalid_refusal_hash_refuses_the_quarantine_not_the_deny(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -559,6 +580,10 @@ def test_ocsf_accepts_a_seal_digest_at_the_top_and_nested() -> None:
         if isinstance(v, str)
     ],
 )
+@pytest.mark.covers(
+    "src.integrations.actuator_02.ocsf_ingestor:OcsfEventModel._v_governance_decision_digest",
+    "src.gateway.governance.seams.digests:require_sha256_hex#raise ValueError(",
+)
 def test_ocsf_refuses_a_non_digest_without_echoing_it(value: str) -> None:
     with pytest.raises(ValidationError) as refused:
         OcsfEventModel.model_validate(_ocsf(governance_decision_digest=value))
@@ -569,6 +594,10 @@ def test_ocsf_refuses_a_non_digest_without_echoing_it(value: str) -> None:
         assert value.strip() not in repr(refused.value)
 
 
+@pytest.mark.covers(
+    "src.integrations.actuator_02.ocsf_ingestor:OcsfEventModel._v_governance_decision_digest",
+    "src.gateway.governance.seams.digests:require_sha256_hex#raise ValueError(",
+)
 async def test_ocsf_refuses_a_seal_without_echoing_it(seal: str) -> None:
     with pytest.raises(ValidationError) as refused:
         OcsfEventModel.model_validate(_ocsf(governance_decision_digest=seal))

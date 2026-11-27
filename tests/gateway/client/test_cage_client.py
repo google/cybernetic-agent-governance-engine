@@ -60,7 +60,7 @@ from src.gateway.governance.contracts import (
     ViolationKind,
 )
 from src.gateway.governance.decisions import GovernanceDecision
-from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
+from src.gateway.governance.governance_envelope import envelope_action_hash
 from src.gateway.governance.governor.errors import GovernanceError
 from src.gateway.governance.governor.governor import SymbolicGovernor
 from src.gateway.governance.governor.verdicts import build_refusal_receipt
@@ -120,6 +120,7 @@ def _build_signed_allow_envelope(
     now: datetime | None = None,
     ttl_s: float = 300.0,
     payload_overrides: dict[str, Any] | None = None,
+    subject_overrides: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Build a fresh, subject-bound, cryptographically signed v3.0 envelope."""
     params = parameters if parameters is not None else {"symbol": "AAPL", "amount": 100}
@@ -143,6 +144,7 @@ def _build_signed_allow_envelope(
             "action": action,
             "action_hash": compute_expected_action_hash(action, params),
             "agent_id": "test-agent",
+            **(subject_overrides or {}),
         },
         "governance_context": {
             "policy_version": "sha256:policy01",
@@ -334,16 +336,20 @@ async def test_validate_action_defer_raises_deferral_pending(
     cage_client: CageClient,
     mock_gateway_url: str,
 ) -> None:
-    """Test HTTP 200 DEFER envelope raises DeferralPending with ticket_id."""
-    expires_at = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(hours=4)
+    """Test HTTP 200 DEFER envelope raises DeferralPending with separated ticket TTL."""
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    envelope_exp = now + timedelta(minutes=5)
+    defer_exp = now + timedelta(hours=4)
     envelope_data = create_mock_allow_envelope()
-    envelope_data["expires_at"] = expires_at.isoformat()
+    envelope_data["issued_at"] = now.isoformat()
+    envelope_data["expires_at"] = envelope_exp.isoformat()
     envelope_data["payload"] = {
         "verdict": "DEFER",
         "violations": [],
         "defer_token": "defer-ticket-789",
         "defer_reason": "Action requires manual approval",
         "retry_after_seconds": 14400,
+        "defer_expires_at": defer_exp.isoformat(),
     }
 
     respx.post(f"{mock_gateway_url}/governance/validate-action").mock(
@@ -364,11 +370,17 @@ async def test_validate_action_defer_raises_deferral_pending(
     assert exc.ticket_id == "defer-ticket-789"
     assert exc.defer_reason == "Action requires manual approval"
     assert exc.ttl_seconds == 14400
-    assert isinstance(exc.expires_at, datetime)
-    assert exc.expires_at > datetime.now(timezone.utc)
+    assert exc.defer_expires_at == defer_exp
+    assert exc.expires_at == defer_exp
+    assert exc.envelope_expires_at == envelope_exp
+    assert exc.defer_expires_at > datetime.now(timezone.utc) + timedelta(hours=3)
 
 
 @respx.mock
+@pytest.mark.covers(
+    "cage_client.core:CageClient.validate_action#Failed to reach CAGE Gateway",
+    "cage_client.core:CageClient.validate_action#Gateway server error (status",
+)
 async def test_validate_action_transport_failure_fails_closed(
     cage_client: CageClient,
     mock_gateway_url: str,
@@ -414,6 +426,9 @@ def test_routing_seal_secret_rejected(mock_gateway_url: str) -> None:
         )
 
 
+@pytest.mark.covers(
+    "cage_client.transport:create_mtls_transport#Both cert_path and key_path must be provided together"
+)
 def test_create_mtls_transport_partial_cert_or_key_fails_closed() -> None:
     """Half-configured mTLS (cert without key or key without cert) raises ValueError (#533)."""
     with pytest.raises(
@@ -428,6 +443,9 @@ def test_create_mtls_transport_partial_cert_or_key_fails_closed() -> None:
 
 
 @respx.mock
+@pytest.mark.covers(
+    "cage_client.core:CageClient._mediate_deny_verdict#DENY envelope missing required non-blank"
+)
 async def test_deny_response_missing_audit_id_fails_closed(
     cage_client: CageClient,
     mock_gateway_url: str,
@@ -462,6 +480,9 @@ async def test_deny_response_missing_audit_id_fails_closed(
 
 
 @respx.mock
+@pytest.mark.covers(
+    "cage_client.core:CageClient._mediate_defer_verdict#DEFER envelope missing required"
+)
 async def test_defer_response_missing_ticket_id_fails_closed(
     cage_client: CageClient,
     mock_gateway_url: str,
@@ -493,6 +514,9 @@ async def test_defer_response_missing_ticket_id_fails_closed(
 
 
 @respx.mock
+@pytest.mark.covers(
+    "cage_client.core:CageClient._extract_envelope_dict#missing required 'envelope' field"
+)
 async def test_allow_response_missing_envelope_fails_closed(
     cage_client: CageClient,
     mock_gateway_url: str,
@@ -520,6 +544,9 @@ async def test_allow_response_missing_envelope_fails_closed(
 
 
 @respx.mock
+@pytest.mark.covers(
+    "cage_client.core:CageClient.validate_action#Unexpected gateway response (status"
+)
 async def test_unexpected_status_code_fails_closed(
     cage_client: CageClient,
     mock_gateway_url: str,
@@ -626,6 +653,10 @@ async def test_validate_action_http_200_require_approval_raises_deferral_pending
 
 
 @respx.mock
+@pytest.mark.covers(
+    "cage_client.core:CageClient._handle_allow_response#self._mediate_defer_verdict(envelope)",
+    "cage_client.core:CageClient._mediate_defer_verdict#DEFER envelope missing required",
+)
 async def test_validate_action_http_200_require_approval_unpersisted_fails_closed(
     cage_client: CageClient,
     mock_gateway_url: str,
@@ -702,6 +733,9 @@ async def test_validate_action_http_200_narrow_raises_policy_violation(
 
 
 @respx.mock
+@pytest.mark.covers(
+    "cage_client.core:CageClient._handle_allow_response#unrecognised verdict"
+)
 @pytest.mark.parametrize("verdict", [None, "ESCALATE"])
 async def test_validate_action_http_200_unrecognised_verdict_fails_closed(
     cage_client: CageClient,
@@ -735,7 +769,6 @@ async def test_validate_action_http_200_unrecognised_verdict_fails_closed(
 
 def test_jcs_parity_against_kernel_canonicalizer() -> None:
     """Vendored _jcs in both clients is byte-identical to kernel jcs_canonicalize_plan."""
-    builder = GovernanceEnvelopeBuilder()
     vectors: list[tuple[str, dict[str, Any]]] = [
         (
             "execute_wire",
@@ -773,11 +806,15 @@ def test_jcs_parity_against_kernel_canonicalizer() -> None:
         client_bytes = client_jcs_canonicalize({"action": action, "params": params})
         assert client_bytes == kernel_bytes
 
-        expected_hash = builder._compute_action_hash(action, params)
+        expected_hash = envelope_action_hash(action, params)
         assert compute_expected_action_hash(action, params) == expected_hash
 
 
 @respx.mock
+@pytest.mark.covers(
+    "cage_client.jwks:JwksKeyResolver.resolve_key#if resolved is None:",
+    "cage_client.jwks:JwksKeyResolver.resolve_key#JWKS unknown-kid refresh cooldown active",
+)
 async def test_validate_action_unknown_kid_fails_closed(
     mock_gateway_url: str,
     patched_httpx_no_http2: None,
@@ -927,55 +964,63 @@ async def test_client_acts_only_on_the_values_that_were_signed(
     )
     valid_json = json.dumps(valid)
 
+    def _corr_of(req: httpx.Request) -> str:
+        return str(json.loads(req.content)["correlation_id"])
+
     def signed(body: dict[str, Any]) -> str:
         return json.dumps(
             _sign_client_envelope(body, priv_key=priv, kid=kid, alg="ES256")
         )
 
-    def signed_payload(**payload: Any) -> str:
+    def signed_with_corr(body: dict[str, Any], corr: str) -> str:
+        updated = {**body, "payload": {**body["payload"], "correlation_id": corr}}
+        return signed(updated)
+
+    def signed_payload(corr: str, **payload: Any) -> str:
         return json.dumps(
             _build_signed_allow_envelope(
                 action="query_portfolio",
                 parameters=params,
                 priv_key=priv,
                 kid=kid,
-                payload_overrides=payload,
+                payload_overrides={**payload, "correlation_id": corr},
             )
         )
 
     def relabelled(**signature: str) -> str:
         return json.dumps({**valid, "signature": {**valid["signature"], **signature}})
 
-    cases: list[tuple[str, str, type[CageGatewayError], str]] = [
+    cases: list[tuple[str, Any, type[CageGatewayError], str]] = [
         (
             "padded key beside the signed DENY",
-            signed_payload(
-                **{"verdict": "DENY", "decision": "DENY", "verdict ": "ALLOW"}
+            lambda corr: signed_payload(
+                corr, **{"verdict": "DENY", "decision": "DENY", "verdict ": "ALLOW"}
             ),
             PolicyViolationException,
             "POLICY_DENIED",
         ),
         (
             "padded subject.action",
-            signed(
+            lambda corr: signed_with_corr(
                 {
                     **valid,
                     "subject": {**valid["subject"], "action": " query_portfolio "},
-                }
+                },
+                corr,
             ),
             RoutingSealVerificationError,
             "subject.action mismatch",
         ),
         (
             "lower-case verdict",
-            signed_payload(verdict="allow", decision="allow"),
+            lambda corr: signed_payload(corr, verdict="allow", decision="allow"),
             CageGatewayError,
             "unrecognised verdict 'allow'",
         ),
         *[
             (
                 f"expires_at {value!r}",
-                signed({**valid, "expires_at": value}),
+                lambda _corr, v=value: signed({**valid, "expires_at": v}),
                 CageGatewayError,
                 "Failed to parse governance envelope",
             )
@@ -983,25 +1028,29 @@ async def test_client_acts_only_on_the_values_that_were_signed(
         ],
         (
             "padded kid",
-            relabelled(kid=f" {kid}"),
+            lambda _corr: relabelled(kid=f" {kid}"),
             RoutingSealVerificationError,
             "unknown kid",
         ),
         (
             "padded signature value",
-            relabelled(value=f"{valid['signature']['value']} "),
+            lambda _corr: relabelled(value=f"{valid['signature']['value']} "),
             RoutingSealVerificationError,
             "Invalid base64url encoding",
         ),
         (
             "repeated key",
-            valid_json.replace('"payload": {', '"payload": {"verdict": "DENY", ', 1),
+            lambda _corr: valid_json.replace(
+                '"payload": {', '"payload": {"verdict": "DENY", ', 1
+            ),
             RoutingSealVerificationError,
             "duplicate JSON object key 'verdict'",
         ),
         (
             "NaN",
-            valid_json.replace('"payload": {', '"payload": {"score": NaN, ', 1),
+            lambda _corr: valid_json.replace(
+                '"payload": {', '"payload": {"score": NaN, ', 1
+            ),
             RoutingSealVerificationError,
             "non-finite JSON number NaN",
         ),
@@ -1011,14 +1060,22 @@ async def test_client_acts_only_on_the_values_that_were_signed(
     async with CageClient(
         gateway_url=mock_gateway_url, public_keys={kid: pem}
     ) as client:
-        route.mock(return_value=httpx.Response(200, content=valid_json.encode()))
+        route.mock(
+            side_effect=lambda req: httpx.Response(
+                200, content=signed_with_corr(valid, _corr_of(req)).encode()
+            )
+        )
         allowed = await client.validate_action(
             action="query_portfolio", parameters=params, agent_id="test-agent"
         )
         assert allowed.payload["verdict"] == "ALLOW"
 
-        for name, body, expected, message in cases:
-            route.mock(return_value=httpx.Response(200, content=body.encode()))
+        for name, body_fn, expected, message in cases:
+            route.mock(
+                side_effect=lambda req, fn=body_fn: httpx.Response(
+                    200, content=fn(_corr_of(req)).encode()
+                )
+            )
             try:
                 await client.validate_action(
                     action="query_portfolio", parameters=params, agent_id="test-agent"
@@ -1133,7 +1190,21 @@ async def test_only_es256_and_eddsa_are_accepted(
         gateway_url=mock_gateway_url,
         public_keys={"p256-kid": p256_priv.public_key().public_bytes(*pem)},
     ) as client:
-        route.mock(return_value=httpx.Response(status_code=200, json=valid_env))
+        route.mock(
+            side_effect=lambda req: httpx.Response(
+                status_code=200,
+                json=_build_signed_allow_envelope(
+                    action="query_portfolio",
+                    parameters=params,
+                    priv_key=p256_priv,
+                    kid="p256-kid",
+                    alg="ES256",
+                    payload_overrides={
+                        "correlation_id": json.loads(req.content)["correlation_id"]
+                    },
+                ),
+            )
+        )
         verified = await client.validate_action(
             action="query_portfolio", parameters=params, agent_id="test-agent"
         )
@@ -1294,6 +1365,107 @@ async def test_envelope_expiration_and_subject_binding_enforced(
 
 
 @respx.mock
+async def test_evaluated_action_hash_is_signed_metadata_never_the_request_binding(
+    mock_gateway_url: str,
+    patched_httpx_no_http2: None,
+) -> None:
+    """subject.evaluated_action_hash verifies as signed metadata only.
+
+    An envelope carrying it is accepted, subject.action_hash is still
+    checked against the params the client submitted, an envelope whose
+    action_hash names other (e.g. the evaluated) params is rejected, and a
+    tampered evaluated hash breaks the signature.
+    """
+    priv = ec.generate_private_key(ec.SECP256R1())
+    pem = priv.public_key().public_bytes(
+        serialization.Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    params = {"symbol": "AAPL", "amount": 100}
+    evaluated_hash = envelope_action_hash(
+        "query_portfolio", {**params, "trader_role": "junior"}
+    )
+    route = f"{mock_gateway_url}/governance/validate-action"
+
+    async with CageClient(
+        gateway_url=mock_gateway_url,
+        public_keys={"ec-pin-01": pem},
+        clock_skew_seconds=5.0,
+    ) as client:
+        # 1. Accepted: the evaluated hash rides beside the request binding.
+        env = _build_signed_allow_envelope(
+            action="query_portfolio",
+            parameters=params,
+            priv_key=priv,
+            kid="ec-pin-01",
+            subject_overrides={"evaluated_action_hash": evaluated_hash},
+        )
+        respx.post(route).mock(
+            side_effect=lambda req: httpx.Response(
+                status_code=200,
+                json=_build_signed_allow_envelope(
+                    action="query_portfolio",
+                    parameters=params,
+                    priv_key=priv,
+                    kid="ec-pin-01",
+                    subject_overrides={"evaluated_action_hash": evaluated_hash},
+                    payload_overrides={
+                        "correlation_id": json.loads(req.content)["correlation_id"]
+                    },
+                ),
+            )
+        )
+        accepted = await client.validate_action(
+            action="query_portfolio", parameters=params, agent_id="test-agent"
+        )
+        assert accepted.subject["evaluated_action_hash"] == evaluated_hash
+        assert accepted.subject["action_hash"] == compute_expected_action_hash(
+            "query_portfolio", params
+        )
+
+        # 2. The same envelope replayed for other params -> action_hash mismatch.
+        with pytest.raises(RoutingSealVerificationError, match="action_hash"):
+            await client.validate_action(
+                action="query_portfolio",
+                parameters={"symbol": "AAPL", "amount": 999999},
+                agent_id="test-agent",
+            )
+
+        # 3. A validly signed envelope binding the evaluated params instead of
+        #    the submitted ones does not bind this request.
+        swapped = _build_signed_allow_envelope(
+            action="query_portfolio",
+            parameters=params,
+            priv_key=priv,
+            kid="ec-pin-01",
+            subject_overrides={
+                "action_hash": evaluated_hash,
+                "evaluated_action_hash": evaluated_hash,
+            },
+        )
+        respx.post(route).mock(
+            return_value=httpx.Response(status_code=200, json=swapped)
+        )
+        with pytest.raises(RoutingSealVerificationError, match="action_hash"):
+            await client.validate_action(
+                action="query_portfolio", parameters=params, agent_id="test-agent"
+            )
+
+        # 4. The evaluated hash is covered by the signature.
+        tampered = json.loads(json.dumps(env))
+        tampered["subject"]["evaluated_action_hash"] = envelope_action_hash(
+            "query_portfolio", {**params, "trader_role": "senior"}
+        )
+        respx.post(route).mock(
+            return_value=httpx.Response(status_code=200, json=tampered)
+        )
+        with pytest.raises(RoutingSealVerificationError):
+            await client.validate_action(
+                action="query_portfolio", parameters=params, agent_id="test-agent"
+            )
+
+
+@respx.mock
 async def test_jwks_ttl_staleness_304_and_key_rotation_eviction(
     mock_gateway_url: str,
     patched_httpx_no_http2: None,
@@ -1321,18 +1493,26 @@ async def test_jwks_ttl_staleness_304_and_key_rotation_eviction(
         priv_key=priv1,
         kid="rot-kid-1",
     )
-    env2 = _build_signed_allow_envelope(
-        action="query_portfolio",
-        parameters=params,
-        priv_key=priv2,
-        kid="rot-kid-2",
-    )
+
+    def _sign_rot(priv_k: Any, kid_k: str):
+        return lambda req: httpx.Response(
+            status_code=200,
+            json=_build_signed_allow_envelope(
+                action="query_portfolio",
+                parameters=params,
+                priv_key=priv_k,
+                kid=kid_k,
+                payload_overrides={
+                    "correlation_id": json.loads(req.content)["correlation_id"]
+                },
+            ),
+        )
 
     jwks_route = respx.get(f"{mock_gateway_url}/governance/.well-known/jwks.json").mock(
         return_value=httpx.Response(status_code=200, json={"keys": [jwk1]})
     )
     respx.post(f"{mock_gateway_url}/governance/validate-action").mock(
-        return_value=httpx.Response(status_code=200, json=env1)
+        side_effect=_sign_rot(priv1, "rot-kid-1")
     )
 
     client = CageClient(
@@ -1373,7 +1553,7 @@ async def test_jwks_ttl_staleness_304_and_key_rotation_eviction(
             return_value=httpx.Response(status_code=200, json={"keys": [jwk2]})
         )
         respx.post(f"{mock_gateway_url}/governance/validate-action").mock(
-            return_value=httpx.Response(status_code=200, json=env2)
+            side_effect=_sign_rot(priv2, "rot-kid-2")
         )
         clock[0] = 4700.0
         await client.validate_action(
@@ -1393,9 +1573,22 @@ async def test_jwks_ttl_staleness_304_and_key_rotation_eviction(
         await client.aclose()
 
 
+@pytest.mark.covers("cage_client.core:enforce_verification_posture")
 @pytest.mark.parametrize(
     "posture",
-    ["production", "prod", "staging", "uat", "canary", "preprod", "custom-enforcing"],
+    [
+        None,
+        "",
+        "   ",
+        "local",
+        "production",
+        "prod",
+        "staging",
+        "uat",
+        "canary",
+        "preprod",
+        "custom-enforcing",
+    ],
 )
 @pytest.mark.parametrize(
     "opt_out_kwargs",
@@ -1408,11 +1601,15 @@ async def test_jwks_ttl_staleness_304_and_key_rotation_eviction(
 async def test_verification_posture_guard_enforced_in_non_dev_postures(
     mock_gateway_url: str,
     monkeypatch: pytest.MonkeyPatch,
-    posture: str,
+    posture: str | None,
     opt_out_kwargs: dict[str, bool],
 ) -> None:
-    """Disabling any verification invariant in non-dev/test CAGE_ENV raises ValueError."""
-    monkeypatch.setenv("CAGE_ENV", posture)
+    """Disabling any verification invariant when CAGE_ENV is unset, blank, 'local', or enforcing raises ValueError."""
+    monkeypatch.delenv("ENVIRONMENT", raising=False)
+    if posture is None:
+        monkeypatch.delenv("CAGE_ENV", raising=False)
+    else:
+        monkeypatch.setenv("CAGE_ENV", posture)
     with pytest.raises(ValueError, match="enforcing posture"):
         enforce_verification_posture(**opt_out_kwargs)
     with pytest.raises(ValueError, match="enforcing posture"):
@@ -1787,6 +1984,45 @@ async def test_live_asgi_all_seven_gateway_outcomes(
         await client.aclose()
 
 
+async def test_live_asgi_envelope_carries_the_evaluated_action_hash(
+    live_governance_asgi: tuple[FastAPI, MagicMock, str],
+) -> None:
+    """The real gateway signs subject.evaluated_action_hash; the wheel accepts it.
+
+    The governor's evaluated hash (the server-bound params the stages
+    evaluated) is signed as subject metadata and never reaches the payload;
+    subject.action_hash still binds the params the client submitted.
+    """
+    root_app, mock_governor, expected_alg = live_governance_asgi
+    params = {"symbol": "AAPL", "amount": 250}
+    evaluated_hash = envelope_action_hash(
+        "query_portfolio", {**params, "trader_role": "junior"}
+    )
+    mock_governor.validate_action.return_value = {
+        "verdict": GovernanceDecision.ALLOW,
+        "agent_id": "agent-asgi-01",
+        "tiers_passed": ["stpa", "opa"],
+        "evaluated_action_hash": evaluated_hash,
+    }
+    client = await _make_asgi_client(root_app)
+    try:
+        env = await client.validate_action(
+            action="query_portfolio",
+            parameters=params,
+            agent_id="agent-asgi-01",
+        )
+    finally:
+        await client.aclose()
+
+    assert env.signature is not None
+    assert env.signature["algorithm"] == expected_alg
+    assert env.subject["evaluated_action_hash"] == evaluated_hash
+    assert env.subject["action_hash"] == compute_expected_action_hash(
+        "query_portfolio", params
+    )
+    assert "evaluated_action_hash" not in env.payload
+
+
 @respx.mock
 @pytest.mark.parametrize("status_code", [202, 409, 422])
 async def test_dead_unsigned_202_409_422_never_mediate_as_defer_or_deny(
@@ -1827,3 +2063,36 @@ def test_cage_client_resolves_from_installed_wheel_with_py_typed() -> None:
     assert (mod_path.parent / "py.typed").is_file(), (
         f"Missing py.typed in installed wheel: {mod_path.parent}"
     )
+
+
+def test_standalone_sdk_tests_collected_in_pytest_and_ci() -> None:
+    """Ensure standalone cage-client tests are wired into pytest.ini, Makefile, and CI (POAM-2026-241)."""
+    import configparser
+
+    repo_root = Path(__file__).resolve().parents[3]
+    ini = configparser.ConfigParser()
+    ini.read(repo_root / "pytest.ini", encoding="utf-8")
+    testpaths = ini.get("pytest", "testpaths").split()
+    assert "packages/cage-client/tests" in testpaths, (
+        f"packages/cage-client/tests missing from pytest.ini testpaths: {testpaths}"
+    )
+
+    makefile = (repo_root / "Makefile").read_text(encoding="utf-8")
+    assert "tests/ packages/cage-client/tests/" in makefile
+
+    ci_yml = (repo_root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    assert "uv run pytest tests/ packages/cage-client/tests/ --collect-only" in ci_yml
+    assert 'tests/ packages/cage-client/tests/ -m "local or unit"' in ci_yml
+    assert "bash scripts/smoke_test_client_wheel.sh" in ci_yml
+
+    publish_yml = (repo_root / ".github/workflows/publish-client-sdk.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "bash scripts/smoke_test_client_wheel.sh" in publish_yml
+
+    smoke_sh = (repo_root / "scripts/smoke_test_client_wheel.sh").read_text(
+        encoding="utf-8"
+    )
+    assert '"$SMOKE_VENV/bin/pytest" tests/test_cage_client_standalone.py' in smoke_sh
+    assert "[langgraph]" in smoke_sh
+    assert '"$SMOKE_VENV/bin/pytest" tests/' in smoke_sh

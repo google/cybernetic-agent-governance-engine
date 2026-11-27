@@ -17,7 +17,7 @@ Kernel warrant mechanism: model, standing verifier and evidence binding.
 
 Vendor- and domain-neutral counterpart of the provider_05 contract suite. The
 partner-published v0.1 vectors and their pinned digests stay in
-``tests/integrations/provider_05/test_provider_05_veip_vectors.py``.
+``tests/integrations/provider_05/test_provider_05_v01_vectors.py``.
 """
 
 from __future__ import annotations

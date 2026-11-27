@@ -785,25 +785,99 @@ variable "lula_schedule" {
   default     = "0 */6 * * *"
 }
 
-variable "lula_alert_notification_channels" {
-  description = "Cloud Monitoring notification channel resource names attached to the Lula compliance audit AlertPolicy (CA-7 / IR-4)."
-  type        = list(string)
-  default     = []
+variable "alert_notification_channels" {
+  description = "Cloud Monitoring NotificationChannel lookup descriptors bound to every AlertPolicy in this target (CA-7 / IR-4 / POAM-2026-230). Resolved at plan time via data.google_monitoring_notification_channel.bound; enforcing postures fail closed when empty, unresolved, or disabled. In CAGE's reference architecture, the verified terminal sink is a GCP Pub/Sub topic/subscription rather than personal email/SMS/commercial paging."
+  type = list(object({
+    display_name = string
+    type         = optional(string)
+    labels       = optional(map(string), {})
+    name         = optional(string)
+  }))
+  default = []
+
+  validation {
+    condition = alltrue([
+      for ch in var.alert_notification_channels :
+      trimspace(ch.display_name) != "" &&
+      (ch.name == null || trimspace(ch.name) == "" || can(regex("^projects/[^/]+/notificationChannels/[^/]+$", trimspace(ch.name))))
+    ])
+    error_message = "Every entry in alert_notification_channels must carry a non-empty display_name and, if name is set, match projects/<project>/notificationChannels/<id>."
+  }
 }
 
-variable "lula_alert_owner" {
-  description = "Named on-call team or owner label responsible for triaging Lula compliance audit alerts (CA-7 / IR-4)."
+variable "alert_owner_label" {
+  description = "Metadata-only GCP user label ('owner') and documentation tag attached to every Cloud Monitoring AlertPolicy in this target. Routes nothing — actual notification delivery requires var.alert_notification_channels (POAM-2026-230)."
   type        = string
   default     = "platform-compliance-oncall"
 
   validation {
     condition = (
-      trimspace(var.lula_alert_owner) != "" &&
-      can(regex("^[a-z0-9][a-z0-9_-]{0,62}$", trimspace(var.lula_alert_owner)))
+      trimspace(var.alert_owner_label) != "" &&
+      can(regex("^[a-z0-9][a-z0-9_-]{0,62}$", trimspace(var.alert_owner_label)))
     )
-    error_message = "lula_alert_owner must be a non-empty lowercase GCP label identifier (1-63 chars matching ^[a-z0-9][a-z0-9_-]{0,62}$)."
+    error_message = "alert_owner_label must be a non-empty lowercase GCP label identifier (1-63 chars matching ^[a-z0-9][a-z0-9_-]{0,62}$)."
   }
 }
+
+variable "compliance_alert_channel" {
+  description = "External alert delivery backend for compliance-bridge (pubsub, slack, webhook, pagerduty). Empty defaults to 'console' only in non-enforcing dev postures; enforcing postures refuse empty, console, or mock at both plan time and pod startup (POAM-2026-230)."
+  type        = string
+  default     = ""
+
+  validation {
+    condition = contains(
+      ["", "console", "pubsub", "slack", "webhook", "pagerduty"],
+      lower(trimspace(var.compliance_alert_channel)),
+    )
+    error_message = "compliance_alert_channel must be empty or one of: console, pubsub, slack, webhook, pagerduty."
+  }
+}
+
+variable "alert_pubsub_topic" {
+  description = "Fully-qualified Cloud Pub/Sub topic (projects/<project>/topics/<topic>) published to by compliance-bridge when compliance_alert_channel = 'pubsub' (reference-architecture terminal sink, POAM-2026-230)."
+  type        = string
+  default     = ""
+
+  validation {
+    condition = (
+      trimspace(var.alert_pubsub_topic) == "" ||
+      can(regex("^projects/[a-z][a-z0-9-]{4,29}/topics/[A-Za-z][A-Za-z0-9-_.~+%]{2,254}$", trimspace(var.alert_pubsub_topic)))
+    )
+    error_message = "alert_pubsub_topic must be empty or match projects/<project>/topics/<topic>."
+  }
+}
+
+variable "compliance_alert_webhook_url" {
+  description = "HTTPS destination webhook URL injected into Secret/compliance-alert-secrets when compliance_alert_channel is 'slack' or 'webhook' (POAM-2026-230)."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "pagerduty_routing_key" {
+  description = "PagerDuty Events v2 integration routing key injected into Secret/compliance-alert-secrets when compliance_alert_channel is 'pagerduty' (POAM-2026-230)."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "alert_heartbeat_interval_seconds" {
+  description = "Interval in seconds between non-paging synthetic notifier heartbeats emitted by compliance-bridge SLA monitor (0 disables; POAM-2026-230 Property 3)."
+  type        = number
+  default     = 21600
+
+  validation {
+    condition     = var.alert_heartbeat_interval_seconds >= 0 && floor(var.alert_heartbeat_interval_seconds) == var.alert_heartbeat_interval_seconds
+    error_message = "alert_heartbeat_interval_seconds must be a non-negative integer."
+  }
+}
+
+variable "alert_verify_pubsub_subscription" {
+  description = "Optional Cloud Pub/Sub subscription resource ID or short name granted subscriber/viewer IAM to google_service_account.alert_verifier for scheduled independent alert-delivery verification (POAM-2026-230 Property 4)."
+  type        = string
+  default     = ""
+}
+
 
 variable "trusted_operator_identities" {
   description = "Allowlisted human OIDC operator sub claims permitted to approve HITL deferrals on compliance-bridge (CAGE_TRUSTED_OPERATOR_IDENTITIES; POAM-2026-196)."
@@ -825,6 +899,30 @@ variable "operator_oidc_audience" {
 
 variable "operator_jwks_uri" {
   description = "Out-of-band HTTPS JWKS URI used by compliance-bridge to verify kid-pinned human operator OIDC JWTs (CAGE_OPERATOR_JWKS_URI; POAM-2026-196)."
+  type        = string
+  default     = ""
+}
+
+variable "operator_webauthn_rp_id" {
+  description = "Relying Party ID for human HITL WebAuthn assertion verification across compliance-bridge and gateway (CAGE_WEBAUTHN_RP_ID; POAM-2026-210)."
+  type        = string
+  default     = "console.cage.example"
+}
+
+variable "operator_webauthn_allowed_origins" {
+  description = "Allowed HTTPS Relying Party origins for human HITL WebAuthn assertions (CAGE_WEBAUTHN_ALLOWED_ORIGINS; POAM-2026-210)."
+  type        = list(string)
+  default     = ["https://console.cage.example"]
+}
+
+variable "operator_webauthn_credentials_json" {
+  description = "Out-of-band public-key WebAuthn operator credential registry JSON for production/staging human operators (CAGE_WEBAUTHN_CREDENTIALS_JSON; POAM-2026-210)."
+  type        = string
+  default     = ""
+}
+
+variable "e2e_webauthn_credentials_json" {
+  description = "Optional non-production out-of-band public WebAuthn credential registry JSON for ephemeral E2E human HITL verification when enable_e2e_advisor = true (POAM-2026-210). Refused in prod/production."
   type        = string
   default     = ""
 }
@@ -1293,11 +1391,12 @@ variable "vllm_egress_allowed_fqdns" {
 }
 
 variable "compliance_bridge_egress_allowed_fqdns" {
-  description = "FQDNs allowed for compliance-bridge HTTPS (443) egress via GKE FQDNNetworkPolicy: WORM bucket writes (GCS), per-batch evidence attestation signing (Cloud KMS) and Workload Identity token exchange (§5.3)"
+  description = "FQDNs allowed for compliance-bridge HTTPS (443) egress via GKE FQDNNetworkPolicy: WORM bucket writes (GCS), per-batch evidence attestation signing (Cloud KMS), Pub/Sub alert notification publishing, and Workload Identity token exchange (§5.3, POAM-2026-230)"
   type        = list(string)
   default = [
     "storage.googleapis.com",
     "cloudkms.googleapis.com",
+    "pubsub.googleapis.com",
     "oauth2.googleapis.com",
   ]
 }
@@ -1419,8 +1518,15 @@ variable "external_evidence_cmek_key_id" {
   default     = ""
 }
 
+variable "certification_mode" {
+  description = "When true, Gate W / regulatory certification runs lock evidentiary WORM custody (module.worm_bucket and module.evidence_domain) for 220752000 s (2,555 days) while keeping workload operational telemetry (google_storage_bucket.langfuse_event_upload) at 86400 s (1 day) in non-prod, and require a separate evidence_project_id or external_evidence_domain_enabled = true unless require_separate_evidence_project = false is explicitly overridden so 7-year locked objects are never encrypted under an ephemeral workload project's CMEK key (AU-9(4), F-66, F-97)."
+  type        = bool
+  default     = false
+  nullable    = false
+}
+
 variable "require_separate_evidence_project" {
-  description = "When true (defaults to true in prod, false in dev/staging when null), enforces at plan time that external_evidence_domain_enabled = true or evidence_project_id != var.project_id so the workload deployer SA holds zero storage/KMS admin roles in the evidence domain (AU-9(4), F-66, F-97)."
+  description = "When true (defaults to true when environment == \"prod\" or certification_mode == true, false in ordinary dev/staging when null), enforces at plan time that external_evidence_domain_enabled = true or evidence_project_id != var.project_id so the workload deployer SA holds zero storage/KMS admin roles in the evidence domain and 7-year locked objects are never encrypted under an ephemeral workload project's CMEK key (AU-9(4), F-66, F-97)."
   type        = bool
   default     = null
   nullable    = true

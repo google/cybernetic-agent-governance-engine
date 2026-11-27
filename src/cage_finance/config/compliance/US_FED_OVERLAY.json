@@ -1,14 +1,1 @@
-{
-  "CTRL_FTRA_001": {
-    "internal_id": "THR-FTRA-001",
-    "primary_framework": "NIST AI RMF GOVERN-1.2 – Risk Tolerance and Commencement Controls",
-    "co_frameworks": [
-      "NIST SP 800-53 CA-7 – Continuous Monitoring",
-      "ISO 42001 §6.1 – STPA Risk Logging",
-      "SR 26-2 §IV.B – Pre-Trade Risk Controls"
-    ],
-    "legacy_citation": "SR 26-2 §IV.B – Pre-Trade Risk Controls",
-    "scope": "agentic",
-    "description": "Forward-Looking Trajectory Reachability Analyzer (FTRA) — Tier 0.5 governance gate. Performs commencement-time reachability analysis before any trade execution plan is committed. Verifies that the proposed execution trajectory is reachable from the current system state without violating safety constraints. Unreachable or constraint-violating plans are parked in DeferQueue for HITL review."
-  }
-}
+{}

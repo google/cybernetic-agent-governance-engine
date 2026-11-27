@@ -25,9 +25,9 @@ from typing import Any
 from src.gateway.governance.contracts import SagaCompensator
 
 
-def derive_idempotency_key(transaction_id: str, compensating_action: str) -> str:
+def derive_idempotency_key(idempotency_key: str, compensating_action: str) -> str:
     """Derive a deterministic 32-character hex idempotency key for a rollback call."""
-    raw = f"{transaction_id}:{compensating_action}"
+    raw = f"{idempotency_key}:{compensating_action}"
     return hashlib.sha256(raw.encode()).hexdigest()[:32]
 
 

@@ -89,6 +89,9 @@ class TestIrreversibilityClassifier:
             == TerminalClassification.IRREVERSIBLE_TERMINAL
         )
 
+    @pytest.mark.covers(
+        "src.gateway.governance.ftra.classifier:IrreversibilityClassifier.classify_with_provenance#RegistryState.UNREGISTERED",
+    )
     def test_removed_write_db_action_fails_closed(self):
         """write_db was removed from the finance registry; it must now classify
         through the fail-closed unregistered default, not a registry entry."""
@@ -119,6 +122,9 @@ class TestIrreversibilityClassifier:
         assert classifier.is_irreversible("execute_trade") is True
         assert classifier.is_irreversible("prompt_injection_check") is False
 
+    @pytest.mark.covers(
+        "src.gateway.governance.ftra.classifier:IrreversibilityClassifier.classify_with_provenance#RegistryState.UNREGISTERED",
+    )
     def test_unregistered_action_fails_closed_to_irreversible(self):
         """Fail-closed contract: unknown actions must default to IRREVERSIBLE_TERMINAL."""
         from src.gateway.governance.ftra.classifier import IrreversibilityClassifier
@@ -131,6 +137,10 @@ class TestIrreversibilityClassifier:
         )
         assert classifier.is_irreversible("totally_made_up_action_xyz") is True
 
+    @pytest.mark.covers(
+        "src.gateway.governance.ftra.classifier:_load_registry_document#FTRA terminal registry not found:",
+        "src.gateway.governance.ftra.classifier:IrreversibilityClassifier.classify_with_provenance#RegistryState.UNAVAILABLE",
+    )
     def test_missing_registry_file_fails_closed(self, tmp_path):
         """If the registry file does not exist, classify() must fail closed
         rather than raising."""
@@ -146,6 +156,10 @@ class TestIrreversibilityClassifier:
             == TerminalClassification.IRREVERSIBLE_TERMINAL
         )
 
+    @pytest.mark.covers(
+        "src.gateway.governance.ftra.classifier:_load_registry_document#missing the 'terminals' key",
+        "src.gateway.governance.ftra.classifier:IrreversibilityClassifier.classify_with_provenance#RegistryState.UNAVAILABLE",
+    )
     def test_malformed_registry_json_fails_closed(self, tmp_path):
         """A registry file missing the 'terminals' key must fail closed."""
         import json
@@ -268,6 +282,9 @@ class TestPlanGraphAnalyzer:
         assert "s2" in result.reachable_terminals
         assert result.critical_path == ["s1", "s2"]
 
+    @pytest.mark.covers(
+        "src.gateway.governance.ftra.graph_analyzer:PlanGraphAnalyzer._analyze_internal#verdict = FTRAVerdict.BLOCKED",
+    )
     def test_irreversible_terminal_reachable_low_confidence_is_blocked(self, tmp_path):
         from src.gateway.governance.ftra.models import FTRAVerdict
 
@@ -280,6 +297,9 @@ class TestPlanGraphAnalyzer:
 
         assert result.verdict == FTRAVerdict.BLOCKED
 
+    @pytest.mark.covers(
+        "src.gateway.governance.ftra.graph_analyzer:PlanGraphAnalyzer._analyze_internal#if confidence >= defer_floor:",
+    )
     def test_confidence_exactly_at_threshold_is_hitl_not_blocked(self, tmp_path):
         """The defer floor is inclusive: confidence == floor -> HITL_REQUIRED."""
         from src.gateway.governance.ftra.models import FTRAVerdict
@@ -335,6 +355,10 @@ class TestPlanGraphAnalyzer:
                 "With threshold=0.75 and confidence=0.75, expected HITL_REQUIRED (boundary inclusive)"
             )
 
+    @pytest.mark.covers(
+        "src.gateway.governance.ftra.classifier:IrreversibilityClassifier.classify_with_provenance#RegistryState.UNREGISTERED",
+        "src.gateway.governance.ftra.graph_analyzer:PlanGraphAnalyzer._analyze_internal#if confidence >= defer_floor:",
+    )
     def test_unregistered_action_in_plan_fails_closed(self, tmp_path):
         """A plan step whose action is absent from the registry must be treated
         as IRREVERSIBLE_TERMINAL (fail-closed), forcing HITL/BLOCKED routing."""
@@ -411,6 +435,10 @@ class TestPlanGraphAnalyzer:
         # root steps cannot smuggle unanalyzed terminals past step[0]-only DFS.
         assert result.reachable_step_count == 3
 
+    @pytest.mark.covers(
+        "src.gateway.governance.ftra.graph_analyzer:PlanGraphAnalyzer.analyze#FTRA_DUPLICATE_STEP_ID",
+        "src.gateway.governance.ftra.graph_analyzer:PlanGraphAnalyzer.analyze#FTRA_INVALID_STEP_ID",
+    )
     def test_duplicate_or_empty_step_id_fails_closed_to_blocked(self, tmp_path):
         """POAM-2026-212: Duplicate or empty step.id values fail closed with BLOCKED."""
         from src.gateway.governance.ftra.models import (
@@ -498,6 +526,9 @@ class TestRouteAfterFtra:
 
         assert route_after_ftra({"ftra_status": "CLEAR"}) == "safety_check"
 
+    @pytest.mark.covers(
+        "src.gateway.governance.ftra.node_factory:route_after_ftra",
+    )
     def test_blocked_routes_to_explainer(self):
         from src.gateway.governance.ftra.node_factory import route_after_ftra
 
@@ -508,6 +539,9 @@ class TestRouteAfterFtra:
 
         assert route_after_ftra({"ftra_status": "HITL_REQUIRED"}) == "explainer"
 
+    @pytest.mark.covers(
+        'src.gateway.governance.ftra.node_factory:route_after_ftra#state.get("ftra_status", "BLOCKED")',
+    )
     def test_missing_status_fails_closed_to_explainer(self):
         from src.gateway.governance.ftra.node_factory import route_after_ftra
 
@@ -557,6 +591,10 @@ class TestCreateFtraNode:
         assert result["ftra_defer_id"] is None
         assert result["ftra_result"]["ctrl_id"] == "CTRL_FTRA_001"
 
+    @pytest.mark.covers(
+        "src.gateway.governance.ftra.graph_analyzer:PlanGraphAnalyzer._analyze_internal#verdict = FTRAVerdict.BLOCKED",
+        "src.gateway.governance.ftra.node_factory:_run_ftra#BLOCKED (confidence=",
+    )
     def test_low_confidence_irreversible_returns_blocked_status(self, tmp_path):
         from src.gateway.governance.ftra.node_factory import create_ftra_node
         from src.gateway.governance.langgraph_harness.types import FtraNodeConfig
@@ -575,6 +613,9 @@ class TestCreateFtraNode:
         assert result["ftra_status"] == "BLOCKED"
         assert result["ftra_defer_id"] is None
 
+    @pytest.mark.covers(
+        "src.gateway.governance.ftra.node_factory:_run_ftra#plan extractor returned None (no plan in state)",
+    )
     def test_missing_execution_plan_fails_closed_to_blocked(self, tmp_path):
         from src.gateway.governance.ftra.node_factory import create_ftra_node
         from src.gateway.governance.langgraph_harness.types import FtraNodeConfig
@@ -683,6 +724,9 @@ class TestCreateFtraNode:
         assert interrupt_payload["reason"] == "FTRA_IRREVERSIBLE_TERMINAL"
         assert interrupt_payload["ctrl_id"] == "CTRL_FTRA_001"
 
+    @pytest.mark.covers(
+        "src.gateway.governance.ftra.node_factory:_park_in_defer_queue#using local defer_id only",
+    )
     def test_hitl_required_falls_back_to_local_uuid_when_redis_unavailable(
         self, tmp_path
     ):
@@ -721,6 +765,9 @@ class TestCreateFtraNode:
 
         _uuid.UUID(interrupt_payload["defer_id"])  # must not raise
 
+    @pytest.mark.covers(
+        "src.gateway.governance.ftra.node_factory:create_ftra_node.ftra_node#unhandled exception (%s) — failing closed",
+    )
     def test_ftra_node_never_raises_plain_exception_fails_closed(self, tmp_path):
         """create_ftra_node()'s outer try/except must catch any *plain*
         (non-GraphInterrupt) exception unhandled by _run_ftra and fail
@@ -1092,6 +1139,10 @@ class TestBugFtraSchema001:
             ],
         }
 
+    @pytest.mark.covers(
+        "src.gateway.governance.ftra.node_factory:_parse_plan_with_result#dict→ExecutionPlan validation failed:",
+        "src.gateway.governance.ftra.node_factory:_run_ftra#schema validation error — DEFER for review",
+    )
     def test_schema_validation_error_returns_defer_not_blocked(self, tmp_path):
         """BUG-FTRA-SCHEMA-001: Schema validation errors should DEFER, not BLOCK.
 
@@ -1115,29 +1166,92 @@ class TestBugFtraSchema001:
         assert result["ftra_status"] == "HITL_REQUIRED"
         assert result["ftra_result"]["parse_failure_class"] == "SCHEMA_VALIDATION_ERROR"
 
+    @pytest.mark.covers(
+        "src.gateway.governance.ftra.node_factory:_parse_plan_with_result#JSON decode error:",
+        "src.gateway.governance.ftra.node_factory:_run_ftra#JSON decode error after sanitization",
+    )
     def test_json_decode_error_returns_defer_not_blocked(self, tmp_path):
-        """BUG-FTRA-JSON-001: JSON decode errors should DEFER, not BLOCK.
+        """BUG-FTRA-JSON-001: Malformed (non-truncated) JSON must DEFER as JSON_DECODE_ERROR."""
+        from unittest.mock import patch
 
-        Prior to fix: invalid JSON → BLOCKED (false positive)
-        After fix: invalid JSON → HITL_REQUIRED (DEFER for review)
-        """
         from src.gateway.governance.ftra.node_factory import create_ftra_node
         from src.gateway.governance.langgraph_harness.types import FtraNodeConfig
 
         registry_path = self._registry_path(tmp_path, {})
         node = create_ftra_node(config=FtraNodeConfig(registry_path=registry_path))
 
-        # Invalid JSON string
+        # Invalid JSON syntax with balanced braces (not truncated)
+        state = {
+            "execution_plan_output": "{invalid: json}",
+            "evaluation_result": {"confidence": 0.9},
+        }
+        with patch(
+            "src.gateway.governance.ftra.node_factory._increment_parse_failure_counter"
+        ) as mock_counter:
+            result = asyncio.run(node(state))
+
+        assert result["ftra_status"] == "HITL_REQUIRED"
+        assert result["ftra_result"]["parse_failure_class"] == "JSON_DECODE_ERROR"
+        mock_counter.assert_called_once_with("JSON_DECODE_ERROR")
+
+    @pytest.mark.covers(
+        "src.gateway.governance.ftra.node_factory:_parse_plan_with_result#JSON decode error:",
+        "src.gateway.governance.ftra.node_factory:_run_ftra#plan appears truncated — DEFER for review",
+    )
+    def test_truncated_json_returns_defer_with_truncated_plan_class(self, tmp_path):
+        """Truncated (unbalanced) JSON string must DEFER as TRUNCATED_PLAN, not SCHEMA_VALIDATION_ERROR."""
+        from unittest.mock import patch
+
+        from src.gateway.governance.ftra.node_factory import create_ftra_node
+        from src.gateway.governance.langgraph_harness.types import FtraNodeConfig
+
+        registry_path = self._registry_path(tmp_path, {})
+        node = create_ftra_node(config=FtraNodeConfig(registry_path=registry_path))
+
         state = {
             "execution_plan_output": '{"invalid: json',
             "evaluation_result": {"confidence": 0.9},
         }
-        result = asyncio.run(node(state))
+        with patch(
+            "src.gateway.governance.ftra.node_factory._increment_parse_failure_counter"
+        ) as mock_counter:
+            result = asyncio.run(node(state))
 
-        # Key assertion: should be HITL_REQUIRED (DEFER), not BLOCKED
         assert result["ftra_status"] == "HITL_REQUIRED"
-        # Should include parse failure class
-        assert "parse_failure_class" in result["ftra_result"]
+        assert result["ftra_result"]["parse_failure_class"] == "TRUNCATED_PLAN"
+        mock_counter.assert_called_once_with("TRUNCATED_PLAN")
+
+    @pytest.mark.covers(
+        "src.gateway.governance.ftra.node_factory:_parse_plan_with_result#Schema validation failed:",
+        "src.gateway.governance.ftra.node_factory:_run_ftra#schema validation error — DEFER for review",
+    )
+    @pytest.mark.parametrize(
+        "payload", ['{"not_a_valid_plan": true}', "null", "[1, 2]"]
+    )
+    def test_valid_json_invalid_schema_string_returns_schema_validation_error(
+        self, tmp_path, payload
+    ):
+        """Syntactically valid JSON failing ExecutionPlan schema still reports SCHEMA_VALIDATION_ERROR."""
+        from unittest.mock import patch
+
+        from src.gateway.governance.ftra.node_factory import create_ftra_node
+        from src.gateway.governance.langgraph_harness.types import FtraNodeConfig
+
+        registry_path = self._registry_path(tmp_path, {})
+        node = create_ftra_node(config=FtraNodeConfig(registry_path=registry_path))
+
+        state = {
+            "execution_plan_output": payload,
+            "evaluation_result": {"confidence": 0.9},
+        }
+        with patch(
+            "src.gateway.governance.ftra.node_factory._increment_parse_failure_counter"
+        ) as mock_counter:
+            result = asyncio.run(node(state))
+
+        assert result["ftra_status"] == "HITL_REQUIRED"
+        assert result["ftra_result"]["parse_failure_class"] == "SCHEMA_VALIDATION_ERROR"
+        mock_counter.assert_called_once_with("SCHEMA_VALIDATION_ERROR")
 
     def test_empty_steps_high_confidence_returns_clear(self, tmp_path):
         """Empty plan with high confidence should ALLOW (CLEAR), not BLOCK.

@@ -71,9 +71,9 @@ def _make_metrics(
     return ComplianceMetrics(
         control_id=control_id,
         safety_rate=safety_rate,
-        total_traces=100,
-        blocked_traces=int((1 - safety_rate) * 100),
-        passed_traces=int(safety_rate * 100),
+        total_traces=300,
+        blocked_traces=int((1 - safety_rate) * 300),
+        passed_traces=int(safety_rate * 300),
         window_hours=24.0,
         last_event_utc=datetime.now(tz=timezone.utc).isoformat(),
         evidence_age_seconds=evidence_age,
@@ -517,12 +517,11 @@ class TestWebhookNotifier:
 
 
 class TestNotifierFactory:
-    def test_default_is_console(self):
+    def test_default_in_dev_is_console(self):
         from src.compliance_bridge.notifier import ConsoleNotifier, create_notifier
 
-        with patch.dict(os.environ, {}, clear=False):
-            if "ALERT_CHANNEL" in os.environ:
-                del os.environ["ALERT_CHANNEL"]
+        with patch.dict(os.environ, {"CAGE_ENV": "dev"}, clear=False):
+            os.environ.pop("ALERT_CHANNEL", None)
             n = create_notifier()
         assert isinstance(n, ConsoleNotifier)
 
@@ -536,15 +535,27 @@ class TestNotifierFactory:
             n = create_notifier()
         assert isinstance(n, PagerDutyNotifier)
 
-    def test_pagerduty_without_key_falls_back_to_console(self):
-        from src.compliance_bridge.notifier import ConsoleNotifier, create_notifier
+    def test_pagerduty_without_key_raises_fail_closed(self):
+        from src.compliance_bridge.notifier import NotifierConfigError, create_notifier
 
         env = {"ALERT_CHANNEL": "pagerduty"}
-        # Ensure routing key is absent
         with patch.dict(os.environ, env):
             os.environ.pop("PAGERDUTY_ROUTING_KEY", None)
+            with pytest.raises(NotifierConfigError, match="PAGERDUTY_ROUTING_KEY"):
+                create_notifier()
+
+    def test_pubsub_with_topic_returns_pubsub_notifier(self):
+        from src.compliance_bridge.notifier import PubSubNotifier, create_notifier
+
+        with patch.dict(
+            os.environ,
+            {
+                "ALERT_CHANNEL": "pubsub",
+                "COMPLIANCE_ALERT_PUBSUB_TOPIC": "projects/cage-test-01/topics/cage-alerts",
+            },
+        ):
             n = create_notifier()
-        assert isinstance(n, ConsoleNotifier)
+        assert isinstance(n, PubSubNotifier)
 
     def test_webhook_with_url_returns_webhook(self):
         from src.compliance_bridge.notifier import WebhookNotifier, create_notifier
@@ -573,18 +584,19 @@ class TestNotifierFactory:
         assert isinstance(n, SlackNotifier)
 
     def test_mock_requires_testing_env(self):
-        from src.compliance_bridge.notifier import create_notifier
+        from src.compliance_bridge.notifier import MockNotifier, create_notifier
 
-        with patch.dict(os.environ, {"ALERT_CHANNEL": "mock", "TESTING": "1"}):
-            from src.compliance_bridge.notifier import MockNotifier
-
+        with patch.dict(
+            os.environ,
+            {"ALERT_CHANNEL": "mock", "TESTING": "1", "CAGE_ENV": "dev"},
+        ):
             n = create_notifier()
         assert isinstance(n, MockNotifier)
 
     def test_mock_without_testing_raises(self):
         from src.compliance_bridge.notifier import create_notifier
 
-        env = {"ALERT_CHANNEL": "mock"}
+        env = {"ALERT_CHANNEL": "mock", "CAGE_ENV": "dev"}
         with patch.dict(os.environ, env):
             os.environ.pop("TESTING", None)
             with pytest.raises(ValueError, match="MockNotifier is not permitted"):
@@ -596,15 +608,15 @@ class TestNotifierFactory:
         from src.compliance_bridge.notifier import MockNotifier
 
         n = MockNotifier()
-        # Use asyncio.run() for Python 3.12 compatibility (get_event_loop deprecated)
-        asyncio.run(
+        delivered = asyncio.run(
             n.send_critical_alert([_make_finding("A.9.2", "FAIL")], "count-test")
         )
+        assert delivered is True
         assert n.alert_count == 1
 
-    def test_unknown_channel_falls_back_to_console(self):
-        from src.compliance_bridge.notifier import ConsoleNotifier, create_notifier
+    def test_unknown_channel_raises_fail_closed(self):
+        from src.compliance_bridge.notifier import NotifierConfigError, create_notifier
 
         with patch.dict(os.environ, {"ALERT_CHANNEL": "telegram"}):
-            n = create_notifier()
-        assert isinstance(n, ConsoleNotifier)
+            with pytest.raises(NotifierConfigError, match="Unknown ALERT_CHANNEL"):
+                create_notifier()

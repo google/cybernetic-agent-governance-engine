@@ -201,6 +201,10 @@ class TestSagaServerBoundParams:
         with pytest.raises(ValueError, match="server_bound"):
             ControlStructureModel(**raw)
 
+    @pytest.mark.covers(
+        "src.gateway.governance.stpa_compiler:ControlStructureModel._v_sagas_send_no_server_bound_param#return self",
+        "src.gateway.governance.stpa_compiler:generate_langgraph",
+    )
     def test_the_flag_is_what_refuses_it(self) -> None:
         from src.gateway.governance.stpa_compiler import generate_langgraph
 
@@ -414,26 +418,26 @@ class TestGeneratedCodeInjection:
         return raw
 
     @pytest.mark.parametrize("mcp_arguments", [None, [], ["token"]])
-    def test_mcp_saga_without_transaction_id_argument_rejected(
+    def test_mcp_saga_without_idempotency_key_argument_rejected(
         self, mcp_arguments: list[str] | None
     ) -> None:
         with pytest.raises(Exception, match="mcp_arguments must list"):
             ControlStructureModel(**self._mcp_saga_raw(mcp_arguments))
 
     def test_mcp_saga_argument_non_identifier_rejected(self) -> None:
-        raw = self._mcp_saga_raw(["transaction_id", "token\n    import os  #"])
+        raw = self._mcp_saga_raw(["idempotency_key", "token\n    import os  #"])
         with pytest.raises(Exception, match="langgraph_saga.mcp_arguments"):
             ControlStructureModel(**raw)
 
     def test_mcp_saga_duplicate_argument_rejected(self) -> None:
-        raw = self._mcp_saga_raw(["transaction_id", "token", "token"])
+        raw = self._mcp_saga_raw(["idempotency_key", "token", "token"])
         with pytest.raises(Exception, match="lists a key twice"):
             ControlStructureModel(**raw)
 
     def test_mcp_saga_forwards_only_declared_arguments(self) -> None:
-        cs = ControlStructureModel(**self._mcp_saga_raw(["token", "transaction_id"]))
+        cs = ControlStructureModel(**self._mcp_saga_raw(["token", "idempotency_key"]))
         gen = generate_langgraph(cs)
-        assert 'if k in ("token", "transaction_id")' in gen
+        assert 'if k in ("token", "idempotency_key")' in gen
         assert "approval_token" not in gen
         assert "except MCPToolOutcomeUnknownError" in gen
 
@@ -461,6 +465,9 @@ class TestOpaGeneration:
         rego = generate_opa(minimal_cs)
         assert "package stpa.generated" in rego
 
+    @pytest.mark.covers(
+        "src.gateway.governance.stpa_compiler:generate_opa#default stpa_allow = false"
+    )
     def test_fail_closed_default(self, minimal_cs: ControlStructureModel) -> None:
         rego = generate_opa(minimal_cs)
         assert "default stpa_allow = false" in rego
@@ -932,6 +939,11 @@ class TestCompositeGrammar:
         ]
         assert composites, "UCA-6 should use the scaled-threshold composite"
 
+    @pytest.mark.covers(
+        "src.cage_finance.stpa.uca_rules:GeneratedSTPAValidator._check_uca_6#Missing required composite param",
+        "src.cage_finance.stpa.uca_rules:_parse_numeric_value#Non-finite",
+        "src.cage_finance.stpa.uca_rules:GeneratedSTPAValidator._check_uca_6#exceeding allowable fraction of daily volume.",
+    )
     def test_composite_fails_closed_on_zero_negative_nan_or_missing_rhs(self) -> None:
         from src.cage_finance.stpa.uca_rules import GeneratedSTPAValidator
 

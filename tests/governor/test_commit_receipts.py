@@ -17,7 +17,7 @@
 
 Regression tests for:
   B1 (H5) CBF / dose-barrier rollback re-read the magnitude from params.
-  B2      Fiscal tokens were kept on the tier, keyed by transaction_id.
+  B2      Fiscal tokens were kept on the tier, keyed by idempotency_key.
   B3      KinematicBarrierTier committed to the CBF but had no rollback().
 """
 
@@ -284,7 +284,7 @@ async def test_engine_reports_the_magnitude_it_deducted() -> None:
 
 
 @pytest.mark.asyncio
-async def test_fiscal_rollback_without_transaction_id_releases_that_token() -> None:
+async def test_fiscal_rollback_without_idempotency_key_releases_that_token() -> None:
     token = _token(100.0, "res-1")
     guard = _fiscal_guard(token)
     tier = FiscalTierPlugin(guard)
@@ -299,11 +299,11 @@ async def test_fiscal_rollback_without_transaction_id_releases_that_token() -> N
 
 
 @pytest.mark.asyncio
-async def test_fiscal_concurrent_same_transaction_id_each_release_own_token() -> None:
+async def test_fiscal_concurrent_same_idempotency_key_each_release_own_token() -> None:
     t1, t2 = _token(10.0, "res-1"), _token(20.0, "res-2")
     guard = _fiscal_guard(t1, t2)
     tier = FiscalTierPlugin(guard)
-    params = {"amount": 10.0, "transaction_id": "dup"}
+    params = {"amount": 10.0, "idempotency_key": "dup"}
 
     (_, r1), (_, r2) = await asyncio.gather(
         tier.commit("execute_trade", params), tier.commit("execute_trade", params)

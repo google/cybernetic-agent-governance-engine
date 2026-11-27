@@ -173,7 +173,7 @@ An enforcing `EU_ECB` posture refuses to start when the `NormativeProvider` is t
 
 ### 2.6 Provenance Hash Chain Integrity
 
-**Source:** [`src/gateway/governance/provenance_chain.py`](src/gateway/governance/provenance_chain.py) · **Control:** `CTRL_CTX_007`
+**Source:** [`src/compliance_bridge/context_accumulator.py`](src/compliance_bridge/context_accumulator.py) · **Control:** `CTRL_CTX_007` · **Correction (`2026-11-23`, `POAM-2026-246`):** this section previously named [`src/gateway/governance/provenance_chain.py`](src/gateway/governance/provenance_chain.py), an unwired library with no production caller; the formula below is the context accumulator's `_link_hash()` chain, which `CTRL_CTX_007` maps to in the tables above.
 
 SHA-256 hash chain with O(n) construction:
 
@@ -278,7 +278,7 @@ Full STPA hazard analysis (UCAs 1–9, Saga pattern, FiscalLimitGuard): [`docs/s
     | --- | --- | --- | --- | --- |
     | §2.1 | Confabulation / Hallucination | `confabulation_scorer.py` — confidence gate ≥ 0.95; provenance signing via AgentSight | `lula-validation-ai600-confabulation.yaml` | AI600-001 |
     | §2.2 | Data Privacy / PII | `pii_sanitizer.py` (Presidio) — PII scrubbed before LLM; CMEK-encrypted audit log | `lula-validation-ai600-data-privacy.yaml` | AI600-002 |
-    | §2.3 | Prompt Injection | `prompt_injection_detector.py` + `causal/gatekeeper.py` WAL integrity | `lula-validation-ai600-prompt-injection.yaml` | AI600-003 |
+    | §2.3 | Prompt Injection | `prompt_injection_detector.py` + `src/gateway/governance/causal/gatekeeper.py` WAL integrity | `lula-validation-ai600-prompt-injection.yaml` | AI600-003 |
     | §2.5 | Human-AI Configuration | `defer_queue.py` + `src/cage_finance/tiers/consensus_tier.py` — DEFER SLA ≤ 4 h; consensus threshold $10,000 | `lula-validation-ai600-human-ai-config.yaml` | AI600-005 |
     | §2.6 / §2.12 | CBRN & Value Chain | NeMo `cbrn_rails.co` — Tier-1 keyword list; NeMo CBRN rail deployed | `lula-validation-ai600-cbrn.yaml` | AI600-007 |
 

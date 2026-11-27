@@ -279,19 +279,26 @@ def parse_oscal_yaml(oscal_yaml: str) -> list[OscalFinding]:
             evidence_age_str = _get_prop(raw_finding.props, "evidence_age_seconds")
             total_traces_str = _get_prop(raw_finding.props, "total_traces")
             assessment_status = _get_prop(raw_finding.props, "assessment_status")
-            if (
-                assessment_status is None
-                and combined_obs_remark is not None
-                and "assessment_status=insufficient_traffic" in combined_obs_remark
-                and "assessment_status=threshold_violation" not in combined_obs_remark
-                and "assessment_status=stale_evidence" not in combined_obs_remark
-                and "assessment_status=missing_metrics_response"
-                not in combined_obs_remark
-            ):
-                assessment_status = "insufficient_traffic"
+            if assessment_status is None and combined_obs_remark is not None:
+                has_hard_failure = any(
+                    tok in combined_obs_remark
+                    for tok in (
+                        "assessment_status=threshold_violation",
+                        "assessment_status=stale_evidence",
+                        "assessment_status=missing_metrics_response",
+                    )
+                )
+                if not has_hard_failure:
+                    if "assessment_status=insufficient_traffic" in combined_obs_remark:
+                        assessment_status = "insufficient_traffic"
+                    elif "assessment_status=insufficient_sample" in combined_obs_remark:
+                        assessment_status = "insufficient_sample"
 
             mapped_result = _map_state(state)
-            if mapped_result == "FAIL" and assessment_status == "insufficient_traffic":
+            if mapped_result == "FAIL" and assessment_status in (
+                "insufficient_traffic",
+                "insufficient_sample",
+            ):
                 mapped_result = "INSUFFICIENT_EVIDENCE"
 
             candidate: dict[str, Any] = {

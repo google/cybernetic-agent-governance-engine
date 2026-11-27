@@ -91,8 +91,13 @@ WebhookEventType = Literal[
     "OPA_DENY",
 ]
 
+# Infrastructure blocks (GOVERNANCE_INFRASTRUCTURE_BLOCK / INFRASTRUCTURE_BLOCK)
+# are intentionally excluded and must never be delivered as OPA_DENY (POAM-2026-233).
 _ALL_EVENT_TYPES: frozenset[str] = frozenset(
     {"CBF_VIOLATION", "DEFER_PARKING", "HITL_INTERRUPT", "OPA_DENY"}
+)
+_INFRASTRUCTURE_BLOCK_EVENT_TYPES: frozenset[str] = frozenset(
+    {"GOVERNANCE_INFRASTRUCTURE_BLOCK", "INFRASTRUCTURE_BLOCK"}
 )
 
 # ---------------------------------------------------------------------------

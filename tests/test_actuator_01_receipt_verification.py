@@ -396,6 +396,9 @@ class TestVerifier:
         assert check.finding is not None
         assert check.finding["code"] == "RECEIPT_TRUST_ANCHOR_UNCONFIGURED"
 
+    @pytest.mark.covers(
+        "src.integrations.actuator_01.receipt_verifier:verify_partner_receipt#RECEIPT_KEY_MANIFEST_UNAVAILABLE"
+    )
     async def test_manifest_unavailable_is_unverified(self) -> None:
         check = await verify_partner_receipt(
             _sign(_body()), envelope_digest=_DIGEST, key_resolver=_FailingResolver()
@@ -792,7 +795,7 @@ class TestAdapterReceiptVerification:
     async def test_verified_refusal_strict_mode_stays_rejected(self) -> None:
         receipt = await _adapter(
             lambda intent: (
-                409,
+                400,
                 _sign({"error": "VENUE_HALT", "intent_hash": intent}),
             ),
             receipt_key_resolver=_RESOLVER,

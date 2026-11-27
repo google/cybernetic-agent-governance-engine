@@ -644,6 +644,10 @@ async def test_streaming_request_returns_event_stream(proxy_deps):
     assert "text/event-stream" in resp.headers.get("content-type", "")
 
 
+@pytest.mark.covers(
+    "src.gateway.server.inference_proxy:_stream_vllm#if resp.status_code >= 400:",
+    "src.gateway.server.inference_proxy:chat_completions#except UpstreamStreamingBackendError as exc:",
+)
 @pytest.mark.asyncio
 async def test_streaming_upstream_4xx_yields_error_event(proxy_deps):
     """When vLLM streaming returns 4xx, an SSE error event is yielded and quota is rolled back."""
@@ -760,6 +764,9 @@ async def test_agent_id_from_spiffe_cert_used_for_quota(proxy_deps):
     )
 
 
+@pytest.mark.covers(
+    'src.gateway.server.inference_proxy:chat_completions#"authentication_required"',
+)
 @pytest.mark.asyncio
 async def test_missing_spiffe_certificate_fails_closed(monkeypatch):
     """Requests without Linkerd l5d-client-id are rejected with 401."""
@@ -887,9 +894,12 @@ async def test_stream_vllm_yields_chunks_on_success():
     assert collected == chunks
 
 
+@pytest.mark.covers(
+    "src.gateway.server.inference_proxy:_stream_vllm#raise UpstreamStreamingBackendError",
+)
 @pytest.mark.asyncio
-async def test_stream_vllm_emits_error_event_on_4xx():
-    """_stream_vllm emits a single error SSE event when backend returns 4xx."""
+async def test_stream_vllm_raises_typed_error_on_4xx():
+    """_stream_vllm raises UpstreamStreamingBackendError out-of-band when backend returns >= 400."""
 
     async def _empty_aiter():
         return
@@ -907,19 +917,26 @@ async def test_stream_vllm_emits_error_event_on_4xx():
     mock_client = MagicMock(spec=httpx.AsyncClient)
     mock_client.stream = MagicMock(return_value=fake_cm)
 
+    import uuid
+
     import src.gateway.server.inference_proxy as _mod
 
     with patch.object(_mod, "_get_http_client", return_value=mock_client):
-        from src.gateway.server.inference_proxy import _stream_vllm
+        from src.gateway.server.inference_proxy import (
+            UpstreamStreamingBackendError,
+            _stream_vllm,
+        )
 
-        collected: list[bytes] = []
-        async for chunk in _stream_vllm(
-            "http://fake/chat/completions", {"model": "m"}, "key"
-        ):
-            collected.append(chunk)
+        with pytest.raises(UpstreamStreamingBackendError) as exc_info:
+            async for _chunk in _stream_vllm(
+                "http://fake/chat/completions", {"model": "m"}, "key"
+            ):
+                pass
 
-    assert len(collected) == 1
-    assert b"vLLM backend error 503" in collected[0]
+    assert exc_info.value.upstream_status == 503
+    assert (
+        str(uuid.UUID(exc_info.value.correlation_id)) == exc_info.value.correlation_id
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1019,7 +1036,7 @@ async def test_output_filter_exception_triggers_quota_rollback(proxy_deps, monke
 
     quota_proxy.rollback_step.assert_awaited_once_with(
         "cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local",
-        reserved_tokens=250,
+        reserved_tokens=252,
     )
 
 
@@ -1052,6 +1069,9 @@ async def test_inference_client_generate_extra_headers_not_duplicated():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.covers(
+    "src.gateway.server.inference_proxy:chat_completions#INFERENCE_BACKEND_NONE",
+)
 @pytest.mark.asyncio
 async def test_none_backend_returns_503_before_rails_or_upstream(
     proxy_deps, monkeypatch
@@ -1077,6 +1097,10 @@ async def test_none_backend_returns_503_before_rails_or_upstream(
     proxy_deps["http_client"].post.assert_not_awaited()
 
 
+@pytest.mark.covers(
+    "src.gateway.server.inference_proxy:_resolve_backend_url#raise InferenceBackendUnavailable(",
+    "src.gateway.server.inference_proxy:chat_completions#except InferenceBackendUnavailable as exc:",
+)
 @pytest.mark.asyncio
 async def test_missing_backend_url_returns_503_and_rolls_back_quota(
     proxy_deps, monkeypatch

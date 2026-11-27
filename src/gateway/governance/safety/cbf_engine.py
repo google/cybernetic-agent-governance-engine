@@ -2498,7 +2498,7 @@ return {1, status, tostring(restored), new_epoch, tostring(current), tostring(re
                                 committed=False,
                                 message=f"CBF_EPOCH_CONTENDED: {last_contended_msg} (after {attempt} attempts)",
                                 magnitude=0.0,
-                                failure_kind=BarrierFailureKind.BARRIER_BREACH,
+                                failure_kind=BarrierFailureKind.STATE_UNAVAILABLE,
                             )
                     else:
                         if _COMMIT_ATTEMPTS_HISTOGRAM is not None:
@@ -2556,7 +2556,7 @@ return {1, status, tostring(restored), new_epoch, tostring(current), tostring(re
                                         committed=False,
                                         message="REPLICATION_UNCONFIRMED: Redis WAIT timed out on replicas. Failed closed.",
                                         magnitude=0.0,
-                                        failure_kind=BarrierFailureKind.BARRIER_BREACH,
+                                        failure_kind=BarrierFailureKind.STATE_UNAVAILABLE,
                                     )
 
                         if committed:
@@ -2587,7 +2587,7 @@ return {1, status, tostring(restored), new_epoch, tostring(current), tostring(re
             committed=False,
             message=f"CBF_EPOCH_CONTENDED: {last_contended_msg}",
             magnitude=0.0,
-            failure_kind=BarrierFailureKind.BARRIER_BREACH,
+            failure_kind=BarrierFailureKind.STATE_UNAVAILABLE,
         )
 
     async def atomic_verify_and_commit(

@@ -13,12 +13,12 @@
 # limitations under the License.
 
 name: build
-# Cancel superseded runs for the same ref. Without this, the push +
-# pull_request double-trigger consumes two identical sets of runners on
-# every push to an open PR (measured: 23.3 duplicated job-minutes per push).
+# Cancel superseded runs on pull_request only; push runs set cancel-in-progress
+# false and key group by github.sha because shared groups still cancel queued
+# pending runs when a third run arrives, letting every main commit finish (POAM-2026-171).
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.head_ref || github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.head_ref || (github.event_name == 'push' && github.sha || github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 on:
   push:
@@ -106,6 +106,7 @@ jobs:
           echo "✅ Branch name is valid: $BRANCH_NAME"
 
   license-check:
+    name: "Apache 2.0 License Headers"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -157,7 +158,7 @@ jobs:
         # No -m filter: the guard must see EVERY collected item.
         # -p no:xdist / -n0 keeps the failure message single-copy and readable.
         run: |
-          uv run pytest tests/ --collect-only -q --no-cov -n0 \
+          uv run pytest tests/ packages/cage-client/tests/ --collect-only -q --no-cov -n0 \
             -p no:langsmith -p no:langsmith_plugin
 
   pytest-logic:
@@ -182,7 +183,7 @@ jobs:
         with:
           python-version-file: "pyproject.toml"
       - name: Install Dependencies
-        run: uv sync --all-groups --all-extras
+        run: uv sync --locked --all-groups --all-extras
       - name: Run Pytest (unit/local)
         env:
           CAGE_ENV: "test"
@@ -196,9 +197,11 @@ jobs:
           LANGFUSE_HOST: "http://localhost:3000"
           LANGFUSE_PUBLIC_KEY: "pk-dummy"
           LANGFUSE_SECRET_KEY: "sk-dummy"
-        run: uv run pytest -p no:langsmith -p no:langsmith_plugin tests/ -m "local or unit" -n auto --dist=loadscope -v --cov-branch --cov=src --cov-fail-under=70
+        run: uv run --no-sync pytest -p no:langsmith -p no:langsmith_plugin tests/ packages/cage-client/tests/ -m "local or unit" -n auto --dist=loadscope -v --cov-branch --cov=src --cov=cage_client --cov=packages/cage-conformance/src/cage_conformance --cov-context=test --cov-fail-under=70
+      - name: Verify fail-closed test reachability (@pytest.mark.covers)
+        run: uv run --no-sync python scripts/check_fail_closed_coverage.py --verify-coverage .coverage --verbose
       - name: Run Bandit SAST (medium+ severity)
-        run: uv run bandit -r src/ scripts/ packages/cage-client/src/ packages/cage-conformance/src/ proof/ deployment/ -c pyproject.toml -ll -ii
+        run: uv run --no-sync bandit -r src/ scripts/ packages/cage-client/src/ packages/cage-conformance/src/ proof/ deployment/ -c pyproject.toml -ll -ii
 
   lint:
     name: "Lint"
@@ -207,8 +210,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          # Full history: G9 verifies revision-pinned paths (`<sha>^:<path>`) against
-          # git history and fails closed in a shallow clone.
+          # Full history: G9 verifies revision-pinned paths (`<sha>^:<path>`) and
+          # check_poam_sha_citations.py verifies POA&M citations against git
+          # history; both fail closed in a shallow clone.
           fetch-depth: 0
       - name: Install uv
         uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
@@ -287,6 +291,10 @@ jobs:
         # W1.8: Ensure no maintainer-specific cloud project identifiers are leaked in tracked files.
         run: |
           uv run python scripts/check_project_id_hygiene.py --verbose
+      - name: Agent-injected context size cap check (POAM-2026-224)
+        # Discover all agent-injected rule, skill, workflow, and instruction files and enforce <= 24,000 bytes.
+        run: |
+          uv run python scripts/check_agents_size.py --verbose
       - name: Documentation reference check (G9 - No dangling paths or symbols in core docs)
         # Docs drift silently: a renamed module leaves the prose pointing at a file that
         # no longer exists. This gate fails the build on broken links, dangling file
@@ -298,6 +306,12 @@ jobs:
         # mainline commit (`<sha>^:<path>`), which this gate verifies against history.
         run: |
           uv run python scripts/check_doc_references.py
+      - name: Standards-citation gate (POAM-2026-247)
+        # Cited standard sections/articles/controls must exist, not be withdrawn,
+        # and carry the standard's meaning, checked against the sourced tables in
+        # compliance/standards/. Ratchet: tests/.standard-citation-baseline.
+        run: |
+          uv run python scripts/check_standard_citations.py
       - name: Partner content banner check (docs/partners)
         # Every docs/partners document carries a banner saying it is third-party
         # integration material, not a Google certification or endorsement of the
@@ -355,6 +369,42 @@ jobs:
         # if any selector in infra/ matches zero Terraform workload pod templates.
         run: |
           uv run python scripts/check_k8s_terraform_parity.py
+      - name: Published advisory fix-trace ancestry gate
+        # Verifies every row in SECURITY.md ## Security Advisories names a commit
+        # SHA that exists in git and is an ancestor of main.
+        run: |
+          uv run python scripts/check_advisory_traces.py --verbose
+      - name: POA&M SHA-citation grammar, chronology & ratchet gate
+        # Classifies every hex code span in docs/POAM.md and
+        # docs/compliance/**/POAM_*.md by git object (reachable from main) and
+        # typed label, checks closure dates against committer dates, and fails
+        # on any violation not in tests/.poam-sha-citation-baseline (needs the
+        # full history above; fails closed in a shallow clone).
+        run: |
+          uv run python scripts/check_poam_sha_citations.py
+      - name: Fail-closed test reachability marker gate (@pytest.mark.covers)
+        # AST checks every read_back and HTTP 503 fail-closed test carries a
+        # valid @pytest.mark.covers(...) target or categorized exemption
+        # (runtime reachability verified per '|run' context in pytest-logic).
+        run: |
+          uv run python scripts/check_fail_closed_coverage.py --verbose
+
+  advisory-trace-parity:
+    name: "Published Advisory Fix-Trace Parity"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version-file: "pyproject.toml"
+      - name: Verify SECURITY.md rows against live GitHub published advisories and main ancestry
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/check_advisory_traces.py --verify-github --repo "${GITHUB_REPOSITORY}" --verbose
 
   bare-kernel-smoke:
     name: "Bare-Kernel Smoke Test (Zero Cloud SDKs)"
@@ -837,10 +887,23 @@ jobs:
           kind create cluster --name cage-mesh-test --wait 90s
           kind load image-archive "${RUNNER_TEMP}/cage-gateway-mesh-ci.tar" --name cage-mesh-test
           rm -f "${RUNNER_TEMP}/cage-gateway-mesh-ci.tar"
-          export LINKERD2_VERSION=edge-26.9.3
-          curl --proto '=https' --tlsv1.2 -sSfL https://run.linkerd.io/install-edge | sh
+          LINKERD2_VERSION="edge-26.9.3"
+          LINKERD2_SHA256="79045fbc9352e3886127015a671d86ca78237ad72a32353df4602f6c6f235694"
+          GW_CRD_VERSION="v1.5.1"
+          GW_CRD_SHA256="751002b3b91a87f7ae3bd2517c79a47a8d7ed6702901808a1cf9bd97d284f9b8"
+          mkdir -p "$HOME/.linkerd2/bin"
+          curl --proto '=https' --tlsv1.2 -sSfL --retry 5 --retry-connrefused \
+            -o "$HOME/.linkerd2/bin/linkerd" \
+            "https://github.com/linkerd/linkerd2/releases/download/${LINKERD2_VERSION}/linkerd2-cli-${LINKERD2_VERSION}-linux-amd64"
+          echo "${LINKERD2_SHA256}  $HOME/.linkerd2/bin/linkerd" | sha256sum -c -
+          chmod 0755 "$HOME/.linkerd2/bin/linkerd"
           export PATH="$HOME/.linkerd2/bin:$PATH"
-          kubectl apply --server-side -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.1/standard-install.yaml
+          curl --proto '=https' --tlsv1.2 -sSfL --retry 5 --retry-connrefused \
+            -o "${RUNNER_TEMP}/gateway-api-standard-install.yaml" \
+            "https://github.com/kubernetes-sigs/gateway-api/releases/download/${GW_CRD_VERSION}/standard-install.yaml"
+          echo "${GW_CRD_SHA256}  ${RUNNER_TEMP}/gateway-api-standard-install.yaml" | sha256sum -c -
+          kubectl apply --server-side -f "${RUNNER_TEMP}/gateway-api-standard-install.yaml"
+          rm -f "${RUNNER_TEMP}/gateway-api-standard-install.yaml"
           linkerd install --crds | kubectl apply -f -
           linkerd install --set proxy.defaultInboundPolicy=all-authenticated | kubectl apply -f -
           linkerd check
@@ -988,11 +1051,11 @@ jobs:
           thresholds_digest=$(python3 -c 'import json, re, sys; d = json.loads(sys.argv[1])["thresholds_digest"]; assert re.fullmatch(r"[0-9a-f]{64}", d), d; print(d)' "$policy_json")
 
           # 1. Admitted & settled trade (ALLOW -> seal consumed -> ACTUATION_RECEIPT -> CONFIRMED)
-          allow_resp=$($call /tools/execute '{"tool_name":"execute_trade_action","params":{"symbol":"AAPL","amount":250.0,"currency":"USD","confidence":0.99,"transaction_id":"11111111-1111-4111-8111-111111111111","side":"buy"}}')
+          allow_resp=$($call /tools/execute '{"tool_name":"execute_trade_action","params":{"symbol":"AAPL","amount":250.0,"currency":"USD","confidence":0.99,"idempotency_key":"11111111-1111-4111-8111-111111111111","side":"buy"}}')
           python3 -c 'import json, sys; r = json.loads(sys.argv[1]); assert r.get("status") == "SUCCESS" and "EXECUTED:" in r.get("output", ""), r' "$allow_resp"
 
-          # 1b. HTTP replay of the already-executed transaction_id (ExecutionLedger Redis SET NX -> duplicate refusal receipt, no second actuation)
-          dup_resp=$($call /tools/execute '{"tool_name":"execute_trade_action","params":{"symbol":"AAPL","amount":250.0,"currency":"USD","confidence":0.99,"transaction_id":"11111111-1111-4111-8111-111111111111","side":"buy"}}')
+          # 1b. HTTP replay of the already-executed idempotency_key (ExecutionLedger Redis SET NX -> duplicate refusal receipt, no second actuation)
+          dup_resp=$($call /tools/execute '{"tool_name":"execute_trade_action","params":{"symbol":"AAPL","amount":250.0,"currency":"USD","confidence":0.99,"idempotency_key":"11111111-1111-4111-8111-111111111111","side":"buy"}}')
           dup_refusal_hash=$(python3 -c 'import json, re, sys; a, d = json.loads(sys.argv[1]), json.loads(sys.argv[2]); assert d.get("status") == "SUCCESS" and d.get("output") == a.get("output"), (a, d); h = d["proof_hash"]; assert re.fullmatch(r"[0-9a-f]{64}", h), d; print(h)' "$allow_resp" "$dup_resp")
 
           # 1c. Direct routing-seal nonce replay (Theorem 5.3 / INV-2: mint EdDSA JWT -> consume #1 commits GOVERNANCE_SEAL_CONSUMED -> consume #2 on same seal refused by live Redis Lua burn)
@@ -1036,12 +1099,12 @@ jobs:
 
           # 2. Admitted by governor, interrupted at broker -> rolled back (CBF_ROLLBACK + ROLLED_BACK settlement)
           docker compose exec -T redis redis-cli -n 0 SET safety_violation smoke_interrupt >/dev/null
-          rollback_resp=$($call /tools/execute '{"tool_name":"execute_trade_action","params":{"symbol":"MSFT","amount":300.0,"currency":"USD","confidence":0.99,"transaction_id":"22222222-2222-4222-8222-222222222222","side":"buy"}}')
+          rollback_resp=$($call /tools/execute '{"tool_name":"execute_trade_action","params":{"symbol":"MSFT","amount":300.0,"currency":"USD","confidence":0.99,"idempotency_key":"22222222-2222-4222-8222-222222222222","side":"buy"}}')
           docker compose exec -T redis redis-cli -n 0 DEL safety_violation >/dev/null
           python3 -c 'import json, sys; r = json.loads(sys.argv[1]); assert r.get("status") == "ERROR" and "Actuation rejected" in r.get("error", ""), r' "$rollback_resp"
 
           # 3. Denied by governor (restricted asset BTC -> GOVERNANCE_REFUSAL + caller proof_hash)
-          deny_resp=$($call /tools/execute '{"tool_name":"execute_trade_action","params":{"symbol":"BTC","amount":100.0,"currency":"USD","confidence":0.99,"transaction_id":"33333333-3333-4333-8333-333333333333","side":"buy"}}')
+          deny_resp=$($call /tools/execute '{"tool_name":"execute_trade_action","params":{"symbol":"BTC","amount":100.0,"currency":"USD","confidence":0.99,"idempotency_key":"33333333-3333-4333-8333-333333333333","side":"buy"}}')
           refusal_hash=$(python3 -c 'import json, re, sys; r = json.loads(sys.argv[1]); assert "BLOCKED:" in r.get("output", ""), r; h = r["proof_hash"]; assert re.fullmatch(r"[0-9a-f]{64}", h), r; print(h)' "$deny_resp")
 
           # Flush group-commit window and export raw Redis Stream entries from DB 1
@@ -1256,3 +1319,49 @@ jobs:
           echo "${VERIFY_OUT}"
           grep -q "conformant=True" <<<"${VERIFY_OUT}"
           grep -q "posture=AUTHOR_SELF_TEST" <<<"${VERIFY_OUT}"
+
+  client-sdk-wheel-smoke:
+    name: "Client SDK Built-Wheel Smoke (Bare + [langgraph])"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Check whether client SDK or release smoke path changed
+        id: changed
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            changed=$(git diff --name-only "$BASE_SHA"...HEAD -- \
+              packages/cage-client/ \
+              scripts/smoke_test_client_wheel.sh \
+              .github/workflows/publish-client-sdk.yml \
+              .github/workflows/ci.yml)
+            if [ -n "$changed" ]; then
+              echo "run=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "run=false" >> "$GITHUB_OUTPUT"
+              echo "No cage-client / wheel-smoke changes in PR; skipping built-wheel smoke."
+            fi
+          fi
+      - name: Install uv
+        if: steps.changed.outputs.run == 'true'
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          enable-cache: true
+      - name: Set up Python
+        if: steps.changed.outputs.run == 'true'
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version-file: "pyproject.toml"
+      - name: Build & Two-Phase Smoke-Test cage-client Wheel
+        if: steps.changed.outputs.run == 'true'
+        run: bash scripts/smoke_test_client_wheel.sh

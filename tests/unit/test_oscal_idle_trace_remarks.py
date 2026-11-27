@@ -68,6 +68,7 @@ from src.compliance_bridge.main import InfraEvent, app
 from src.compliance_bridge.metrics import (
     _fetch_from_evidence_stream_sync,
     _is_passing_evidence_record,
+    get_last_healthy_lula_audit_age_seconds,
     get_last_passing_lula_audit_age_seconds,
     invalidate_compliance_metrics_cache,
 )
@@ -368,11 +369,37 @@ class TestLulaNativeObservationsStatisticalSpecs:
                         False,
                     ),
                     (
+                        "insufficient_sample",
+                        {
+                            "control_id": cid,
+                            "safety_rate": pass_rate,
+                            "total_traces": 30,
+                            "evidence_age_seconds": 120.0,
+                            "startup_grace_active": False,
+                        },
+                        "not-satisfied",
+                        False,
+                    ),
+                    (
+                        "threshold_violation"
+                        if cid == "A.9.2"
+                        else "insufficient_sample",
+                        {
+                            "control_id": cid,
+                            "safety_rate": fail_rate,
+                            "total_traces": 30,
+                            "evidence_age_seconds": 120.0,
+                            "startup_grace_active": False,
+                        },
+                        "not-satisfied",
+                        False,
+                    ),
+                    (
                         "threshold_violation",
                         {
                             "control_id": cid,
                             "safety_rate": fail_rate,
-                            "total_traces": 20,
+                            "total_traces": 350,
                             "evidence_age_seconds": 120.0,
                             "startup_grace_active": False,
                         },
@@ -384,7 +411,7 @@ class TestLulaNativeObservationsStatisticalSpecs:
                         {
                             "control_id": cid,
                             "safety_rate": pass_rate,
-                            "total_traces": 20,
+                            "total_traces": 350,
                             "evidence_age_seconds": 200000.0,
                             "startup_grace_active": False,
                         },
@@ -408,7 +435,7 @@ class TestLulaNativeObservationsStatisticalSpecs:
                         {
                             "control_id": cid,
                             "safety_rate": pass_rate,
-                            "total_traces": 25,
+                            "total_traces": 350,
                             "evidence_age_seconds": 45.0,
                             "startup_grace_active": False,
                         },
@@ -965,11 +992,20 @@ class TestThreeStateLulaAuditPipeline:
             assert a53_metrics.total_traces == 0
             assert a53_metrics.safety_rate is None
 
-            # Yet the 1800s dead-man's switch recognizes the healthy 26-manifest
-            # 0-failure execution so idle nights do not page after 30 minutes!
+            # Two-question separation (POAM-2026-234):
+            # 1) Statistical satisfaction (`get_last_passing_lula_audit_age_seconds`)
+            #    stays (None, None) so an idle night never claims 26/26 pass.
+            # 2) Auditor liveness (`get_last_healthy_lula_audit_age_seconds`)
+            #    advances because 26/26 manifests were evaluated with 0 failures.
+            assert a53_metrics.self_evaluation_records_excluded == 1
             age_s, last_iso = get_last_passing_lula_audit_age_seconds(window_hours=24)
-            assert age_s is not None and age_s < 600.0
-            assert last_iso is not None
+            assert age_s is None
+            assert last_iso is None
+            healthy_age_s, healthy_iso = get_last_healthy_lula_audit_age_seconds(
+                window_hours=24
+            )
+            assert healthy_age_s is not None and healthy_age_s < 120.0
+            assert healthy_iso is not None
 
         live_metrics = MagicMock()
         live_metrics.startup_grace_active = False
@@ -995,6 +1031,8 @@ class TestThreeStateLulaAuditPipeline:
         ):
             await sla_mod._check_sla_once()
 
+        # Auditor-healthy `INSUFFICIENT_TRAFFIC` run within `2 x schedule` keeps
+        # the auditor liveness dead-man silent without claiming statistical pass.
         mock_notifier.send_critical_alert.assert_not_called()
         assert (
             _metric_value(sla_mod.LULA_AUDIT_DEADMAN_BREACHES_TOTAL) == before_deadman

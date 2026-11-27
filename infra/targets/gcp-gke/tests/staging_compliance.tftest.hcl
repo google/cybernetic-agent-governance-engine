@@ -28,7 +28,14 @@
 # The key values and CIDRs below are test fixtures, not credentials or
 # operator addresses (203.0.113.0/24 is TEST-NET-3).
 
-mock_provider "google" {}
+mock_provider "google" {
+  mock_data "google_monitoring_notification_channel" {
+    defaults = {
+      enabled = true
+      name    = "projects/cage-test-project/notificationChannels/12345"
+    }
+  }
+}
 mock_provider "helm" {}
 mock_provider "kubernetes" {}
 mock_provider "random" {}

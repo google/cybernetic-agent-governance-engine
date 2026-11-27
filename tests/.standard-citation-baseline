@@ -1,0 +1,589 @@
+{
+  "schema_version": 1,
+  "detector_sha256": "2349a08be773941e71abf8281e45c5879ba79bdf9bc43a5813574d4c449c58b0",
+  "baseline": 230,
+  "standing_debt_policy": "Non-regression ratchet over standing standards-citation debt (POAM-2026-247). New violation identities fail immediately. Corrections are a follow-up, ordered: generated sources (config/oscal/framework_mappings, iso_control.py maps) first, then OSCAL/Lula/census, then prose and tests; each correction lowers the baseline with --update-baseline.",
+  "counts": {
+    "dora": {
+      "EXACT_TITLE_MISMATCH": 1,
+      "NONEXISTENT": 4,
+      "WRONG_TITLE": 11
+    },
+    "eu-ai-act": {
+      "EXACT_TITLE_MISMATCH": 14,
+      "WRONG_TITLE": 3
+    },
+    "gdpr": {
+      "EXACT_TITLE_MISMATCH": 2,
+      "WRONG_TITLE": 3
+    },
+    "iso-iec-42001-2023": {
+      "EXACT_TITLE_MISMATCH": 7,
+      "NONEXISTENT": 3,
+      "WRONG_TITLE": 60
+    },
+    "mas-feat": {
+      "EXACT_TITLE_MISMATCH": 3
+    },
+    "mas-notice-655": {
+      "EXACT_TITLE_MISMATCH": 1,
+      "WRONG_TITLE": 1
+    },
+    "mas-trm": {
+      "EXACT_TITLE_MISMATCH": 2,
+      "WRONG_TITLE": 4
+    },
+    "nist-ai-600-1": {
+      "NONEXISTENT": 29,
+      "WRONG_TITLE": 62
+    },
+    "nist-ai-rmf-1.0": {
+      "WRONG_TITLE": 2
+    },
+    "nist-sp-800-53-r5": {
+      "EXACT_TITLE_MISMATCH": 2,
+      "ID_COLLISION": 7,
+      "NONEXISTENT": 1,
+      "WITHDRAWN": 8
+    }
+  },
+  "violations": {
+    "dora|10|EXACT_TITLE_MISMATCH|fdde3452955e3826": 1,
+    "dora|10|WRONG_TITLE|07aa022dfb68c159": 1,
+    "dora|10|WRONG_TITLE|2b01acc1be8aca56": 1,
+    "dora|10|WRONG_TITLE|314fa35af98e6b9f": 1,
+    "dora|10|WRONG_TITLE|9216371dadff2e69": 1,
+    "dora|10|WRONG_TITLE|a7e005fab5d65b21": 1,
+    "dora|11|WRONG_TITLE|039be6c4e9aa5e69": 1,
+    "dora|12(1)(c)|NONEXISTENT|1ebfd4b01c0fabdf": 1,
+    "dora|12(1)(c)|NONEXISTENT|ebce376ef5553378": 1,
+    "dora|12(1)(d)|NONEXISTENT|1d7be1f6970acd11": 1,
+    "dora|12(1)(d)|NONEXISTENT|86fb7ffd94c4a2fd": 1,
+    "dora|12|WRONG_TITLE|676707d5d7c3be71": 1,
+    "dora|12|WRONG_TITLE|bb7ba167f1941a97": 1,
+    "dora|12|WRONG_TITLE|c4794f681d802d9b": 1,
+    "dora|12|WRONG_TITLE|d97aaa9f2d4fc6b4": 1,
+    "dora|12|WRONG_TITLE|dae08a7fa3e4319c": 1,
+    "eu-ai-act|10(3)|EXACT_TITLE_MISMATCH|aaedfaccbe0783e0": 1,
+    "eu-ai-act|10(5)|EXACT_TITLE_MISMATCH|5f359000fb73970b": 1,
+    "eu-ai-act|10|EXACT_TITLE_MISMATCH|ee7c21b5eec44095": 1,
+    "eu-ai-act|12|EXACT_TITLE_MISMATCH|84d2dab37ceed210": 1,
+    "eu-ai-act|12|EXACT_TITLE_MISMATCH|b8ad5dbe23681717": 1,
+    "eu-ai-act|13|EXACT_TITLE_MISMATCH|87aaf5bc3d14f3a7": 1,
+    "eu-ai-act|14|EXACT_TITLE_MISMATCH|3d0bbf09cd2496e7": 1,
+    "eu-ai-act|17|EXACT_TITLE_MISMATCH|fc83de5d5b8c3477": 1,
+    "eu-ai-act|27|WRONG_TITLE|a4ad65f5a5496db3": 1,
+    "eu-ai-act|61|WRONG_TITLE|ccabf40418efad19": 1,
+    "eu-ai-act|61|WRONG_TITLE|e186b3ab93654c96": 1,
+    "eu-ai-act|9(2)(b)|EXACT_TITLE_MISMATCH|6b147c5d1b37f278": 1,
+    "eu-ai-act|9(4)|EXACT_TITLE_MISMATCH|1ce4a1235a78fc8e": 1,
+    "eu-ai-act|9(5)|EXACT_TITLE_MISMATCH|ffd218aedcbd65c4": 1,
+    "eu-ai-act|9|EXACT_TITLE_MISMATCH|321ef1a96676f479": 1,
+    "eu-ai-act|9|EXACT_TITLE_MISMATCH|a2a4e1b2fb2229a6": 1,
+    "eu-ai-act|Annex III 5(b)|EXACT_TITLE_MISMATCH|e202a4719b3a4294": 1,
+    "gdpr|22(2)(b)|WRONG_TITLE|6e1de9034749d263": 1,
+    "gdpr|22|EXACT_TITLE_MISMATCH|45843c39279fd48e": 1,
+    "gdpr|22|EXACT_TITLE_MISMATCH|9a43e363de4cad24": 1,
+    "gdpr|25|WRONG_TITLE|d1de61e3818818af": 1,
+    "gdpr|44|WRONG_TITLE|cf92e83931eac28b": 1,
+    "iso-iec-42001-2023|12|NONEXISTENT|b576eecdec9f643b": 1,
+    "iso-iec-42001-2023|2.1|NONEXISTENT|db5d373f7416455e": 1,
+    "iso-iec-42001-2023|6.1|WRONG_TITLE|0bbf57a970bf2085": 1,
+    "iso-iec-42001-2023|9.1|WRONG_TITLE|2c98af3642fbdf05": 1,
+    "iso-iec-42001-2023|9.1|WRONG_TITLE|afa5183e932be3ab": 1,
+    "iso-iec-42001-2023|A.4|WRONG_TITLE|b6148b59847b7c97": 1,
+    "iso-iec-42001-2023|A.5.2|EXACT_TITLE_MISMATCH|43445968db13e802": 1,
+    "iso-iec-42001-2023|A.5.2|WRONG_TITLE|5046403d7a5d35d2": 1,
+    "iso-iec-42001-2023|A.5.2|WRONG_TITLE|bb2540f288de8212": 1,
+    "iso-iec-42001-2023|A.5.2|WRONG_TITLE|eac9d059b405155a": 1,
+    "iso-iec-42001-2023|A.5.3 §b|NONEXISTENT|801e79892a4d10d5": 1,
+    "iso-iec-42001-2023|A.5.3|WRONG_TITLE|0129dc1126d5f4d1": 1,
+    "iso-iec-42001-2023|A.5.3|WRONG_TITLE|012b7ff5d45a4555": 1,
+    "iso-iec-42001-2023|A.5.3|WRONG_TITLE|38b7e8259794b508": 1,
+    "iso-iec-42001-2023|A.5.3|WRONG_TITLE|4b54feca5b779593": 1,
+    "iso-iec-42001-2023|A.5.3|WRONG_TITLE|6acc1a4e2d925fd8": 1,
+    "iso-iec-42001-2023|A.5.3|WRONG_TITLE|7d28cc166f7d3c27": 1,
+    "iso-iec-42001-2023|A.5.3|WRONG_TITLE|851f4966e98cce73": 1,
+    "iso-iec-42001-2023|A.5.3|WRONG_TITLE|874abe2ad5841198": 1,
+    "iso-iec-42001-2023|A.5.3|WRONG_TITLE|a4f01c3ebf03b55b": 1,
+    "iso-iec-42001-2023|A.5.3|WRONG_TITLE|b8419d5dc01a1a11": 1,
+    "iso-iec-42001-2023|A.5.3|WRONG_TITLE|cdffa58539c188dd": 1,
+    "iso-iec-42001-2023|A.5.3|WRONG_TITLE|dfef229d2c85dc81": 1,
+    "iso-iec-42001-2023|A.5.3|WRONG_TITLE|e864bbad36a9aa32": 1,
+    "iso-iec-42001-2023|A.5.3|WRONG_TITLE|e9dc4a3585d9217c": 1,
+    "iso-iec-42001-2023|A.6.1|EXACT_TITLE_MISMATCH|6d6abe59e87cfb0c": 1,
+    "iso-iec-42001-2023|A.6.1|WRONG_TITLE|9960857d5f6b7f80": 1,
+    "iso-iec-42001-2023|A.6.2|EXACT_TITLE_MISMATCH|0f9b3d9d471c3d4d": 1,
+    "iso-iec-42001-2023|A.6|WRONG_TITLE|8973ea1bea18f6fa": 1,
+    "iso-iec-42001-2023|A.6|WRONG_TITLE|a633cd5f8b7aac11": 1,
+    "iso-iec-42001-2023|A.7.2|WRONG_TITLE|076ccc8f3e7e2d00": 1,
+    "iso-iec-42001-2023|A.7.2|WRONG_TITLE|0b18286a143b803a": 1,
+    "iso-iec-42001-2023|A.7.2|WRONG_TITLE|5733f2f72c9c6e0f": 1,
+    "iso-iec-42001-2023|A.7.2|WRONG_TITLE|5922e05ec1bfabd7": 1,
+    "iso-iec-42001-2023|A.7.2|WRONG_TITLE|6814c4e0aa312efa": 1,
+    "iso-iec-42001-2023|A.7.2|WRONG_TITLE|80f002c5ebfab675": 1,
+    "iso-iec-42001-2023|A.7.2|WRONG_TITLE|f8c65e86574db19f": 1,
+    "iso-iec-42001-2023|A.7.5|EXACT_TITLE_MISMATCH|9f065824dc8c7b61": 1,
+    "iso-iec-42001-2023|A.7.5|WRONG_TITLE|a5784a3365b6a976": 1,
+    "iso-iec-42001-2023|A.7.5|WRONG_TITLE|ad6280924a5fc3de": 1,
+    "iso-iec-42001-2023|A.8.4|EXACT_TITLE_MISMATCH|aed46cecef78ce6a": 1,
+    "iso-iec-42001-2023|A.8.4|WRONG_TITLE|19e9b9d7742e6edf": 1,
+    "iso-iec-42001-2023|A.8.4|WRONG_TITLE|22cab57376371894": 1,
+    "iso-iec-42001-2023|A.8.4|WRONG_TITLE|251d50c8230d2542": 1,
+    "iso-iec-42001-2023|A.8.4|WRONG_TITLE|3df4bf5727d8d0f3": 3,
+    "iso-iec-42001-2023|A.8.4|WRONG_TITLE|4d21e69ef434449e": 1,
+    "iso-iec-42001-2023|A.8.4|WRONG_TITLE|55c4a6cd1a481e2a": 1,
+    "iso-iec-42001-2023|A.8.4|WRONG_TITLE|5903f666aa32f8e1": 1,
+    "iso-iec-42001-2023|A.8.4|WRONG_TITLE|597311601f19d043": 1,
+    "iso-iec-42001-2023|A.8.4|WRONG_TITLE|77fc39fd4d9db229": 1,
+    "iso-iec-42001-2023|A.8.4|WRONG_TITLE|80f002c5ebfab675": 1,
+    "iso-iec-42001-2023|A.8.4|WRONG_TITLE|8e804a5446b3727e": 1,
+    "iso-iec-42001-2023|A.8.4|WRONG_TITLE|93d5d03851b6e7b8": 1,
+    "iso-iec-42001-2023|A.8.4|WRONG_TITLE|d01a50f9598a5cc3": 1,
+    "iso-iec-42001-2023|A.8.4|WRONG_TITLE|d0dc9a5e9c00792d": 1,
+    "iso-iec-42001-2023|A.8.4|WRONG_TITLE|d22d6a544600bbac": 1,
+    "iso-iec-42001-2023|A.8.4|WRONG_TITLE|d7fd8328221634e4": 1,
+    "iso-iec-42001-2023|A.9.2|EXACT_TITLE_MISMATCH|f47876b4cf834b20": 1,
+    "iso-iec-42001-2023|A.9.2|WRONG_TITLE|0dac23490f1c4a20": 1,
+    "iso-iec-42001-2023|A.9.2|WRONG_TITLE|37df431952a8d317": 1,
+    "iso-iec-42001-2023|A.9.2|WRONG_TITLE|4b54feca5b779593": 1,
+    "iso-iec-42001-2023|A.9.2|WRONG_TITLE|7034e3d20fce0661": 1,
+    "iso-iec-42001-2023|A.9.2|WRONG_TITLE|8c7919a46102478f": 1,
+    "iso-iec-42001-2023|A.9.2|WRONG_TITLE|9c22af088cf6ff7f": 1,
+    "iso-iec-42001-2023|A.9.2|WRONG_TITLE|f3f15928c93b6a21": 1,
+    "iso-iec-42001-2023|A.9.3|WRONG_TITLE|f1f1d94f61f92322": 1,
+    "iso-iec-42001-2023|A.9.4|EXACT_TITLE_MISMATCH|4f4e271f1e8e403f": 1,
+    "iso-iec-42001-2023|A.9.4|WRONG_TITLE|bb2540f288de8212": 1,
+    "mas-feat|2|EXACT_TITLE_MISMATCH|d35ee731d34b6324": 1,
+    "mas-feat|3|EXACT_TITLE_MISMATCH|b6929721110b4038": 1,
+    "mas-feat|4|EXACT_TITLE_MISMATCH|f7967037725e3e2e": 1,
+    "mas-notice-655|4.3|EXACT_TITLE_MISMATCH|7c903600cfacbee9": 1,
+    "mas-notice-655|4.3|WRONG_TITLE|901b1e23d270e36c": 1,
+    "mas-trm|14|WRONG_TITLE|29e3733ed957f251": 1,
+    "mas-trm|4.2|EXACT_TITLE_MISMATCH|28a30f52bd67756c": 1,
+    "mas-trm|4.2|WRONG_TITLE|3001528194bb00c4": 1,
+    "mas-trm|4.2|WRONG_TITLE|65c121bb98e7fafb": 1,
+    "mas-trm|4.2|WRONG_TITLE|90117daeaf7368b1": 1,
+    "mas-trm|6.3|EXACT_TITLE_MISMATCH|026a09d6344a4681": 1,
+    "nist-ai-600-1|2.12|WRONG_TITLE|911a6f2e557fbbc2": 1,
+    "nist-ai-600-1|2.1|WRONG_TITLE|8caaadbb52945788": 1,
+    "nist-ai-600-1|2.1|WRONG_TITLE|90e1998be2d108fd": 1,
+    "nist-ai-600-1|2.1|WRONG_TITLE|b273e2f817e9bf4a": 1,
+    "nist-ai-600-1|2.1|WRONG_TITLE|d3aeab861a4ba1bf": 1,
+    "nist-ai-600-1|2.1|WRONG_TITLE|d9203654bea86a6d": 1,
+    "nist-ai-600-1|2.1|WRONG_TITLE|ec7408a58af9a0d6": 1,
+    "nist-ai-600-1|2.1|WRONG_TITLE|fb5a46c982445e21": 3,
+    "nist-ai-600-1|2.2|WRONG_TITLE|252619103808bf04": 1,
+    "nist-ai-600-1|2.2|WRONG_TITLE|556e76ffbf9bbef2": 1,
+    "nist-ai-600-1|2.2|WRONG_TITLE|747d5d280645496a": 1,
+    "nist-ai-600-1|2.2|WRONG_TITLE|81153942874aee0c": 1,
+    "nist-ai-600-1|2.2|WRONG_TITLE|8ddffc9d2cc9c32e": 1,
+    "nist-ai-600-1|2.2|WRONG_TITLE|c0259e3a1902e405": 3,
+    "nist-ai-600-1|2.2|WRONG_TITLE|e24549620fb8baa6": 1,
+    "nist-ai-600-1|2.2|WRONG_TITLE|f1b54d272c098b01": 1,
+    "nist-ai-600-1|2.3|WRONG_TITLE|162da61e7ca2e1d2": 1,
+    "nist-ai-600-1|2.3|WRONG_TITLE|29e5b169a80e553e": 1,
+    "nist-ai-600-1|2.3|WRONG_TITLE|2aa20294fc4840ba": 1,
+    "nist-ai-600-1|2.3|WRONG_TITLE|608fc75aff30deba": 1,
+    "nist-ai-600-1|2.3|WRONG_TITLE|8236371951611633": 1,
+    "nist-ai-600-1|2.3|WRONG_TITLE|88acc4e10a5885dc": 1,
+    "nist-ai-600-1|2.3|WRONG_TITLE|af6b2ce0e8670efa": 1,
+    "nist-ai-600-1|2.3|WRONG_TITLE|b81aa4b3b22cb454": 3,
+    "nist-ai-600-1|2.3|WRONG_TITLE|bea6a8c4ddf69fd8": 1,
+    "nist-ai-600-1|2.3|WRONG_TITLE|e30778d5ff59a118": 1,
+    "nist-ai-600-1|2.4|WRONG_TITLE|1ea8b8db564b56cf": 1,
+    "nist-ai-600-1|2.4|WRONG_TITLE|8b3a98f04b83234e": 1,
+    "nist-ai-600-1|2.4|WRONG_TITLE|9f957740376ec1e4": 1,
+    "nist-ai-600-1|2.5.1|NONEXISTENT|987fec5e9ef08442": 1,
+    "nist-ai-600-1|2.5.1|NONEXISTENT|feeca38b7a048b95": 1,
+    "nist-ai-600-1|2.5.2|NONEXISTENT|0f585580f90cc8c4": 1,
+    "nist-ai-600-1|2.5.2|NONEXISTENT|2450b62bb51f5a3e": 1,
+    "nist-ai-600-1|2.5.2|NONEXISTENT|2c4a7ddbccda503e": 1,
+    "nist-ai-600-1|2.5.2|NONEXISTENT|7dca253d8c5dba66": 1,
+    "nist-ai-600-1|2.5.3|NONEXISTENT|0ec563b6565a898c": 1,
+    "nist-ai-600-1|2.5.3|NONEXISTENT|0f585580f90cc8c4": 1,
+    "nist-ai-600-1|2.5.3|NONEXISTENT|b3ba59d356e8de28": 1,
+    "nist-ai-600-1|2.5.3|NONEXISTENT|d5467d339b4e95bd": 1,
+    "nist-ai-600-1|2.5.3|NONEXISTENT|f9aa7c50843741cc": 1,
+    "nist-ai-600-1|2.5.4|NONEXISTENT|292b84a008f7a635": 1,
+    "nist-ai-600-1|2.5.4|NONEXISTENT|2a63a45a0a177876": 1,
+    "nist-ai-600-1|2.5.4|NONEXISTENT|432bb6085d9edef3": 1,
+    "nist-ai-600-1|2.5.4|NONEXISTENT|51e464c06d7b990d": 1,
+    "nist-ai-600-1|2.5.4|NONEXISTENT|987fec5e9ef08442": 1,
+    "nist-ai-600-1|2.5.4|NONEXISTENT|ad10256f407960ee": 1,
+    "nist-ai-600-1|2.5.4|NONEXISTENT|c257780a0c45a195": 1,
+    "nist-ai-600-1|2.5.4|NONEXISTENT|d3e322a883645654": 1,
+    "nist-ai-600-1|2.5.4|NONEXISTENT|ddb0ea12cead06f3": 1,
+    "nist-ai-600-1|2.5.4|NONEXISTENT|ede5445e69793724": 1,
+    "nist-ai-600-1|2.5.4|NONEXISTENT|feeca38b7a048b95": 1,
+    "nist-ai-600-1|2.5|WRONG_TITLE|007546ad9bd3bb29": 1,
+    "nist-ai-600-1|2.5|WRONG_TITLE|2bab0d79a04ae1c5": 1,
+    "nist-ai-600-1|2.5|WRONG_TITLE|47f1170f3135e209": 1,
+    "nist-ai-600-1|2.5|WRONG_TITLE|59c6de90c0b2b6e6": 1,
+    "nist-ai-600-1|2.5|WRONG_TITLE|661b0349f3d8c6e8": 1,
+    "nist-ai-600-1|2.5|WRONG_TITLE|b368cc9378a8bf6f": 1,
+    "nist-ai-600-1|2.5|WRONG_TITLE|be57fca8d233c7c6": 1,
+    "nist-ai-600-1|2.5|WRONG_TITLE|dea2f85fa739ed81": 1,
+    "nist-ai-600-1|2.5|WRONG_TITLE|faadb3634fb89c9d": 3,
+    "nist-ai-600-1|2.6|WRONG_TITLE|04ae514453cd831e": 3,
+    "nist-ai-600-1|2.6|WRONG_TITLE|09049dcfa220fe30": 1,
+    "nist-ai-600-1|2.6|WRONG_TITLE|12ef660312935fce": 2,
+    "nist-ai-600-1|2.6|WRONG_TITLE|26d0410b48fb6036": 1,
+    "nist-ai-600-1|2.6|WRONG_TITLE|89351077bea0de14": 1,
+    "nist-ai-600-1|2.6|WRONG_TITLE|cdb21c0a0c04f315": 1,
+    "nist-ai-600-1|2.6|WRONG_TITLE|d078700f06f2e570": 1,
+    "nist-ai-600-1|2.7|WRONG_TITLE|25806c2cd4d181c7": 1,
+    "nist-ai-600-1|2.7|WRONG_TITLE|82b64ef156f5f1fe": 1,
+    "nist-ai-600-1|2.7|WRONG_TITLE|f30c13499bf42bbe": 1,
+    "nist-ai-600-1|2.8|WRONG_TITLE|1b06ad4181b2e10f": 1,
+    "nist-ai-600-1|2.8|WRONG_TITLE|3b0f7bb04bff9eff": 1,
+    "nist-ai-600-1|2.8|WRONG_TITLE|893828084d4b24cd": 1,
+    "nist-ai-600-1|4.2|NONEXISTENT|d1f110e5f309d053": 1,
+    "nist-ai-600-1|4.4|NONEXISTENT|d1f110e5f309d053": 1,
+    "nist-ai-600-1|4.6|NONEXISTENT|d1f110e5f309d053": 1,
+    "nist-ai-600-1|4.9|NONEXISTENT|d1f110e5f309d053": 1,
+    "nist-ai-600-1|4|NONEXISTENT|306c5c5ac0a314b4": 1,
+    "nist-ai-600-1|4|NONEXISTENT|41629462b645772e": 1,
+    "nist-ai-600-1|4|NONEXISTENT|9166fa0024de8abc": 1,
+    "nist-ai-rmf-1.0|GOVERN 5|WRONG_TITLE|e85c0d8e3d4c63a3": 1,
+    "nist-ai-rmf-1.0|MANAGE 2.4|WRONG_TITLE|c01cbc37d1a2932c": 1,
+    "nist-sp-800-53-r5|AU-10|EXACT_TITLE_MISMATCH|67304d8789e2696e": 1,
+    "nist-sp-800-53-r5|CA-04|ID_COLLISION|272f13d15cdc804f": 1,
+    "nist-sp-800-53-r5|CA-04|ID_COLLISION|f904ce8a74069f6f": 1,
+    "nist-sp-800-53-r5|CA-06|ID_COLLISION|097522c8ec7c6357": 1,
+    "nist-sp-800-53-r5|CA-06|ID_COLLISION|b0ab99942894371a": 1,
+    "nist-sp-800-53-r5|GOVERN 1.1|NONEXISTENT|17aef31f11c066e0": 1,
+    "nist-sp-800-53-r5|IR-9(1)|WITHDRAWN|967acf9246ea3f70": 1,
+    "nist-sp-800-53-r5|PE-13(3)|WITHDRAWN|2ea638b82a485643": 1,
+    "nist-sp-800-53-r5|SC-19|WITHDRAWN|0cf0364d3c753714": 1,
+    "nist-sp-800-53-r5|SC-34(3)|WITHDRAWN|af49ed7bafd80347": 1,
+    "nist-sp-800-53-r5|SC-4|EXACT_TITLE_MISMATCH|e85cea405a629cdb": 1,
+    "nist-sp-800-53-r5|SC-4|ID_COLLISION|0e6d75a37c7d6c8c": 1,
+    "nist-sp-800-53-r5|SC-4|ID_COLLISION|f3662748b8a9dfbe": 1,
+    "nist-sp-800-53-r5|SC-4|ID_COLLISION|fd24599757e484f3": 1,
+    "nist-sp-800-53-r5|SI-3(1)|WITHDRAWN|2b3211fe47368609": 1,
+    "nist-sp-800-53-r5|SI-3(2)|WITHDRAWN|92180c39578e16ec": 1,
+    "nist-sp-800-53-r5|SI-7(14)|WITHDRAWN|8aeaf52f65e74d08": 1,
+    "nist-sp-800-53-r5|SI-8(1)|WITHDRAWN|4b884196658a22c6": 1
+  },
+  "history": [
+    {
+      "event": "initial_baseline",
+      "date": "2026-11-23",
+      "detector_sha256": "b2ee03e6cd82fd2c516bd60ed6d8e03f89fea98721200aa6f149caf1498b45cf",
+      "before_detector_sha256": null,
+      "before_baseline": null,
+      "after_baseline": 234,
+      "counts": {
+        "dora": {
+          "EXACT_TITLE_MISMATCH": 1,
+          "NONEXISTENT": 4,
+          "WRONG_TITLE": 11
+        },
+        "eu-ai-act": {
+          "EXACT_TITLE_MISMATCH": 14,
+          "WRONG_TITLE": 3
+        },
+        "gdpr": {
+          "EXACT_TITLE_MISMATCH": 2,
+          "WRONG_TITLE": 3
+        },
+        "iso-iec-42001-2023": {
+          "EXACT_TITLE_MISMATCH": 7,
+          "NONEXISTENT": 3,
+          "WRONG_TITLE": 61
+        },
+        "mas-feat": {
+          "EXACT_TITLE_MISMATCH": 3
+        },
+        "mas-notice-655": {
+          "EXACT_TITLE_MISMATCH": 1,
+          "WRONG_TITLE": 1
+        },
+        "mas-trm": {
+          "EXACT_TITLE_MISMATCH": 2,
+          "WRONG_TITLE": 4
+        },
+        "nist-ai-600-1": {
+          "NONEXISTENT": 31,
+          "WRONG_TITLE": 63
+        },
+        "nist-ai-rmf-1.0": {
+          "WRONG_TITLE": 2
+        },
+        "nist-sp-800-53-r5": {
+          "EXACT_TITLE_MISMATCH": 2,
+          "ID_COLLISION": 7,
+          "NONEXISTENT": 1,
+          "WITHDRAWN": 8
+        }
+      },
+      "reason": "Initial POAM-2026-247 seed from the tree at origin/main 1279cf95 plus this branch: 234 anchored violations across ten sourced reference tables; reconciled against the 2026-11-23 standards-section audit TSV."
+    },
+    {
+      "event": "recompute",
+      "date": "2026-11-23",
+      "detector_sha256": "5c87d7670b9e9c8e6c29fb7a96b4be48299267c08d78b2f80d988c84da163f3f",
+      "before_detector_sha256": "b2ee03e6cd82fd2c516bd60ed6d8e03f89fea98721200aa6f149caf1498b45cf",
+      "before_baseline": 234,
+      "after_baseline": 234,
+      "counts": {
+        "dora": {
+          "EXACT_TITLE_MISMATCH": 1,
+          "NONEXISTENT": 4,
+          "WRONG_TITLE": 11
+        },
+        "eu-ai-act": {
+          "EXACT_TITLE_MISMATCH": 14,
+          "WRONG_TITLE": 3
+        },
+        "gdpr": {
+          "EXACT_TITLE_MISMATCH": 2,
+          "WRONG_TITLE": 3
+        },
+        "iso-iec-42001-2023": {
+          "EXACT_TITLE_MISMATCH": 7,
+          "NONEXISTENT": 3,
+          "WRONG_TITLE": 61
+        },
+        "mas-feat": {
+          "EXACT_TITLE_MISMATCH": 3
+        },
+        "mas-notice-655": {
+          "EXACT_TITLE_MISMATCH": 1,
+          "WRONG_TITLE": 1
+        },
+        "mas-trm": {
+          "EXACT_TITLE_MISMATCH": 2,
+          "WRONG_TITLE": 4
+        },
+        "nist-ai-600-1": {
+          "NONEXISTENT": 31,
+          "WRONG_TITLE": 63
+        },
+        "nist-ai-rmf-1.0": {
+          "WRONG_TITLE": 2
+        },
+        "nist-sp-800-53-r5": {
+          "EXACT_TITLE_MISMATCH": 2,
+          "ID_COLLISION": 7,
+          "NONEXISTENT": 1,
+          "WITHDRAWN": 8
+        }
+      },
+      "reason": "upgrade nist_ai_600_1.json to primary (17/17 verbatim) and record mas.gov.sg JS-challenge blocker notes"
+    },
+    {
+      "event": "recompute",
+      "date": "2026-11-23",
+      "detector_sha256": "5465722002894f1c7b5d02211b247d4be6e8f0f32360c8a1947c18b0b4044d15",
+      "before_detector_sha256": "5c87d7670b9e9c8e6c29fb7a96b4be48299267c08d78b2f80d988c84da163f3f",
+      "before_baseline": 234,
+      "after_baseline": 234,
+      "counts": {
+        "dora": {
+          "EXACT_TITLE_MISMATCH": 1,
+          "NONEXISTENT": 4,
+          "WRONG_TITLE": 11
+        },
+        "eu-ai-act": {
+          "EXACT_TITLE_MISMATCH": 14,
+          "WRONG_TITLE": 3
+        },
+        "gdpr": {
+          "EXACT_TITLE_MISMATCH": 2,
+          "WRONG_TITLE": 3
+        },
+        "iso-iec-42001-2023": {
+          "EXACT_TITLE_MISMATCH": 7,
+          "NONEXISTENT": 3,
+          "WRONG_TITLE": 61
+        },
+        "mas-feat": {
+          "EXACT_TITLE_MISMATCH": 3
+        },
+        "mas-notice-655": {
+          "EXACT_TITLE_MISMATCH": 1,
+          "WRONG_TITLE": 1
+        },
+        "mas-trm": {
+          "EXACT_TITLE_MISMATCH": 2,
+          "WRONG_TITLE": 4
+        },
+        "nist-ai-600-1": {
+          "NONEXISTENT": 31,
+          "WRONG_TITLE": 63
+        },
+        "nist-ai-rmf-1.0": {
+          "WRONG_TITLE": 2
+        },
+        "nist-sp-800-53-r5": {
+          "EXACT_TITLE_MISMATCH": 2,
+          "ID_COLLISION": 7,
+          "NONEXISTENT": 1,
+          "WITHDRAWN": 8
+        }
+      },
+      "reason": "verify GDPR, DORA, and EU AI Act tables against EUR-Lex OJ texts and normalize Unicode dashes in exact-title comparison"
+    },
+    {
+      "event": "recompute",
+      "date": "2026-11-23",
+      "detector_sha256": "2349a08be773941e71abf8281e45c5879ba79bdf9bc43a5813574d4c449c58b0",
+      "before_detector_sha256": "5465722002894f1c7b5d02211b247d4be6e8f0f32360c8a1947c18b0b4044d15",
+      "before_baseline": 234,
+      "after_baseline": 234,
+      "counts": {
+        "dora": {
+          "EXACT_TITLE_MISMATCH": 1,
+          "NONEXISTENT": 4,
+          "WRONG_TITLE": 11
+        },
+        "eu-ai-act": {
+          "EXACT_TITLE_MISMATCH": 14,
+          "WRONG_TITLE": 3
+        },
+        "gdpr": {
+          "EXACT_TITLE_MISMATCH": 2,
+          "WRONG_TITLE": 3
+        },
+        "iso-iec-42001-2023": {
+          "EXACT_TITLE_MISMATCH": 7,
+          "NONEXISTENT": 3,
+          "WRONG_TITLE": 61
+        },
+        "mas-feat": {
+          "EXACT_TITLE_MISMATCH": 3
+        },
+        "mas-notice-655": {
+          "EXACT_TITLE_MISMATCH": 1,
+          "WRONG_TITLE": 1
+        },
+        "mas-trm": {
+          "EXACT_TITLE_MISMATCH": 2,
+          "WRONG_TITLE": 4
+        },
+        "nist-ai-600-1": {
+          "NONEXISTENT": 31,
+          "WRONG_TITLE": 63
+        },
+        "nist-ai-rmf-1.0": {
+          "WRONG_TITLE": 2
+        },
+        "nist-sp-800-53-r5": {
+          "EXACT_TITLE_MISMATCH": 2,
+          "ID_COLLISION": 7,
+          "NONEXISTENT": 1,
+          "WITHDRAWN": 8
+        }
+      },
+      "reason": "replace 95 nist_ai_rmf_1_0.json paraphrases with verbatim NIST AI 100-1 outcome statements and upgrade to primary"
+    },
+    {
+      "event": "update",
+      "date": "2026-11-23",
+      "detector_sha256": "2349a08be773941e71abf8281e45c5879ba79bdf9bc43a5813574d4c449c58b0",
+      "before_detector_sha256": "2349a08be773941e71abf8281e45c5879ba79bdf9bc43a5813574d4c449c58b0",
+      "before_baseline": 234,
+      "after_baseline": 231,
+      "counts": {
+        "dora": {
+          "EXACT_TITLE_MISMATCH": 1,
+          "NONEXISTENT": 4,
+          "WRONG_TITLE": 11
+        },
+        "eu-ai-act": {
+          "EXACT_TITLE_MISMATCH": 14,
+          "WRONG_TITLE": 3
+        },
+        "gdpr": {
+          "EXACT_TITLE_MISMATCH": 2,
+          "WRONG_TITLE": 3
+        },
+        "iso-iec-42001-2023": {
+          "EXACT_TITLE_MISMATCH": 7,
+          "NONEXISTENT": 3,
+          "WRONG_TITLE": 61
+        },
+        "mas-feat": {
+          "EXACT_TITLE_MISMATCH": 3
+        },
+        "mas-notice-655": {
+          "EXACT_TITLE_MISMATCH": 1,
+          "WRONG_TITLE": 1
+        },
+        "mas-trm": {
+          "EXACT_TITLE_MISMATCH": 2,
+          "WRONG_TITLE": 4
+        },
+        "nist-ai-600-1": {
+          "NONEXISTENT": 29,
+          "WRONG_TITLE": 62
+        },
+        "nist-ai-rmf-1.0": {
+          "WRONG_TITLE": 2
+        },
+        "nist-sp-800-53-r5": {
+          "EXACT_TITLE_MISMATCH": 2,
+          "ID_COLLISION": 7,
+          "NONEXISTENT": 1,
+          "WITHDRAWN": 8
+        }
+      },
+      "reason": "PR #876 (POAM-2026-245) cleared 3 baselined standards-citation violations (234 -> 231)"
+    },
+    {
+      "event": "update",
+      "date": "2026-11-24",
+      "detector_sha256": "2349a08be773941e71abf8281e45c5879ba79bdf9bc43a5813574d4c449c58b0",
+      "before_detector_sha256": "2349a08be773941e71abf8281e45c5879ba79bdf9bc43a5813574d4c449c58b0",
+      "before_baseline": 231,
+      "after_baseline": 230,
+      "counts": {
+        "dora": {
+          "EXACT_TITLE_MISMATCH": 1,
+          "NONEXISTENT": 4,
+          "WRONG_TITLE": 11
+        },
+        "eu-ai-act": {
+          "EXACT_TITLE_MISMATCH": 14,
+          "WRONG_TITLE": 3
+        },
+        "gdpr": {
+          "EXACT_TITLE_MISMATCH": 2,
+          "WRONG_TITLE": 3
+        },
+        "iso-iec-42001-2023": {
+          "EXACT_TITLE_MISMATCH": 7,
+          "NONEXISTENT": 3,
+          "WRONG_TITLE": 60
+        },
+        "mas-feat": {
+          "EXACT_TITLE_MISMATCH": 3
+        },
+        "mas-notice-655": {
+          "EXACT_TITLE_MISMATCH": 1,
+          "WRONG_TITLE": 1
+        },
+        "mas-trm": {
+          "EXACT_TITLE_MISMATCH": 2,
+          "WRONG_TITLE": 4
+        },
+        "nist-ai-600-1": {
+          "NONEXISTENT": 29,
+          "WRONG_TITLE": 62
+        },
+        "nist-ai-rmf-1.0": {
+          "WRONG_TITLE": 2
+        },
+        "nist-sp-800-53-r5": {
+          "EXACT_TITLE_MISMATCH": 2,
+          "ID_COLLISION": 7,
+          "NONEXISTENT": 1,
+          "WITHDRAWN": 8
+        }
+      },
+      "reason": "Close POAM-2026-147 and fix ISO 42001 A.9.2 title on docs/POAM.md:54 (231 -> 230)"
+    }
+  ]
+}

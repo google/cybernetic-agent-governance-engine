@@ -74,22 +74,26 @@ def test_schema_file_is_valid_json():
 
 
 def test_all_agent_state_fields_present():
-    """Assert all 38 AgentState fields are present under properties.
+    """Assert all 43 AgentState fields are present under properties.
 
     Failure means the expected field count has changed. This is a regression guard
     to detect unintentional field additions or removals.
 
-    Updated from 36 to 40 after adding cage-client governance integration fields:
+    Updated from 36 to 40 after adding governance integration fields:
       - agent_id (required): Agent identifier for governance tracking
-      - proposed_action (optional): Action payload for @cage_guard decorator
+      - proposed_action (optional): Candidate action payload for governance validation
       - governance_envelope (optional): Validation envelope from CageClient
-      - governance_status (optional): Governance decision (ALLOWED/DENIED/DEFERRED)
-    Updated from 40 to 38 on 2026-10-01 when the PAUSE verdict was removed:
-      - pause_resume_token and pause_reason dropped from AgentState
+      - governance_status (optional): Governance decision status
+    Updated from 40 to 41 on 2026-11-20 (POAM-2026-240):
+      - hitl_reference_quote (optional): Check-time market quote for post-HITL TOCTOU drift gate
+    Updated from 41 to 42 on 2026-11-21 (DOMADV-05):
+      - deferred_step_ids (optional): Per-step gateway deferred_id list for multi-step HITL plans
+    Updated from 42 to 43 on 2026-11-23 (POAM-2026-245):
+      - redemption_refusal (optional): ApprovalRedemptionRefusal of a refused redemption
     """
     schema_props = get_schema_properties()
-    assert len(schema_props) == 40, (
-        f"Expected exactly 40 properties in AgentState schema, found {len(schema_props)}. "
+    assert len(schema_props) == 43, (
+        f"Expected exactly 43 properties in AgentState schema, found {len(schema_props)}. "
         f"Properties: {sorted(schema_props)}"
     )
 

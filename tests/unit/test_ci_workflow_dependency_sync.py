@@ -47,14 +47,18 @@ SCRIPT_CALL_RE = re.compile(r"\bscripts/([A-Za-z0-9_]+\.py)\b")
 # (mechanically verified below to import zero third-party packages).
 STDLIB_ONLY_WORKFLOW_SCRIPTS = frozenset(
     {
+        "check_advisory_traces.py",
         "check_client_sdk_sync.py",
         "check_conformance_sync.py",
+        "check_fail_closed_coverage.py",
         "check_locked_yanks.py",
         "check_repo_rules.py",
         "partner_harness.py",
-        # Runs in jobs that can mint a signing identity, which therefore
-        # install nothing (POAM-2026-115).
+        # Runs in jobs that can mint a signing or GCP WIF identity, which
+        # therefore install nothing (POAM-2026-115 / POAM-2026-171 / POAM-2026-230).
+        "reconcile_main_check_results.py",
         "review_bypass_attestation.py",
+        "verify_alert_delivery.py",
     }
 )
 

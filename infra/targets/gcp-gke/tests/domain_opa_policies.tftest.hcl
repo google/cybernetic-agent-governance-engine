@@ -19,7 +19,14 @@
 # verifies that stub domains without .rego policies (physical_ai) fail closed at
 # terraform plan via domain_opa_policies_guard and opa_policies preconditions.
 
-mock_provider "google" {}
+mock_provider "google" {
+  mock_data "google_monitoring_notification_channel" {
+    defaults = {
+      enabled = true
+      name    = "projects/cage-test-project/notificationChannels/12345"
+    }
+  }
+}
 mock_provider "helm" {}
 mock_provider "kubernetes" {}
 mock_provider "random" {}

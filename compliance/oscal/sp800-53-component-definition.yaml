@@ -106,14 +106,16 @@ component-definition:
                    (src/gateway/governance/governor/stages/opa.py) queries the active domain's
                    package, which Terraform loads into the in-cluster OPA from
                    src/cage_<domain>/opa/ (finance: src/cage_finance/opa/trade_governance.rego);
-                   an OPA DENY or an OPA failure is a HARD violation. FTRA sends an action
-                   absent from the domain's terminal registry to human approval
-                   (FTRA_UNREGISTERED_ACTION), and assemble_governor()
-                   (src/gateway/governance/governor/assembly.py) refuses to start when an
-                   IRREVERSIBLE_TERMINAL action in the registry is claimed by no tier. With
-                   EVIDENCE_CHAIN_BLOCKING=true (Terraform's setting), a DENY is returned only
-                   after its GOVERNANCE_REFUSAL record is committed to the hash-chained evidence
-                   stream (see AU-12).
+                   an OPA DENY is a HARD violation, whereas OPA or dependency unavailability
+                   emits ViolationKind.INFRASTRUCTURE and blocks fail-closed with HTTP 503 and a
+                   hash-chained GOVERNANCE_INFRASTRUCTURE_BLOCK record without signing a
+                   GOVERNANCE_REFUSAL receipt. FTRA sends an action absent from the domain's
+                   terminal registry to human approval (FTRA_UNREGISTERED_ACTION), and
+                   assemble_governor() (src/gateway/governance/governor/assembly.py) refuses to
+                   start when an IRREVERSIBLE_TERMINAL action in the registry is claimed by no
+                   tier. With EVIDENCE_CHAIN_BLOCKING=true (Terraform's setting), a policy DENY
+                   is returned only after its GOVERNANCE_REFUSAL record is committed to the
+                   hash-chained evidence stream (see AU-12).
 
                 3. Dual-control approval and single-commit binding:
                    - Human approval: POST /v1/defer/{defer_id}/escalate
@@ -145,20 +147,25 @@ component-definition:
                      and mints no seal (tests/test_trade_governance_e2e.py).
                    - Single commit: SymbolicGovernor.validate_action()
                      (src/gateway/governance/governor/governor.py) runs under Profile.DRY_RUN,
-                     mints no seal, and parks REQUIRE_APPROVAL verdicts as
-                     DeferReason.HITL_REQUIRED tokens. execute_trade_action(...,
-                     deferred_id=...) (src/cage_finance/tools/tool_provider.py) is the only
-                     committing path: enforce_approved_governance()
-                     (src/gateway/server/governance_middleware.py) checks the approved token
-                     without spending it (DeferQueue.redeemable_approval()), and
-                     revalidate_post_hitl() decides first and spends second: a clean run spends
-                     the approval with a RESOLVED to CONSUMED compare-and-set before the seal is
-                     minted, so concurrent redemptions seal at most once; a DENY spends it; a
+                     mints no seal, binds evaluated_action_hash into HTTP 200 envelope subjects,
+                     and parks REQUIRE_APPROVAL verdicts as DeferReason.HITL_REQUIRED tokens.
+                     execute_trade_action(..., deferred_id=...)
+                     (src/cage_finance/tools/tool_provider.py) is the only committing path:
+                     enforce_approved_governance()
+                     (src/gateway/server/governance_middleware.py) checks approved token state
+                     without spending it (DeferQueue.check_redemption(), which names
+                     the ApprovalRedemptionRefusal of a token it refuses), and
+                     revalidate_post_hitl() binds server inputs once, checks PostHitlApproval.covers()
+                     against the evaluated params before any stage runs, decides first and spends
+                     second via DeferQueue.consume_redemption() (RESOLVED to CONSUMED CAS re-checking
+                     coverage of the same evaluated params) before returning a SealedAction whose
+                     seal and evaluated params the tool verifies and actuates; a DENY spends it; a
                      warrant-ineligible DEFER leaves it redeemable. When narrowing is enabled, a
                      narrow_hint is dry-run re-verified before it is surfaced
                      (_reverified_narrow_hint) and re-verified in full by the committing run
                      (_sealed_narrow with issue_narrow_receipt in
-                     src/gateway/governance/narrow_receipt.py, inside ReservationScope).
+                     src/gateway/governance/narrow_receipt.py, inside ReservationScope, required
+                     and JCS-verified by the tool before actuation).
 
                 Open: OPA's REST API takes no authentication, and only the gateway has Linkerd
                 Server and AuthorizationPolicy resources, so another pod in the namespace can
@@ -248,8 +255,12 @@ component-definition:
                    CustodyVerifier re-verifies the archive on a schedule (see AU-9, AU-9(3) and
                    AU-10). Decisions use the five-value vocabulary ALLOW, DENY, DEFER, NARROW
                    and REQUIRE_APPROVAL (GovernanceDecision in
-                   src/gateway/governance/decisions.py); PAUSE was removed and a transient fault
-                   is a DENY with a refusal receipt.
+                   src/gateway/governance/decisions.py); PAUSE was removed, and dependency or
+                   infrastructure unavailability fails closed via
+                   InfrastructureOutcome.INFRASTRUCTURE_BLOCK and handle_infrastructure_block()
+                   (src/gateway/governance/governor/verdicts.py), hash-chaining a
+                   GOVERNANCE_INFRASTRUCTURE_BLOCK event without signing a GOVERNANCE_REFUSAL
+                   receipt.
 
                 2. WARRANT RELIANCE: when a region marks a norm requires_warrant, the
                    RelianceRecord for each warranted norm
@@ -294,9 +305,9 @@ component-definition:
                    cage_event_loop_lag_seconds_count absence; compliance/lula/lula-validation-metrics.yaml
                    checks that the PodMonitoring object exists with the expected selector and
                    endpoint, while live GMP sample arrival under Server/gateway-metrics awaits
-                   certification. Correction (2026-11-16, POAM-2026-230): that alert policy has no
-                   notification channel in any committed profile, so a failed scrape is evaluated and
-                   reported to no one until POAM-2026-230 closes.
+                   certification. Note (POAM-2026-230): enforcing plans require verified
+                   alert_notification_channels and deliver to GCP Cloud Pub/Sub as CAGE's
+                   reference-architecture terminal sink, with human paging fan-out adopter-operated.
 
                 Open: live staging verification of signed attestations in the WORM bucket
                 (POAM-2026-084); staging keeps WORM objects for 1 day inside the ephemeral
@@ -429,11 +440,11 @@ component-definition:
                 fails closed.
               props:
                 - name: implementation-status
-                  value: implemented
+                  value: partial
                 - name: control-origination
                   value: system-specific
                 - name: poam-reference
-                  value: "POAM-2026-095"
+                  value: "POAM-2026-095, POAM-2026-235"
               links:
                 - href: "../../src/gateway/governance/routing_seal.py"
                   rel: implementation
@@ -516,10 +527,10 @@ component-definition:
             - uuid: "bcb59824-06a7-5be1-b456-29504bf608fa"
               control-id: si-10
               description: |
-                Governed trades execute at most once per transaction_id while the ledger
+                Governed trades execute at most once per idempotency_key while the ledger
                 remembers the key. execute_trade_action
                 (src/cage_finance/tools/tool_provider.py) refuses a trade without a UUIDv4 or
-                UUIDv5 transaction_id and, before governance runs, claims the key in the kernel
+                UUIDv5 idempotency_key and, before governance runs, claims the key in the kernel
                 ExecutionLedger (src/gateway/governance/execution_idempotency.py;
                 governor.components.execution_ledger, built by assemble_governor on the
                 gateway's shared Redis client, the governance Memorystore instance in
@@ -535,7 +546,7 @@ component-definition:
                 re-claim a key whose attempt was BLOCKED; the gateway verifies and spends the
                 approval before anything runs. Without Redis an enforcing posture refuses the
                 trade; only DEV, TEST and CI fall back to a process-local registry. The broker
-                order carries the transaction_id as client_order_id
+                order carries the idempotency_key as client_order_id
                 (src/cage_finance/tools/trade_executor.py). GatewayMCPClient
                 (src/gateway/infrastructure/mcp_client.py) resends a tool call only when nothing
                 was sent or the gateway annotates the tool readOnlyHint or idempotentHint, and
@@ -724,7 +735,7 @@ component-definition:
                 ConsequenceToken JWS (src/gateway/governance/consequence_token.py) introduced
                 in FlowSignal Phase 2. The RawMessageSigner protocol decouples cryptographic
                 operations from key lifecycle management via dependency injection in
-                actuator_01 (src/integrations/actuator_01/adapter.py:117-142), replacing
+                actuator_01 (src/integrations/actuator_01/adapter.py:101), replacing
                 direct KMSGovernanceSigner coupling. All runtime signing paths are async
                 (KMSGovernanceSigner.sign_async, sign_raw_async, sign_jws_async,
                 sign_precomputed_digest_async, sign_decision_async,
@@ -748,8 +759,9 @@ component-definition:
                 digest of the RFC 8785 JCS-canonicalized action payload in the 'act' claim,
                 providing cryptographic binding between governance evaluation and execution.
                 The backward-compatibility remediation (BC-01–BC-08, 2026-08-27) migrated
-                all hash-chain modules (provenance_chain.py, evidence_stream.py,
-                context_accumulator.py) from json.dumps(sort_keys=True) to RFC 8785 JCS
+                all hash-chain modules (evidence_stream.py, context_accumulator.py, and
+                provenance_chain.py, an unwired library with no production caller per
+                POAM-2026-246) from json.dumps(sort_keys=True) to RFC 8785 JCS
                 (jcs_canonicalize_plan) for deterministic cross-platform evidence integrity
                 verification. This migration was a breaking change — records written before
                 2026-08-27 are not verifiable by the current code. No cryptographic path is
@@ -761,7 +773,7 @@ component-definition:
                 section of AGENTS.md).
               props:
                 - name: implementation-status
-                  value: implemented
+                  value: partial
                 - name: control-origination
                   value: system-specific
                 - name: phase-2-implementation
@@ -769,7 +781,9 @@ component-definition:
                 - name: raw-signer-protocol
                   value: "src/gateway/governance/raw_signer_protocol.py"
                 - name: actuator-01-di
-                  value: "src/integrations/actuator_01/adapter.py:117-142"
+                  value: "src/integrations/actuator_01/adapter.py:101"
+                - name: poam-reference
+                  value: "POAM-2026-235"
               links:
                 - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=SC-13"
                   rel: reference
@@ -849,7 +863,8 @@ component-definition:
                 eliminating float-representation and key-ordering drift that could
                 cause spurious integrity check failures. The backward-compatibility
                 remediation (BC-01–BC-08, 2026-08-27) migrated all hash-chain modules
-                (provenance_chain.py, evidence_stream.py, context_accumulator.py) to
+                (evidence_stream.py, context_accumulator.py, and provenance_chain.py, an
+                unwired library with no production caller per POAM-2026-246) to
                 RFC 8785 JCS with no compatibility shim; previously-signed records will
                 not verify under the current code.
               props:
@@ -948,10 +963,9 @@ component-definition:
                 EMAIL_ADDRESS, PHONE_NUMBER, CREDIT_CARD, CRYPTO, US_SSN, US_ITIN, US_PASSPORT,
                 US_BANK_NUMBER, US_DRIVER_LICENSE, IBAN_CODE, IP_ADDRESS;
                 src/integrations/presidio/redactor.py), failing closed in enforcing postures
-                when redaction raises, and blocks input that matches the Stage 1 keyword list
-                (tier1_keywords in config/governance_thresholds.json). A Presidio engine that
-                fails to initialise leaves input unredacted instead of failing closed
-                (POAM-2026-147, open). The gateway's inference proxy
+                when redaction or Presidio engine initialisation fails (PresidioUnavailableError;
+                POAM-2026-147 closed 2026-11-24), and blocks input that matches the Stage 1 keyword list
+                (tier1_keywords in config/governance_thresholds.json). The gateway's inference proxy
                 (src/gateway/server/inference_proxy.py) runs the same keyword scan over every
                 message of each request it receives and stamps the outcome on the request's OTel
                 span, but the reference deployment does not route the advisor's model calls
@@ -1257,11 +1271,14 @@ component-definition:
                 Access enforcement decisions on governed actions come from the governor's OPA
                 stage (src/gateway/governance/governor/stages/opa.py), which queries the active
                 domain's package (finance: src/cage_finance/opa/trade_governance.rego); an OPA
-                DENY or an OPA failure is a HARD violation and the action is refused. The audit
-                trail of a refusal is the hash-chained evidence stream: handle_deny() builds a
-                refusal receipt naming the violated tier and violation codes and commits it as a
-                GOVERNANCE_REFUSAL record (publish_refusal in
-                src/gateway/governance/governor/verdicts.py), blocking under
+                DENY is a HARD violation and the action is refused, whereas an OPA or
+                governance dependency failure emits ViolationKind.INFRASTRUCTURE, blocks
+                fail-closed via handle_infrastructure_block(), hash-chains a
+                GOVERNANCE_INFRASTRUCTURE_BLOCK record, and returns HTTP 503 without signing a
+                GOVERNANCE_REFUSAL receipt. The audit trail of a policy refusal is the
+                hash-chained evidence stream: handle_deny() builds a refusal receipt naming the
+                violated tier and violation codes and commits it as a GOVERNANCE_REFUSAL record
+                (publish_refusal in src/gateway/governance/governor/verdicts.py), blocking under
                 EVIDENCE_CHAIN_BLOCKING=true, which Terraform sets. POST
                 /governance/validate-action returns HTTP 403 with the violations and the
                 receipt's proof_hash, or 503 when the record cannot be committed. The compliance
@@ -1406,9 +1423,10 @@ component-definition:
                   cage-status: planned` and posts a pass/fail summary to POST /v1/infra/events,
                   which records it on the INFRA hash chain under the auditor's verified mesh
                   identity. Of the linked manifests, lula-validation-ra5.yaml is planned, and
-                  lula-validation-cm6.yaml is active but checks for a ConfigMap nothing creates
-                  (POAM-2026-151), so the auditor's summary cannot report a full pass until it
-                  is repointed.
+                  lula-validation-cm6.yaml queries compliance-bridge GET /v1/compliance/cm6 for
+                  KMS-signed GOVERNANCE_THRESHOLDS_LOADED digest posture and zero GOVERNANCE_DECISION
+                  digest drift (POAM-2026-151 Option 2 Step 2), remaining rated Stub in
+                  compliance/lula/README.md pending a recorded live in-cluster Lula run.
                 - Evidence age: the bridge lifespan runs the SLA monitor
                   (src/compliance_bridge/sla_monitor.py) every 5 minutes over per-control
                   metrics computed from the custody chain (src/compliance_bridge/metrics.py) and
@@ -1774,9 +1792,10 @@ component-definition:
                 |baseline|, reconciliation.discrepancy_abs_floor). The symbolic governor records
                 each request's tier violations (for example fiscal limits and STPA constraints).
                 The authoritative record of these events is the hash-chained evidence stream:
-                every DENY writes a GOVERNANCE_REFUSAL record, a CBF rollback writes a
-                CBF_ROLLBACK record, and a fence writes a RECONCILIATION_DISCREPANCY_FENCE
-                record. CBF violations are also emitted as OTel span events with severity
+                every policy DENY writes a GOVERNANCE_REFUSAL record, dependency
+                unavailability writes an unsigned GOVERNANCE_INFRASTRUCTURE_BLOCK record, a
+                CBF rollback writes a CBF_ROLLBACK record, and a fence writes a
+                RECONCILIATION_DISCREPANCY_FENCE record. CBF violations are also emitted as OTel span events with severity
                 WARNING or CRITICAL; these are telemetry only, feed no alerting, and on gcp-gke
                 currently fail OTLP export to in-cluster Langfuse with HTTP 401 Unauthorized
                 because module.langfuse does not seed the gateway telemetry key pair
@@ -1900,18 +1919,20 @@ component-definition:
                       urn:cage:dev: prefix; enforcing postures never yield them.
 
                 The request body may not assert identity (DeferEscalateRequest forbids
-                operator_urn, session_id and auth_method). Enforcing postures require a WebAuthn
-                client_data_json bound to a 32-byte challenge_binding, and DeferQueue.approve()
-                (src/gateway/governance/defer_queue.py) records the verified principal hash
-                (auth_principal_hash) in each ApprovalRecord and refuses approval by the
-                request's initiator.
+                operator_urn, session_id and auth_method). Enforcing postures unconditionally
+                require a cryptographic W3C WebAuthn assertion (credential_id, client_data_json,
+                authenticator_data, signature, and 32-byte challenge_binding) independent of
+                channel_provenance, verified by verify_webauthn_assertion()
+                (src/gateway/governance/webauthn_verifier.py) against out-of-band registered
+                operator public keys (CAGE_WEBAUTHN_RP_ID, CAGE_WEBAUTHN_ALLOWED_ORIGINS,
+                CAGE_WEBAUTHN_CREDENTIALS_FILE / CAGE_WEBAUTHN_CREDENTIALS_JSON; POAM-2026-210).
+                DeferQueue.approve() (src/gateway/governance/defer_queue.py) records the verified
+                principal hash (auth_principal_hash) and credential_id in each ApprovalRecord and
+                refuses approval by the request's initiator.
 
                 Open: human-only approval has not been verified on a deployed cluster
-                (POAM-2026-196). The client_data_json is not a verified authenticator assertion:
-                WebAuthn assertion enforcement and cryptographic signature verification remain
-                open, so approval rests on the operator OIDC identity alone (POAM-2026-210).
-                The operator identities and OIDC issuer in the committed tfvars are example
-                values that an adopter replaces.
+                (POAM-2026-196). The operator identities, OIDC issuer, and WebAuthn Relying Party
+                in the committed tfvars are example values that an adopter replaces.
               props:
                 - name: implementation-status
                   value: partial

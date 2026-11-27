@@ -69,22 +69,26 @@ _TIMEOUT = httpx.Timeout(60.0)
 
 def _webauthn_binding_payload(deferred_id: str, slot: int) -> dict[str, str]:
     """Construct a W3C ``webauthn.get`` challenge-bound approval body for E2E."""
-    digest = hashlib.sha256(f"{deferred_id}:{slot}".encode()).digest()
-    challenge_b64 = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
-    client_data_bytes = json.dumps(
-        {
-            "type": "webauthn.get",
-            "challenge": challenge_b64,
-            "origin": "https://console.cage.example",
-        }
-    ).encode("utf-8")
-    client_data_json = (
-        base64.urlsafe_b64encode(client_data_bytes).rstrip(b"=").decode("ascii")
-    )
-    return {
-        "client_data_json": client_data_json,
-        "challenge_binding": digest.hex(),
-    }
+    from tests.e2e.run_gke_e2e_suite import build_webauthn_binding_payload
+
+    raw_priv = os.environ.get("CAGE_E2E_WEBAUTHN_PRIVATE_KEYS_JSON", "").strip()
+    priv_file = os.environ.get("CAGE_E2E_WEBAUTHN_PRIVATE_KEYS_FILE", "").strip()
+    if not raw_priv and priv_file:
+        from pathlib import Path
+
+        raw_priv = Path(priv_file).read_text(encoding="utf-8")
+    if raw_priv:
+        parsed = json.loads(raw_priv)
+        slots = parsed.get("slots") if isinstance(parsed, dict) else parsed
+        if isinstance(slots, list) and slot < len(slots):
+            entry = slots[slot]
+            return build_webauthn_binding_payload(
+                deferred_id,
+                slot,
+                credential_id=entry.get("credential_id"),
+                private_key_pem=entry.get("private_key_pem"),
+            )
+    return build_webauthn_binding_payload(deferred_id, slot)
 
 
 @dataclass
@@ -104,7 +108,7 @@ class Live:
     ) -> str:
         """Run ``execute_trade_action`` in the gateway; return its output string."""
         body = {
-            "transaction_id": str(uuid.uuid4()),
+            "idempotency_key": str(uuid.uuid4()),
             **params,
             **({"deferred_id": deferred_id} if deferred_id else {}),
         }

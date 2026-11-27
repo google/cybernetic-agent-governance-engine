@@ -16,6 +16,24 @@ Published security advisories, affected ranges, CVSS vectors, and fix commits ar
 
 - **[Published GitHub Security Advisories](https://github.com/google/cybernetic-agent-governance-engine/security/advisories)**
 
+Every published GitHub Security Advisory has an in-repository fix-trace row below, mechanically verified against GitHub's `security-advisories?state=published` API and `main` git ancestry by [`scripts/check_advisory_traces.py`](scripts/check_advisory_traces.py):
+
+| Advisory | Published | Severity | Fix on `main` | Summary |
+|---|---|---|---|---|
+| `GHSA-xm4c-x85r-38fp` | `2026-11-23` | Medium | `c05d11f7` (`#836`), `aa50d17d` (`#814`), `127eebc2` (`#789`) | Governed inference proxy: streaming SSE `str.splitlines()` framing differential on `U+2028`/`U+2029`/`U+0085` skipped PII masking with false `pii_redacted=False` evidence; streaming `choices[1:]` and legacy `messages[*].function_call` input scanning omitted |
+| `GHSA-gg2p-q2qw-3wx3` | `2026-11-23` | Medium | `0cba3eee` (`#842`, **SE-01**–**SE-03** in [`docs/BREAKING_CHANGES.md`](docs/BREAKING_CHANGES.md)), `f32c0e5b` (`#798`) | `SymbolicGovernor.govern()`: domain `ServerInputResolver` skipped on direct calls without kernel server-input keys, and committing-run `RoutingSeal` / `GovernanceEnvelope` parameter hashes bound pre-binding caller params instead of evaluated params |
+| `GHSA-8r4c-xx89-28w5` | `2026-11-23` | Low | `f23855f3` (`#839`), `dd999924` (`#837`), `f32c0e5b` (`#798`), `127eebc2` (`#789`) | `compliance_bridge` & `gateway`: `/v1/defer/{id}/escalate` WebAuthn assertion gate & decision challenge binding (`POAM-2026-210`), empty `CAGE_NEMO_APPROVER_IDENTITIES` fail-open, and missing `SC-7` quarantine checks on `/governance/state-commitments` and `/v1/nemo/*` |
+| `GHSA-gc2v-v2jw-q499` | `2026-11-19` | Medium | `3feffdf6` (`#820`, `client-v0.4.0`) | `cage-client <= 0.3.0` and `GatewayClient`: HTTP `403` refusals and `202`/`409`/`422` deferrals accepted without `GovernanceEnvelope` signature verification |
+| `GHSA-c9j3-q7hh-p95m` | `2026-11-19` | Medium | `dd27b66b` (`#815`, **AP-1** in [`docs/BREAKING_CHANGES.md`](docs/BREAKING_CHANGES.md)) | Governed financial advisor: `CAGE_ALLOW_ASSERTED_PRINCIPAL` accepted unverified end-user identities in enforcing postures (`production`/`staging`) despite documentation stating it was ignored there |
+| `GHSA-5c7p-g73w-v4m3` | `2026-11-19` | Medium | `aa50d17d` (`#814`) | Governed inference proxy: non-`content` response fields bypassed output governance and PII redaction |
+| `GHSA-797p-rrgm-4p56` | `2026-11-19` | High | `c145a9cc` (`#813`) | Governed financial advisor: `require_api_key()` accepted end-user OIDC tokens on service-only routes |
+| `GHSA-cxxx-6xfq-vvp4` | `2026-11-18` | Medium | `f6313b20` (`#809`) | `provider_05` three-axiom attestation providers accepted live `/v0.3/` responses as `VERIFIED` when `v0.3` signature fields were stripped |
+| `GHSA-5438-3wwf-qvcq` | `2026-11-18` | Medium | `1ad49289` (`#808`) | `actuator_03` quarantine adapter settled unsigned or unverifiable receipts as `ACCEPTED` without `ACTUATOR_03_REQUIRE_SIGNED_RECEIPTS=true` |
+| `GHSA-348p-gfpg-qqm9` | `2026-11-18` | Medium | `1aeed422` (`#799`) | `provider_06` evidence adapter sealed receipts not bound to the submitted evidence and returned unverified seals without a key manifest |
+| `GHSA-c8pw-f3g3-xg7c` | `2026-10-26` | Medium | `be23480b` (`v4.0.0`) | Finance causal tier risk boundary tripped `10,000x` too high and zero-variance placebo refutation could not fail |
+| `GHSA-f6xq-23f7-9grm` | `2026-10-26` | Medium | `863d4092` (`v3.3.0`) | `EU_ECB` FRIA revocation not re-checked on `POST_HITL`; `execute_trade_bounded` and `BTC` case variants bypassed `trade_governance.rego` |
+| `GHSA-w39v-5v7h-fxg9` | `2026-10-24` | Medium | `cec7ab29` (`#529`, `v3.3.0`) | Model-controlled `trader_role` raised OPA fiscal limits on the committing trade path |
+
 Earlier fixes resolved through public issues, internal audits, or pre-publication tracker entries are recorded in [`CHANGELOG.md`](CHANGELOG.md) and [`docs/POAM.md`](docs/POAM.md).
 
 > **⚠️ Reference architecture notice:** CAGE is a reference architecture and is
@@ -83,8 +101,11 @@ pull request(s):
    with its final public description (including a concrete non-code mitigation
    and with any `<!-- ... -->` comment templates removed), `ecosystem: "other"`
    structured range (`patched_versions: null` when remediating on `main` ahead
-   of a tag), verified CVSS 3.1 vector, and reporter `.credits`. Confirm HTTP
-   `200` on `GET` read-back so `T=0` requires only a state transition.
+   of a tag), and verified CVSS 3.1 vector. Set reporter `.credits` once before
+   acceptance, and **omit `credits` from all subsequent `PATCH` payloads once
+   `credits_detailed[].state == "accepted"`** (passing `credits` again resets an
+   accepted credit record back to `pending`). Confirm HTTP `200` on `GET`
+   read-back so `T=0` requires only a state transition.
 3. **Close all open PRs in the temporary private fork before publishing:**
    GitHub's advisory publish endpoint rejects `{"state": "published"}` with HTTP
    `422` while any pull request in the temporary private fork remains open.
@@ -95,7 +116,11 @@ pull request(s):
    - Immediately push the pre-verified fix branch(es) to `origin` and open
      public pull request(s) against `main`, then `PATCH` each live advisory's
      remediation line to cite the open PR (`Fix in flight in #<PR>` alongside
-     the immediate mitigation).
+     the immediate mitigation, omitting `credits`). While a newly published
+     advisory is `<= 24h` old and carries `Fix in flight in #<PR>` (before
+     `Fixed on main in`), [`scripts/check_advisory_traces.py`](scripts/check_advisory_traces.py)
+     (`--verify-github`) treats it as in-flight so `#<PR>`'s own CI stays green
+     before its squash-merge commit SHA exists on `main`.
 5. **Run all checks, squash-merge, stamp, and verify read-back:**
    - Wait for all automated checks in ruleset 25966171 (strict up-to-date branch
      policy is disabled, so independent PRs can run checks in parallel). Never
@@ -106,10 +131,32 @@ pull request(s):
      `--admin` in single-maintainer posture bypasses only ruleset 19769096's
      review rule while all nine checks in ruleset 25966171 pass).
    - Immediately stamp **`Fixed on main in <SHA> (#<PR>)`** onto the published
-     advisory without disturbing `.credits`, and perform a **`GET` read-back** on
-     the advisory endpoint to verify `state == "published"`, the landed `main`
-     SHA, and intact `.credits`. Delete temporary branches and worktrees after
-     post-merge checks pass on `main`.
+     advisory (`description` only — never pass `credits`), perform a **`GET`
+     read-back** on the advisory endpoint to verify `state == "published"`, the
+     landed `main` SHA, and `credits_detailed[].state == "accepted"`, and land
+     the matching row in `## Security Advisories` above so
+     [`scripts/check_advisory_traces.py`](scripts/check_advisory_traces.py)
+     (`--verify-github --strict`) passes on `main`. Delete temporary branches
+     and worktrees after post-merge checks pass on `main`.
+
+### Pre-remediated batch disclosures (fixes already on `main`)
+
+When one or more draft advisories are held for a coordinated release date after
+their fix commits have already landed on `main`:
+
+1. **Pre-stage the `SECURITY.md` trace branch locally before `T=0`:** Add the
+   new `## Security Advisories` row(s) citing each already-merged `main` fix SHA
+   and the scheduled publication date, and run
+   `uv run python scripts/check_advisory_traces.py --verbose` locally to confirm
+   every SHA is already an ancestor of `origin/main` (do not open the PR before
+   publishing, or `--verify-github` will reject unpublished GHSA IDs).
+2. **Publish and open the trace PR back-to-back at `T=0`:** `PATCH` each draft
+   advisory with `{"state": "published"}` only (never passing `credits`), verify
+   `state == "published"` and `credits_detailed[].state == "accepted"` via `GET`
+   read-back, and immediately push and open the pre-staged `SECURITY.md` PR. On
+   that PR's CI run, the API's newly published set matches `SECURITY.md` 1-to-1
+   with zero missing rows, keeping `advisory-trace-parity` green throughout the
+   disclosure.
 
 ## Package Distribution Channels
 
@@ -168,11 +215,11 @@ regulatory controls are in scope for a given deployment. Key security controls a
 | Control | Census Claim ID | Implementation |
 |---|---|---|
 | Governance signing | `sp800-53-component-definition.yaml#61c43f8a-6693-4049-ae09-edd8b22f500a` | Cloud KMS asymmetric signing (cloud providers in `src/integrations/{gcp,aws,azure}/kms_provider.py`, loaded via `signer_factory.py`); separate keys per role (gateway seal, reconciler snapshot, compliance-bridge evidence) with kid-resolved verification. Software Ed25519 / HMAC signers are refused under an enforcing posture and allowed only in dev/test/CI. 90-day rotation cadence per `KEY_ROTATION.md` |
-| Routing seal (v3) | `sp800-53-component-definition.yaml#0c2d40d7-0d19-4b9d-9afa-6c80967b31b4` | Single-use JWT signed by the gateway's governance signer (Cloud KMS in enforcing postures), verified by `kid` against an independently resolved trust anchor and bound to the SHA-256 evidence `record_hash`. The HMAC v2 4-tuple is a legacy path `verify_seal()` rejects while `CAGE_SEAL_STRICT_MODE` is true (the default) and always in production. Internal to `/tools/execute` and `ConsequenceGateway` — **not** used for caller authentication |
+| Routing seal (v3) | `sp800-53-component-definition.yaml#0c2d40d7-0d19-4b9d-9afa-6c80967b31b4` | Single-use JWT signed by the gateway's governance signer (Cloud KMS in enforcing postures), verified by `kid` against an independently resolved trust anchor and bound to the SHA-256 evidence `record_hash`. The HMAC v2 4-tuple is a legacy path `verify_seal()` rejects while `CAGE_SEAL_STRICT_MODE` is true (the default) and always in production. Internal to `/tools/execute` and `ConsequenceGateway` — **not** used for caller authentication (partially-implemented: hermetic round-trip verified in `test_routing_seal_asymmetric_roundtrip.py`; strict-mode and live KMS round-trip read-back open under `POAM-2026-235`) |
 | TLS & Transport Security | `sp800-53-component-definition.yaml#230de322-4b76-4a0d-b07d-267f4fa23769` | Redis TLS 1.2+ enforcement (`src/gateway/infrastructure/redis_client.py`), OIDC JWKS `verify=True` enforcement, and Linkerd mTLS across meshed pods (`tests/test_tls_enforcement.py`). Outbound HTTP client wiring for `create_hardened_client_context()` (`src/gateway/infrastructure/tls_context.py`) is open under reopened `POAM-2026-011` (`docs/POAM.md`) |
 | Base Image Hardening | `system-security-plan.yaml#s3000001-plat-si3-8000-platform0001` | Advisor, gateway, compliance-bridge and NeMo Guardrails images use two-stage builds on a digest-pinned Wolfi base (`cgr.dev/chainguard/wolfi-base`) with no compiler, util-linux or package-manager cache in the runtime stage and a build-time `apk upgrade`; images are tagged by git SHA and their digests signed for Binary Authorization at build time (`scripts/build_images.sh`) (`lula-validation-si2.yaml` active; `SI-3` runtime admission stub open) |
 | Prompt injection detection | `sp800-53-component-definition.yaml#8e46d991-dd78-416a-897d-f909cb63be8d` | Aho-Corasick O(n) scan; 14+ patterns (partially-implemented: Stage 1 deterministic scan active; semantic tier opt-in) |
-| PII protection | `component-definition.yaml#e1f2a3b4-c5d6-7890-efab-901234567890` | Presidio; 15 entity types; input + output (`POAM-2026-146`, `POAM-2026-147` open) |
+| PII protection | `component-definition.yaml#e1f2a3b4-c5d6-7890-efab-901234567890` | Presidio; 12 identity entity types (input) + regex `scrub_pii` (output) (`POAM-2026-146` closed `2026-11-12`, `POAM-2026-147` closed `2026-11-24`) |
 | Human-in-the-loop | `component-definition.yaml#aarm2026-v7-context-overflow` | Redis-persisted checkpoint; TOCTOU remediation via `post_hitl_rehydrate` + `post_hitl_revalidate` (advisor calls the gateway's `POST /governance/revalidate-post-hitl`) (`POAM-2026-196` open) |
 | Control Barrier Function | `sp800-53-component-definition.yaml#943496c8-5b07-48e4-a175-731366d416fa` | Atomic Redis Lua (`atomic_verify_and_commit()`) with synchronous replica `WAIT` barrier, monotonic `safety:fence_epoch` with a shared high-water mark (`safety:fence_epoch_hwm`), and fail-closed state rollback |
 | Evidence chain integrity | `sp800-53-component-definition.yaml#80d95b3a-12ae-4dd4-8db4-b52661335fa4` | SHA-256 hash-chained NDJSON & Redis Streams db=1 (`noeviction`, Lua compare-and-append); enforced blocking durability in production (`validate_evidence_stream_preconditions()`); compliance-bridge `EvidenceCustodian` KMS batch attestation (`EVIDENCE_KMS_KEY`) to WORM storage and `CustodyVerifier` read-back verification (`kid`-resolved trust anchors, `assert_citable()` OSCAL citation gate) |

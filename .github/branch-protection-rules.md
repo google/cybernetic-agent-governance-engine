@@ -17,7 +17,7 @@
 
 ---
 
-## 1. `main` (verified 2026-11-02)
+## 1. `main` (verified 2026-11-02; ruleset 25966171 updated 2026-11-27)
 
 Classic branch protection is off: `GET /repos/{owner}/{repo}/branches/main/protection`
 returns `404 Branch not protected`. Three repository rulesets apply to `refs/heads/main`,
@@ -26,7 +26,7 @@ and no organisation ruleset does:
 | Ruleset | Rules | Parameters | Bypass actors |
 |---|---|---|---|
 | 19769096 "Protect main branch" | `pull_request` | One approving review; stale approvals dismissed on push; code-owner review off; review-thread resolution off | Repository admin role, mode `always` |
-| 25966171 "Require status checks on main" | `required_status_checks` | The nine checks in §3 (the ninth, `Approved review or recorded bypass`, added 2026-11-15), each pinned to GitHub Actions (`integration_id` 15368); branches need not be up to date (`strict_required_status_checks_policy: false`) | None |
+| 25966171 "Require status checks on main" | `required_status_checks` | The eleven checks in §3 (`Approved review or recorded bypass` added 2026-11-15; `Apache 2.0 License Headers` split from `license-check` and `Client SDK Built-Wheel Smoke (Bare + [langgraph])` added 2026-11-27), each pinned to GitHub Actions (`integration_id` 15368); branches must be up to date (`strict_required_status_checks_policy: true`) | None |
 | 26377312 "Protect main history" | `non_fast_forward`, `deletion` | — | None |
 
 What that enforces:
@@ -39,20 +39,30 @@ What that enforces:
   signed, publicly verifiable record that the head was unreviewed (§3.1). A recorded bypass is
   not a review: the record discloses the unreviewed merge, and the separation-of-duties gap
   stays open.
-- **Required checks.** A pull request merges only after the nine checks in §3 passed on its
-  head, and the admin bypass does not reach this ruleset. Each run tests the head merged into
-  `main` as it stood when the run started, and the checks are not re-run when `main` moves
-  before the merge, so the commit that lands may never have been tested; its own runs start
-  after it lands. #598's head passed `Pytest Logic Tests`, and its squash commit `43528275`
-  failed it on `main` (POAM-2026-171).
+- **Required checks.** A pull request merges only after the eleven checks in §3 passed on its
+  head against the current `main` (`strict_required_status_checks_policy: true`,
+  POAM-2026-171 Remediation 1), and the admin bypass does not reach ruleset 25966171.
+  Previously (`strict_required_status_checks_policy: false`), #598's head passed
+  `Pytest Logic Tests` against an earlier `main`, and its squash commit `43528275` failed it
+  on `main`. [`ci.yml`](workflows/ci.yml), [`security-scan.yml`](workflows/security-scan.yml)
+  and [`license_guard.yml`](workflows/license_guard.yml) also cancel superseded runs on
+  `pull_request` events only and key `push` concurrency groups by `github.sha` so every
+  commit on `main` finishes, and [`main-result-reconciler.yml`](workflows/main-result-reconciler.yml)
+  ([`reconcile_main_check_results.py`](../scripts/reconcile_main_check_results.py))
+  reconciles every commit older than the grace window against the eleven post-merge checks
+  (`EXPECTED_MAIN_PUSH_CHECKS`, 1:1 per context after POAM-2026-172, plus `Record an
+  unreviewed merge`), updating the durable `main-check-reconciliation` GitHub issue first
+  and publishing heartbeats and `CRITICAL` violation alerts to GCP Pub/Sub and Cloud
+  Monitoring (`google_monitoring_alert_policy.main_result_reconciler_absent`).
 - **History.** `main` cannot be force-pushed or deleted, by anyone, since 2026-11-02. Before
   that, nothing blocked either (POAM-2026-170).
-- **Not enforced.** Up-to-date branches, review-thread resolution, signed commits, and any push
-  restriction beyond the pull-request rule. Earlier versions of this document listed all four
-  as enabled.
+- **Not enforced.** Review-thread resolution, signed commits, and any push restriction beyond
+  the pull-request rule. Earlier versions of this document listed all four (including
+  up-to-date branches) as enabled before `strict_required_status_checks_policy: true` was
+  enabled on 2026-11-27.
 
 Advisory fixes publish first and land through public pull requests under ruleset 25966171
-([`SECURITY.md`](../SECURITY.md#landing-an-advisory-fix-maintainers)), so all nine required
+([`SECURITY.md`](../SECURITY.md#landing-an-advisory-fix-maintainers)), so all eleven required
 checks (including `Approved review or recorded bypass`) still run. Historically — and if an
 unavoidable embargoed private-fork merge ever happened where Actions does not run —
 disabling 25966171 for a single merge leaves a commit without a pre-merge record, so its
@@ -90,15 +100,16 @@ release branch needs a ruleset before it is created.
 
 ---
 
-## 3. Required Status Checks on `main` (ruleset 25966171, verified 2026-11-02; ninth check added 2026-11-15)
+## 3. Required Status Checks on `main` (ruleset 25966171, verified 2026-11-27)
 
-Ruleset `25966171` (`Require status checks on main`, `enforcement: active`, no bypass actors)
-requires the following **nine** checks on `refs/heads/main`. Each is pinned to the GitHub
-Actions app, so a check run or commit status of the same name from any other source does not
-satisfy it. Until 2026-11-02 only `Pytest Logic Tests`, `Terraform Tests (gcp-gke, mock
-providers)` and `Quickstart Bootstrap & First-DENY Smoke Gate` were pinned; `Approved review
-or recorded bypass` was pinned from its addition on 2026-11-15 (§3.1). The check context must
-match what GitHub Actions reports exactly:
+Ruleset `25966171` (`Require status checks on main`, `enforcement: active`, no bypass actors,
+`strict_required_status_checks_policy: true`) requires the following **eleven** checks on
+`refs/heads/main`. Each is pinned to the GitHub Actions app, so a check run or commit status
+of the same name from any other source does not satisfy it, and each context is reported by
+exactly one workflow job (`POAM-2026-172` separated `ci.yml`'s Apache 2.0 header check from
+`license_guard.yml`'s dependency-license audit on 2026-11-27;
+`Client SDK Built-Wheel Smoke (Bare + [langgraph])` was promoted to required the same day).
+The check context must match what GitHub Actions reports exactly:
 
 | Check context (exact) | Workflow files | Integration pin |
 |---|---|---|
@@ -106,18 +117,16 @@ match what GitHub Actions reports exactly:
 | `AI 600-1 Unit Tests` | `ci.yml` | `integration_id: 15368` (GitHub Actions) |
 | `OPA Rego Policy Lint and Test (Universal — NIST CM-6/SI-7 reporting: US_FED only)` | `security-scan.yml` | `integration_id: 15368` (GitHub Actions) |
 | `Secret Scanning (Gitleaks)` | `security-scan.yml` | `integration_id: 15368` (GitHub Actions) |
-| `license-check` | `ci.yml`, `license_guard.yml` | `integration_id: 15368` (GitHub Actions) |
+| `license-check` | `license_guard.yml` | `integration_id: 15368` (GitHub Actions) |
+| `Apache 2.0 License Headers` | `ci.yml` | `integration_id: 15368` (GitHub Actions) |
 | `Pytest Logic Tests` | `ci.yml` | `integration_id: 15368` (GitHub Actions) |
 | `Terraform Tests (gcp-gke, mock providers)` | `ci.yml` | `integration_id: 15368` (GitHub Actions) |
 | `Quickstart Bootstrap & First-DENY Smoke Gate` | `ci.yml` | `integration_id: 15368` (GitHub Actions) |
+| `Client SDK Built-Wheel Smoke (Bare + [langgraph])` | `ci.yml` | `integration_id: 15368` (GitHub Actions) |
 | `Approved review or recorded bypass` | `review-bypass-attestation.yml` | `integration_id: 15368` (GitHub Actions) |
 
-Two jobs that check different things report `license-check` (POAM-2026-172): `ci.yml`
-checks Apache 2.0 headers and `license_guard.yml` audits dependency licences. Both
-reported on `f43efeba` (check runs `123570375167` and `123570378192`, read 2026-11-02).
-How GitHub evaluates the requirement when the two disagree has not been observed.
 `tests/test_check_repo_rules.py` fails unless the workflow column names exactly the
-workflows whose jobs report each check.
+workflows whose jobs report each check (1:1 per context).
 
 ### 3.1 `Approved review or recorded bypass`
 
@@ -245,7 +254,7 @@ After any ruleset change:
 
 - [ ] Run `python scripts/check_repo_rules.py` and update its pins with the change; run the
       §10 commands for §1.1, §5 and §6
-- [ ] Open a pull request and confirm the nine required checks in §3 are listed and must pass
+- [ ] Open a pull request and confirm the eleven required checks in §3 are listed and must pass
 - [ ] Confirm the review requirement appears on a pull request by the maintainer
 - [ ] Confirm a direct push of a new commit to `main` is refused with `remote: error: GH013`
 - [ ] Before a document states what a rule refuses or allows, probe it on a disposable ref
@@ -258,11 +267,12 @@ After any ruleset change:
 | Code-level enforcement | Server-side setting that activates it |
 |---|---|
 | `.github/CODEOWNERS` | None while the project has one maintainer: code-owner review is off (§1), so the file is advisory (POAM-2026-115) |
-| `ci.yml` (`Lint`, `AI 600-1 Unit Tests`, `license-check` (Apache 2.0 headers), `Pytest Logic Tests`, `Terraform Tests (gcp-gke, mock providers)`, `Quickstart Bootstrap & First-DENY Smoke Gate`) | §3 → ruleset `25966171` |
+| `ci.yml` (`Lint`, `AI 600-1 Unit Tests`, `Apache 2.0 License Headers`, `Pytest Logic Tests`, `Terraform Tests (gcp-gke, mock providers)`, `Quickstart Bootstrap & First-DENY Smoke Gate`, `Client SDK Built-Wheel Smoke (Bare + [langgraph])`) | §3 → ruleset `25966171` |
 | `security-scan.yml` `secret-scan` and `rego-policy-lint` jobs | §3 → ruleset `25966171`: `Secret Scanning (Gitleaks)`, `OPA Rego Policy Lint and Test ...` |
 | `license_guard.yml` `license-check` job (dependency licences) | §3 → ruleset `25966171`: `license-check` |
 | `review-bypass-attestation.yml` | §3 → ruleset `25966171`: `Approved review or recorded bypass` (§3.1) |
-| `review-bypass-ledger.yml` | None: it runs after each merge, and a failed run on `main` is the signal (§3.1) |
+| `review-bypass-ledger.yml` | None: it runs after each merge, and a failed run on `main` is the signal (§3.1; reconciled post-merge by `main-result-reconciler.yml`) |
+| `main-result-reconciler.yml` (`scripts/reconcile_main_check_results.py`) | Scheduled post-merge reconciliation of the eleven push checks on `main` (POAM-2026-171): stamps `last-checked: <UTC>` on the durable `main-check-reconciliation` GitHub issue first and publishes heartbeats + `CRITICAL` violation envelopes via keyless WIF to GCP Pub/Sub and Cloud Monitoring (`google_monitoring_alert_policy.main_result_reconciler_absent`). Guarded in CI by `check_repo_rules.py` (`workflow_guard_drift()`) |
 | `dependency-review.yml` | §5 → dependency graph |
 | `scripts/setup_git_hooks.sh` pre-push hook (refuses pushes to `main`) | Local only. Server side, ruleset `19769096` requires pull requests and `26377312` blocks force pushes and deletion |
 | `dependabot.yml` weekly Actions scan | §5 → Dependabot alerts |
@@ -273,8 +283,11 @@ After any ruleset change:
 
 `repo-rules.yml` runs `scripts/check_repo_rules.py` on every pull request, every push to
 `main` and daily. It compares the rules on `main` (§1), the required checks and their pins
-(§3) and the release-tag ruleset (§4) with the API, and fails on any difference in either
-direction; `tests/test_check_repo_rules.py` holds the §3 table equal to the checker's pins.
+(§3), the release-tag ruleset (§4) and the committed post-merge workflow guards
+(`workflow_guard_drift()`: PR-only `cancel-in-progress`, per-SHA `push` concurrency groups
+and `main-result-reconciler.yml`) against the pinned configuration, and fails on any
+difference in either direction; `tests/test_check_repo_rules.py` holds the §3 table equal
+to the checker's pins.
 An intended change updates the ruleset, the checker and this document together. The other
 sections are checked by hand with the commands below.
 

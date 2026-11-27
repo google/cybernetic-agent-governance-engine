@@ -765,6 +765,12 @@ class TestServerBoundPolicyPrecheckEndpoint:
         gov.govern.assert_not_awaited()
         gov.validate_action.assert_not_awaited()
 
+    @pytest.mark.covers(
+        "src.gateway.server.governance_middleware:PolicyPrecheckRequest._reject_blank_action#non-empty string",
+        "src.gateway.server.governance_middleware:_check_non_finite_recursive#contains non-finite float",
+        "src.gateway.server.governance_middleware:policy_precheck_endpoint#OPA policy-precheck engine error for action=",
+        "src.gateway.server.governance_middleware:policy_precheck_endpoint#if not rl_verdict.allowed:",
+    )
     @pytest.mark.asyncio
     async def test_policy_precheck_validation_rate_limit_and_fail_closed_matrix(
         self,
@@ -797,14 +803,15 @@ class TestServerBoundPolicyPrecheckEndpoint:
                     "/governance/policy-precheck",
                     json={"action": "execute_trade", "params": {"amount": 10}},
                 )
-                assert r_err.status_code == 200
+                assert r_err.status_code == 503
                 body = r_err.json()
                 assert body == {
                     "schema_version": "1.0.0",
                     "action": "execute_trade",
-                    "decision": "DENY",
+                    "decision": "UNAVAILABLE",
                     "dry_run": True,
                     "advisory": True,
+                    "error": "policy_engine_unavailable",
                 }
                 for forbidden_key in (
                     "seal",
@@ -837,6 +844,12 @@ class TestServerBoundPolicyPrecheckEndpoint:
                 assert r_rl.status_code == 429
                 assert r_rl.headers["Retry-After"] == "4"
 
+    @pytest.mark.covers(
+        "src.governed_financial_advisor.infrastructure.gateway_client:GatewayClient.evaluate_policy_dry_run#if not clean_action:",
+        "src.governed_financial_advisor.infrastructure.gateway_client:GatewayClient.evaluate_policy_dry_run#policy-precheck returned malformed body",
+        "src.governed_financial_advisor.infrastructure.gateway_client:GatewayClient.evaluate_policy_dry_run#policy-precheck returned unknown decision",
+        "src.governed_financial_advisor.infrastructure.gateway_client:GatewayClient.evaluate_policy_dry_run#except Exception as exc:",
+    )
     @pytest.mark.asyncio
     async def test_gateway_client_dry_run_retries_503_and_fails_closed_on_bad_responses(
         self,

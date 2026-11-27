@@ -29,12 +29,19 @@ B. /governance/validate-action endpoint
    - GovernanceError → 403 DENIED (not 500)
    - Internal exception → 500 with "Internal governance error" (MED-03 fix)
    - detail field never contains stack trace or internal variable names
+   - 200 envelopes carry the governor's ``evaluated_action_hash`` as
+     ``subject.evaluated_action_hash`` (never in the payload);
+     ``subject.action_hash`` binds the submitted params; 403 envelopes
+     carry no evaluated hash
 
 C. enforce_approved_governance (POAM-2026-079)
    - /governance/revalidate-post-hitl no longer exists
-   - Consumed approval → POST_HITL commit + seal
-   - Missing/unapproved approval, queue outage, raising matcher → refused
-     with an AC-3 refusal receipt; nothing is committed
+   - Redeemable approval → POST_HITL commit, returning the SealedAction
+   - The pre-check reads token state only: no ``covers``, no server-input
+     binding; the approval's ``covers`` / ``spend`` decide coverage of the
+     evaluated params (a raising or non-dict matcher input never authorises)
+   - Missing/unapproved approval, queue outage → refused with an AC-3
+     refusal receipt or blocked; nothing is committed
    - POST_HITL refusal → PermissionError + SC-4 refusal receipt
 
 D. _emit_refusal_receipt()
@@ -43,6 +50,8 @@ D. _emit_refusal_receipt()
    - Evidence sink failure is logged but does not suppress the call
 
 E. Module exports
+
+G. enforce_governance(): every tool name is governed (no exemption)
 
 Notes
 -----
@@ -54,6 +63,7 @@ from __future__ import annotations
 import json
 import os
 from contextlib import asynccontextmanager, contextmanager
+from types import MappingProxyType
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -78,6 +88,17 @@ def _json_body(
     return json.dumps(
         {"tool_name": tool_name, "params": params or {"amount": 100}}
     ).encode()
+
+
+#: The params every approved-run test submits.
+_PARAMS: dict[str, Any] = {"symbol": "AAPL", "amount": 10.0}
+
+
+def _sealed(action: str, seal: str, params: dict[str, Any]) -> Any:
+    """What a committing run returns: the seal and the evaluated params."""
+    from src.gateway.governance.governor.sealing import SealedAction
+
+    return SealedAction(action, seal, dict(params))
 
 
 # ---------------------------------------------------------------------------
@@ -347,6 +368,101 @@ class TestValidateActionEndpoint:
         assert "fiscal_limit_exceeded" in call_kwargs.kwargs["refusal_reason"]
         assert call_kwargs.kwargs["oscal_control_ref"] == "SC-4"
 
+    @pytest.mark.parametrize(
+        "verdict",
+        [
+            {"verdict": "ALLOW", "violations": [], "latency_ms": 1.0},
+            {
+                "verdict": "REQUIRE_APPROVAL",
+                "violations": [],
+                "deferred_id": "defer-7",
+                "latency_ms": 1.0,
+            },
+        ],
+        ids=["allow", "require-approval"],
+    )
+    def test_envelope_subject_carries_the_evaluated_action_hash(
+        self, client, mock_symbolic_governor, verdict: dict[str, Any]
+    ):
+        """The governor's evaluated_action_hash is signed as subject metadata.
+
+        It is the audit binding of the server-bound params the stages
+        evaluated: it never appears in the payload, and subject.action_hash
+        still binds the params the caller submitted.
+        """
+        from src.gateway.governance.governance_envelope import envelope_action_hash
+
+        params = {"amount": 100, "symbol": "AAPL"}
+        evaluated_hash = envelope_action_hash(
+            "execute_trade", {**params, "trader_role": "junior"}
+        )
+        mock_symbolic_governor.validate_action = AsyncMock(
+            return_value={**verdict, "evaluated_action_hash": evaluated_hash}
+        )
+
+        resp = client.post(
+            "/validate-action", json={"action": "execute_trade", "params": params}
+        )
+
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        assert data["payload"]["verdict"] == verdict["verdict"]
+        assert data["subject"]["evaluated_action_hash"] == evaluated_hash
+        assert data["subject"]["action_hash"] == envelope_action_hash(
+            "execute_trade", params
+        )
+        assert data["subject"]["action_hash"] != evaluated_hash
+        assert "evaluated_action_hash" not in data["payload"]
+
+    @pytest.mark.parametrize("bogus", [None, 123, {"sha256": "x"}])
+    def test_a_non_string_evaluated_action_hash_is_never_emitted(
+        self, client, mock_symbolic_governor, bogus: Any
+    ):
+        mock_symbolic_governor.validate_action = AsyncMock(
+            return_value={
+                "verdict": "ALLOW",
+                "violations": [],
+                "evaluated_action_hash": bogus,
+            }
+        )
+
+        resp = client.post(
+            "/validate-action",
+            json={"action": "execute_trade", "params": {"amount": 100}},
+        )
+
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        assert "evaluated_action_hash" not in data["subject"]
+        assert "evaluated_action_hash" not in data["payload"]
+
+    def test_refusal_envelope_carries_no_evaluated_action_hash(
+        self, client, mock_symbolic_governor
+    ):
+        """A 403 envelope carries no evaluated hash; subject.action_hash binds the request."""
+        from src.gateway.governance.governance_envelope import envelope_action_hash
+        from src.gateway.governance.governor.governor import GovernanceError
+
+        mock_symbolic_governor.validate_action = AsyncMock(
+            side_effect=GovernanceError("OPA policy denied execute_trade")
+        )
+        params = {"amount": 100}
+
+        with patch(
+            "src.gateway.server.governance_middleware._emit_refusal_receipt",
+            new=AsyncMock(return_value=None),
+        ):
+            resp = client.post(
+                "/validate-action", json={"action": "execute_trade", "params": params}
+            )
+
+        assert resp.status_code == 403
+        data = resp.json()
+        assert "evaluated_action_hash" not in data["subject"]
+        assert data["subject"]["action_hash"] == envelope_action_hash(
+            "execute_trade", params
+        )
+
 
 # ===========================================================================
 # C. Post-approval committing run (POAM-2026-079)
@@ -360,7 +476,9 @@ class TestRevalidatePostHitlRemoved:
         self, gov_client, mock_symbolic_governor
     ):
         """The advisor can no longer trigger a POST_HITL run over HTTP."""
-        mock_symbolic_governor.revalidate_post_hitl = AsyncMock(return_value="SEAL")
+        mock_symbolic_governor.revalidate_post_hitl = AsyncMock(
+            return_value=_sealed("execute_trade", "SEAL", {"amount": 10.0})
+        )
         resp = gov_client.post(
             "/revalidate-post-hitl",
             json={"action": "execute_trade", "params": {"amount": 10.0}},
@@ -374,15 +492,33 @@ class TestEnforceApprovedGovernance:
 
     @staticmethod
     def _queue(token: Any):
+        from src.gateway.governance.commit_outcome import ApprovalRedemptionRefusal
+        from src.gateway.governance.defer_queue import Redemption
+
         queue = MagicMock()
-        queue.redeemable_approval = AsyncMock(return_value=token)
-        queue.consume_approval = AsyncMock(return_value=token)
+        queue.check_redemption = AsyncMock(
+            return_value=Redemption(token, None)
+            if token is not None
+            else Redemption(None, ApprovalRedemptionRefusal.PENDING)
+        )
+        queue.consume_redemption = AsyncMock(return_value=Redemption(token, None))
 
         @asynccontextmanager
         async def _open():
             yield queue
 
         return queue, _open
+
+    @staticmethod
+    def _token(approved: Any = _PARAMS, **fields: Any) -> MagicMock:
+        """A redeemable HITL token whose approved snapshot params are ``approved``."""
+        attrs: dict[str, Any] = {
+            "thread_id": "t",
+            "barrier_preview": None,
+            "hitl_holds": frozenset(),
+        }
+        attrs.update(fields)
+        return MagicMock(opa_input_snapshot={"params": approved}, **attrs)
 
     async def _call(self, governor, open_queue, emit, covers=lambda a, p: True):
         from src.gateway.server import governance_middleware as gm
@@ -396,25 +532,43 @@ class TestEnforceApprovedGovernance:
             return await gm.enforce_approved_governance(
                 governor,
                 "execute_trade",
-                {"symbol": "AAPL", "amount": 10.0},
+                dict(_PARAMS),
                 deferred_id="defer-1",
                 approval_covers=covers,
             )
 
-    async def test_redeemable_approval_runs_post_hitl_and_returns_seal(self):
+    async def _approval(self, token: Any, *, covers: Any = lambda a, p: True):
+        """Run the gateway once; return its queue and the approval it built."""
         governor = _mock_governor()
-        governor.revalidate_post_hitl = AsyncMock(return_value="SEAL")
+        captured: dict[str, Any] = {}
+
+        async def _revalidate(action, params, *, approval):
+            captured["approval"] = approval
+            return _sealed(action, "SEAL", params)
+
+        governor.revalidate_post_hitl = _revalidate
+        queue, open_queue = self._queue(token)
+        await self._call(governor, open_queue, AsyncMock(), covers=covers)
+        return queue, captured["approval"]
+
+    async def test_redeemable_approval_runs_post_hitl_and_returns_the_sealed_action(
+        self,
+    ):
+        governor = _mock_governor()
+        sealed = _sealed("execute_trade", "SEAL", {**_PARAMS, "trader_role": "junior"})
+        governor.revalidate_post_hitl = AsyncMock(return_value=sealed)
         holds = frozenset({("fria", "FRIA_EXTERNAL_HOLD")})
         queue, open_queue = self._queue(
-            MagicMock(thread_id="thread-9", barrier_preview="PASS", hitl_holds=holds)
+            self._token(thread_id="thread-9", barrier_preview="PASS", hitl_holds=holds)
         )
         emit = AsyncMock()
 
-        seal = await self._call(governor, open_queue, emit)
+        result = await self._call(governor, open_queue, emit)
 
-        assert seal == "SEAL"
+        # The committing run's seal and the evaluated params it commits to.
+        assert result is sealed
         args = governor.revalidate_post_hitl.await_args
-        assert args.args == ("execute_trade", {"symbol": "AAPL", "amount": 10.0})
+        assert args.args == ("execute_trade", _PARAMS)
         approval = args.kwargs["approval"]
         # D-H: the committing run is bound to the barrier snapshot approved.
         assert approval.approval_id == "defer-1"
@@ -422,27 +576,148 @@ class TestEnforceApprovedGovernance:
         assert approval.thread_id == "thread-9"
         # GHSA-f6xq-23f7-9grm: ... and to the human-review holds the reviewer saw.
         assert approval.approved_holds == holds
-        assert queue.redeemable_approval.await_args.kwargs["action"] == "execute_trade"
+        assert queue.check_redemption.await_args.kwargs["action"] == "execute_trade"
         # Checking spends nothing: only the governor's committing run spends.
-        queue.consume_approval.assert_not_awaited()
+        queue.consume_redemption.assert_not_awaited()
         emit.assert_not_awaited()
+
+    async def test_pre_check_reads_token_state_only_and_binds_no_server_inputs(self):
+        """The pre-check passes no ``covers`` and resolves no server input.
+
+        Coverage is decided against the evaluated params inside the
+        committing run (``approval.covers`` / ``approval.spend``); the
+        gateway makes no server-input lookup of its own.
+        """
+        governor = _mock_governor()
+        governor.revalidate_post_hitl = AsyncMock(
+            return_value=_sealed("execute_trade", "SEAL", _PARAMS)
+        )
+        queue, open_queue = self._queue(self._token())
+        matcher = MagicMock(return_value=True)
+
+        await self._call(governor, open_queue, AsyncMock(), covers=matcher)
+
+        assert queue.check_redemption.await_args.args == ("defer-1",)
+        assert queue.check_redemption.await_args.kwargs == {"action": "execute_trade"}
+        governor.bind_server_inputs.assert_not_called()
+        matcher.assert_not_called()
+
+    async def test_covers_checks_the_evaluated_params_against_the_approved_snapshot(
+        self,
+    ):
+        approved = {**_PARAMS, "trader_role": "senior"}
+        calls: list[tuple[Any, Any]] = []
+
+        def _matcher(approved_params: Any, evaluated: Any) -> bool:
+            calls.append((approved_params, evaluated))
+            return evaluated.get("trader_role") == approved_params.get("trader_role")
+
+        _, approval = await self._approval(
+            self._token(approved=approved), covers=_matcher
+        )
+        evaluated = MappingProxyType({**_PARAMS, "trader_role": "senior"})
+
+        assert approval.covers(evaluated) is True
+        assert approval.covers({**_PARAMS, "trader_role": "junior"}) is False
+        # approval_covers(approved snapshot params, evaluated params as a dict)
+        seen_approved, seen_evaluated = calls[0]
+        assert seen_approved == approved
+        assert type(seen_evaluated) is dict
+        assert seen_evaluated == dict(evaluated)
+
+    @pytest.mark.parametrize(
+        "approved", [None, "AAPL x 10", ["AAPL", 10.0]], ids=["none", "str", "list"]
+    )
+    async def test_covers_refuses_an_approval_without_dict_params(self, approved: Any):
+        matcher = MagicMock(return_value=True)
+
+        _, approval = await self._approval(
+            self._token(approved=approved), covers=matcher
+        )
+
+        assert approval.covers(dict(_PARAMS)) is False
+        matcher.assert_not_called()
+
+    async def test_raising_matcher_never_authorises(self):
+        """A matcher that raises is "does not cover", before the stages and in the swap.
+
+        The pre-check is state-only, so the matcher is reached only through
+        ``approval.covers`` and the ``covers`` that ``spend`` hands
+        ``consume_redemption``: both answer False and nothing is consumed.
+        """
+
+        def _boom(approved: Any, evaluated: Any) -> bool:
+            raise KeyError("amount")
+
+        queue, approval = await self._approval(self._token(), covers=_boom)
+        verdicts: list[bool] = []
+
+        async def _consume(defer_id: str, *, action: str, covers: Any) -> Any:
+            from src.gateway.governance.commit_outcome import (
+                ApprovalRedemptionRefusal,
+            )
+            from src.gateway.governance.defer_queue import Redemption
+
+            covered = covers(dict(_PARAMS))
+            verdicts.append(covered)
+            # consumes only if covered
+            return (
+                Redemption(self._token(), None)
+                if covered
+                else Redemption(None, ApprovalRedemptionRefusal.PARAMS_NOT_COVERED)
+            )
+
+        queue.consume_redemption = _consume
+
+        assert approval.covers(dict(_PARAMS)) is False
+        assert await approval.spend(dict(_PARAMS)) is False
+        assert verdicts == [False]
+        assert "covers" not in queue.check_redemption.await_args.kwargs
+
+    async def test_spend_consumes_only_if_the_matcher_covers_the_evaluated_params(
+        self,
+    ):
+        calls: list[tuple[Any, Any]] = []
+
+        def _matcher(approved: Any, evaluated: Any) -> bool:
+            calls.append((approved, evaluated))
+            return float(evaluated["amount"]) <= float(approved["amount"])
+
+        queue, approval = await self._approval(self._token(), covers=_matcher)
+        evaluated = {**_PARAMS, "trader_role": "junior"}
+
+        assert await approval.spend(evaluated) is True
+
+        call = queue.consume_redemption.await_args
+        assert call.args == ("defer-1",)
+        assert call.kwargs["action"] == "execute_trade"
+        covers = call.kwargs["covers"]
+        # consume_redemption hands the closure the token's approved params; the
+        # closure decides approval_covers(approved, evaluated) for the
+        # evaluated params this spend was given.
+        assert covers({"symbol": "AAPL", "amount": 20.0}) is True
+        assert calls[-1] == ({"symbol": "AAPL", "amount": 20.0}, evaluated)
+        assert covers({"symbol": "AAPL", "amount": 5.0}) is False
+        assert covers("not-a-dict") is False
 
     async def test_spend_is_the_queues_atomic_consume(self):
         governor = _mock_governor()
         spent: list[bool] = []
 
         async def _revalidate(action, params, *, approval):
-            spent.append(await approval.spend())
-            return "SEAL"
+            spent.append(await approval.spend(params))
+            return _sealed(action, "SEAL", params)
 
         governor.revalidate_post_hitl = _revalidate
-        queue, open_queue = self._queue(MagicMock(thread_id="t", barrier_preview=None))
+        queue, open_queue = self._queue(self._token())
 
-        assert await self._call(governor, open_queue, AsyncMock()) == "SEAL"
+        sealed = await self._call(governor, open_queue, AsyncMock())
+
+        assert sealed.seal == "SEAL"
         assert spent == [True]
-        queue.consume_approval.assert_awaited_once()
-        assert queue.consume_approval.await_args.args == ("defer-1",)
-        assert queue.consume_approval.await_args.kwargs["action"] == "execute_trade"
+        queue.consume_redemption.assert_awaited_once()
+        assert queue.consume_redemption.await_args.args == ("defer-1",)
+        assert queue.consume_redemption.await_args.kwargs["action"] == "execute_trade"
 
     async def test_spend_fails_closed_when_the_queue_raises(self):
         from src.gateway.governance.governor.errors import (
@@ -452,28 +727,38 @@ class TestEnforceApprovedGovernance:
         governor = _mock_governor()
 
         async def _revalidate(action, params, *, approval):
-            await approval.spend()
-            return "SEAL"
+            await approval.spend(params)
+            return _sealed(action, "SEAL", params)
 
         governor.revalidate_post_hitl = _revalidate
-        queue, open_queue = self._queue(MagicMock(thread_id="t", barrier_preview=None))
-        queue.consume_approval = AsyncMock(side_effect=ConnectionError("redis down"))
+        queue, open_queue = self._queue(self._token())
+        queue.consume_redemption = AsyncMock(side_effect=ConnectionError("redis down"))
 
         with pytest.raises(ApprovalSpendUnavailableError, match="defer-1"):
             await self._call(governor, open_queue, AsyncMock())
 
     async def test_no_approval_refuses_with_receipt_and_never_commits(self):
+        from src.gateway.governance.commit_outcome import ApprovalRedemptionRefusal
+        from src.gateway.server.governance_middleware import ApprovalRedemptionRefused
+
         governor = _mock_governor()
-        governor.revalidate_post_hitl = AsyncMock(return_value="SEAL")
+        governor.revalidate_post_hitl = AsyncMock(
+            return_value=_sealed("execute_trade", "SEAL", _PARAMS)
+        )
         _, open_queue = self._queue(None)
         emit = AsyncMock()
 
-        with pytest.raises(PermissionError, match="defer-1"):
+        with pytest.raises(ApprovalRedemptionRefused, match="defer-1") as refused:
             await self._call(governor, open_queue, emit)
 
+        # The typed reason rides on the exception (POAM-2026-245).
+        assert refused.value.refusal is ApprovalRedemptionRefusal.PENDING
         governor.revalidate_post_hitl.assert_not_awaited()
         emit.assert_awaited_once()
         assert emit.await_args.kwargs["oscal_control_ref"] == "AC-3"
+        assert emit.await_args.kwargs["refusal_reason"] == (
+            "approval 'defer-1' is not redeemable for this execute_trade (PENDING)"
+        )
 
     async def test_queue_unavailable_fails_closed(self):
         from src.gateway.governance.governor.errors import (
@@ -481,7 +766,9 @@ class TestEnforceApprovedGovernance:
         )
 
         governor = _mock_governor()
-        governor.revalidate_post_hitl = AsyncMock(return_value="SEAL")
+        governor.revalidate_post_hitl = AsyncMock(
+            return_value=_sealed("execute_trade", "SEAL", _PARAMS)
+        )
 
         @asynccontextmanager
         async def _broken():
@@ -504,32 +791,6 @@ class TestEnforceApprovedGovernance:
         governor.revalidate_post_hitl.assert_not_awaited()
         emit.assert_not_awaited()
         pub_infra.assert_awaited_once()
-
-    async def test_raising_matcher_never_authorises(self):
-        """A covers() that raises is treated as "does not cover"."""
-        governor = _mock_governor()
-        governor.revalidate_post_hitl = AsyncMock(return_value="SEAL")
-        seen: list[bool] = []
-
-        queue = MagicMock()
-
-        async def _check(defer_id, *, action, covers):
-            seen.append(covers({"symbol": "AAPL"}))
-            return None
-
-        queue.redeemable_approval = _check
-
-        @asynccontextmanager
-        async def _open():
-            yield queue
-
-        def _boom(approved, params):
-            raise KeyError("amount")
-
-        with pytest.raises(PermissionError):
-            await self._call(governor, _open, AsyncMock(), covers=_boom)
-        assert seen == [False]
-        governor.revalidate_post_hitl.assert_not_awaited()
 
     async def test_post_hitl_refusal_raises_with_receipt(self):
         from src.gateway.governance.governor.governor import GovernanceError
@@ -569,7 +830,7 @@ class TestEnforceApprovedGovernance:
         assert deferred.value.approval_retained is True
         assert deferred.value.defer_reason == "WARRANT_INELIGIBLE"
         assert deferred.value.reliance == [{"reliance_status": "INELIGIBLE_REVOKED"}]
-        queue.consume_approval.assert_not_awaited()
+        queue.consume_redemption.assert_not_awaited()
         emit.assert_not_awaited()  # a deferral is evidenced as a deferral
 
 
@@ -609,11 +870,21 @@ class TestEmitRefusalReceipt:
         assert "receipt_id" in receipt
         assert "timestamp_utc" in receipt
 
-    async def test_emit_receipt_kms_sign_failure_does_not_suppress(self, caplog):
-        """If KMS signing fails, the receipt is still emitted (unsigned) and error is logged."""
+    async def test_emit_receipt_kms_sign_failure_fails_closed(self, caplog):
+        """A signing failure blocks fail-closed; nothing unsigned is committed."""
         import logging
 
-        from src.gateway.server.governance_middleware import _emit_refusal_receipt
+        from src.gateway.governance.governor.errors import (
+            GovernanceInfrastructureError,
+        )
+        from src.gateway.governance.governor.verdicts import (
+            INFRASTRUCTURE_BLOCK_EVENT_TYPE,
+        )
+        from src.gateway.server.governance_middleware import (
+            _emit_refusal_receipt,
+            get_last_refusal_proof_hash,
+            set_last_refusal_proof_hash,
+        )
 
         failing_signer = MagicMock()
         failing_signer.sign = MagicMock(side_effect=RuntimeError("KMS unavailable"))
@@ -623,6 +894,7 @@ class TestEmitRefusalReceipt:
 
         sink = MagicMock()
         sink.ingest = AsyncMock(return_value="1700000000000-0")
+        set_last_refusal_proof_hash(None)
 
         with (
             patch(
@@ -633,19 +905,32 @@ class TestEmitRefusalReceipt:
                 "src.gateway.server.governance_middleware.get_evidence_sink",
                 return_value=sink,
             ),
+            patch(
+                "src.gateway.governance.evidence.stream.get_evidence_sink",
+                return_value=sink,
+            ),
+            patch(
+                "src.gateway.governance.evidence.stream.commit_decision_evidence",
+                new=AsyncMock(),
+            ) as commit,
         ):
             with caplog.at_level(logging.ERROR, logger="Gateway.GovernanceMiddleware"):
-                await _emit_refusal_receipt(
-                    action_id="execute_trade",
-                    refusal_reason="test_reason",
-                    oscal_control_ref="SC-4",
-                    params={},
-                )
+                with pytest.raises(GovernanceInfrastructureError) as excinfo:
+                    await _emit_refusal_receipt(
+                        action_id="execute_trade",
+                        refusal_reason="test_reason",
+                        oscal_control_ref="SC-4",
+                        params={},
+                    )
 
-        # Sink must still be called even though signing failed
-        sink.ingest.assert_awaited_once()
-        # Error must be logged
-        assert any("Failed to KMS-sign" in r.message for r in caplog.records)
+        assert excinfo.value.dependency == "kms"
+        assert excinfo.value.failure_code == "KMS_SIGNING_UNAVAILABLE"
+        labels = [c.kwargs.get("label") for c in commit.await_args_list]
+        assert labels == [INFRASTRUCTURE_BLOCK_EVENT_TYPE]
+        assert get_last_refusal_proof_hash() is None
+        assert any(
+            "Failed to sign refusal receipt" in r.message for r in caplog.records
+        )
 
     async def test_emit_receipt_sink_failure_raises_when_blocking(
         self, mock_kms_signer, caplog
@@ -751,30 +1036,52 @@ class TestEnforceGovernanceHelper:
         from src.gateway.server.governance_middleware import enforce_governance
 
         gov = _mock_governor()
-        gov.govern = AsyncMock(return_value="domain-read-only-seal")
-        seal = await enforce_governance(gov, "check_market_status", {"symbol": "AAPL"})
-        assert seal == "domain-read-only-seal"
+        sealed = _sealed(
+            "check_market_status", "domain-read-only-seal", {"symbol": "AAPL"}
+        )
+        gov.govern = AsyncMock(return_value=sealed)
+        result = await enforce_governance(
+            gov, "check_market_status", {"symbol": "AAPL"}
+        )
+        assert result is sealed
+        assert result.seal == "domain-read-only-seal"
         gov.govern.assert_awaited_once_with("check_market_status", {"symbol": "AAPL"})
 
-    async def test_exempt_tool_verify_content_safety_returns_empty_seal(self):
-        """verify_content_safety is exempt from governance overhead."""
+    async def test_verify_content_safety_is_governed_like_any_other_tool(self):
+        """No tool name is exempt: verify_content_safety runs the committing run too."""
         from src.gateway.server.governance_middleware import enforce_governance
 
         gov = _mock_governor()
-        seal = await enforce_governance(gov, "verify_content_safety", {"text": "hello"})
-        assert seal == ""
-        gov.govern.assert_not_called()
+        sealed = _sealed(
+            "verify_content_safety", "content-safety-seal", {"text": "hello"}
+        )
+        gov.govern = AsyncMock(return_value=sealed)
 
-    async def test_non_exempt_tool_calls_governor_and_returns_seal(self):
-        """Non-exempt tools call governor.govern() and return the seal."""
+        result = await enforce_governance(
+            gov, "verify_content_safety", {"text": "hello"}
+        )
+
+        assert result is sealed
+        assert result.seal == "content-safety-seal"
+        gov.govern.assert_awaited_once_with("verify_content_safety", {"text": "hello"})
+
+    async def test_tool_call_is_governed_and_returns_the_sealed_action(self):
+        """enforce_governance() returns governor.govern()'s SealedAction unchanged."""
         from src.gateway.server.governance_middleware import enforce_governance
 
         mock_gov = _mock_governor()
-        mock_gov.govern = AsyncMock(return_value="test-routing-seal-value")
+        sealed = _sealed(
+            "execute_trade",
+            "test-routing-seal-value",
+            {"amount": 100, "trader_role": "junior"},
+        )
+        mock_gov.govern = AsyncMock(return_value=sealed)
 
-        seal = await enforce_governance(mock_gov, "execute_trade", {"amount": 100})
+        result = await enforce_governance(mock_gov, "execute_trade", {"amount": 100})
 
-        assert seal == "test-routing-seal-value"
+        assert result is sealed
+        assert result.seal == "test-routing-seal-value"
+        assert result.params == {"amount": 100, "trader_role": "junior"}
         mock_gov.govern.assert_awaited_once_with("execute_trade", {"amount": 100})
 
     async def test_governance_error_raises_permission_error(self):
@@ -948,6 +1255,9 @@ class TestValidateActionCanonicalEnvelope:
         assert data.get("envelope_version") == "3.0"
         assert data["payload"]["verdict"] == "ALLOW"
 
+    @pytest.mark.covers(
+        "src.gateway.server.governance_middleware:validate_action_endpoint#isinstance(exc, EvidenceChainUnavailableError)",
+    )
     def test_validate_action_returns_503_when_governor_raises_evidence_chain_unavailable(
         self, client_for_external_hold, mock_kms_signer
     ):
@@ -974,6 +1284,9 @@ class TestValidateActionCanonicalEnvelope:
         assert data["error"] == "evidence_chain_unavailable"
         assert "Redis connection not established" in data["detail"]
 
+    @pytest.mark.covers(
+        "src.gateway.server.governance_middleware:validate_action_endpoint#except EvidenceChainUnavailableError as emit_exc:",
+    )
     def test_validate_action_returns_503_when_refusal_receipt_sink_fails_closed(
         self, client_for_external_hold, mock_kms_signer
     ):

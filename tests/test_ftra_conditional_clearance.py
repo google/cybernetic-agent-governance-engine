@@ -238,6 +238,9 @@ def test_classifier_reports_provenance(registry: Path) -> None:
     )
 
 
+@pytest.mark.covers(
+    "src.gateway.governance.ftra.classifier:IrreversibilityClassifier.classify_with_provenance#RegistryState.UNAVAILABLE"
+)
 def test_unreadable_registry_is_unavailable(tmp_path: Path) -> None:
     c = IrreversibilityClassifier(tmp_path / "missing.json")
     p = c.classify_with_provenance("move_funds")
@@ -442,6 +445,11 @@ async def test_stage_never_clears_unregistered(registry: Path) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    "src.gateway.governance.ftra.classifier:IrreversibilityClassifier.classify_with_provenance#RegistryState.UNAVAILABLE",
+    "src.gateway.governance.ftra.models:_provenance_violation#code=FTRA_REGISTRY_UNAVAILABLE",
+    'src.gateway.governance.governor.stages.ftra:_metric_outcome#return "error"',
+)
 async def test_stage_unavailable_registry_is_infrastructure(tmp_path: Path) -> None:
     stage, metrics = _stage(tmp_path / "missing.json")
     violations = await _run(stage, "move_funds", amount=1.0, confidence=_HIGH)

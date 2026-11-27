@@ -430,9 +430,9 @@ here for readability is, in the actual wire format, the envelope's own
 - `attempted_params` — direct carry-forward of `RefusalReceipt.attempted_params`
   ([`contracts.py:84`](../../src/gateway/governance/contracts.py:84)).
 - `action_hash` — **new**, computed with the same
-  `jcs_canonicalize_plan({"action": action, **safe_params})` recipe already
+  `jcs_canonicalize_plan({"action": action, "params": safe_params})` recipe already
   used by
-  [`GovernanceEnvelopeBuilder._compute_action_hash()`](../../src/gateway/governance/governance_envelope.py:294)
+  [`envelope_action_hash()`](../../src/gateway/governance/governance_envelope.py:139)
   and [`routing_seal.py`'s action-hash check](../../src/gateway/governance/routing_seal.py:688) —
   reusing the identical hash lets a verifier confirm the receipt's `intent`
   matches what a *would-be* seal's `action_hash` claim would have been, had
@@ -704,10 +704,7 @@ signing code**.
 **Persistence path (new):** the signed envelope is written to a
 CMEK-encrypted GCS WORM bucket at
 `gs://<bucket>/refusal-receipts/<date>/<receipt_id>.json`, following the
-exact convention already documented for provenance records
-(`provenance/<date>/<trace_id>.json`, see
-[`provenance_chain.py:22`](../../src/gateway/governance/provenance_chain.py:22))
-and evidence-stream batches (the cold-store `put_batch()` seam in
+evidence-stream batch convention (the cold-store `put_batch()` seam in
 [`evidence/cold_store.py`](../../src/gateway/governance/evidence/cold_store.py:100)).
 No new storage backend is introduced — this is a new object-key prefix
 in the retention-locked WORM bucket (`infra/modules/worm_bucket`) that is
@@ -952,7 +949,8 @@ CAGE already implements piecemeal: JCS canonicalization
 ([`jcs_canonicalizer.py`](../../src/gateway/governance/jcs_canonicalizer.py)),
 KMS-backed non-repudiation
 ([`kms_signer.py`](../../src/gateway/governance/kms_signer.py)), hash-chained
-provenance ([`provenance_chain.py`](../../src/gateway/governance/provenance_chain.py)),
+provenance ([`provenance_chain.py`](../../src/gateway/governance/provenance_chain.py), a
+pattern only: the library has no production caller, `POAM-2026-246`),
 and a structural (not merely policy-based) No-Direct-Bind invariant
 ([`proof/model.py`](../../proof/model.py)). Five of the nine proof elements
 (1, 2, 3, 7-partial, 8-partial) already have direct field-level analogues in

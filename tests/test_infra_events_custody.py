@@ -1040,6 +1040,9 @@ class TestDeterministicHashAndCustodyChain:
 
 
 class TestFailClosedPersistenceAndIdempotency:
+    @pytest.mark.covers(
+        "src.compliance_bridge.main:ingest_infra_event#if chain is None:",
+    )
     def test_returns_503_when_infra_chain_missing(self) -> None:
         app.state.infra_evidence_chain = None
         with patch("src.compliance_bridge.main.Langfuse", return_value=MagicMock()):
@@ -1058,6 +1061,10 @@ class TestFailClosedPersistenceAndIdempotency:
         assert res.json().get("status") != "INGESTED"
         assert res.json()["detail"]["error"] == "INFRA_CUSTODY_UNAVAILABLE"
 
+    @pytest.mark.covers(
+        "src.compliance_bridge.infra_custody:InfraEvidenceChain._restore_chain_state#Failed to read INFRA chain head from",
+        "src.compliance_bridge.main:ingest_infra_event#except InfraCustodyError as exc:",
+    )
     def test_returns_503_when_redis_read_or_append_fails(
         self, mesh_client: TestClient
     ) -> None:
@@ -1075,6 +1082,11 @@ class TestFailClosedPersistenceAndIdempotency:
         assert res.json().get("status") != "INGESTED"
         assert res.json()["detail"]["error"] == "INFRA_CUSTODY_UNAVAILABLE"
 
+    @pytest.mark.covers(
+        "src.compliance_bridge.infra_custody:InfraEvidenceChain._restore_chain_state#stream is empty after acknowledging chain",
+        "src.compliance_bridge.infra_custody:InfraEvidenceChain._restore_chain_state#head failed verify_record:",
+        "src.compliance_bridge.main:ingest_infra_event#except InfraCustodyError as exc:",
+    )
     @pytest.mark.asyncio
     async def test_returns_503_when_stream_head_corrupted_or_truncated(
         self,
@@ -1127,6 +1139,11 @@ class TestFailClosedPersistenceAndIdempotency:
         )
         assert r_tamper.status_code == 503
 
+    @pytest.mark.covers(
+        "src.compliance_bridge.main:_resolve_inline_custody_flusher#if inline_custodian is None:",
+        "src.compliance_bridge.infra_custody:InfraEvidenceChain._complete_sinks#WORM custody flush for INFRA chain failed:",
+        "src.compliance_bridge.main:ingest_infra_event#except InfraCustodyError as exc:",
+    )
     @pytest.mark.asyncio
     async def test_inline_worm_flush_succeeds_and_returns_503_when_cold_store_fails(
         self,
@@ -1274,6 +1291,10 @@ class TestFailClosedPersistenceAndIdempotency:
         assert r_bad_key.status_code == 400
         assert r_bad_key.json()["detail"]["error"] == "INVALID_IDEMPOTENCY_KEY"
 
+    @pytest.mark.covers(
+        "src.compliance_bridge.infra_custody:InfraEvidenceChain._complete_sinks#WORM custody flush for INFRA chain failed:",
+        "src.compliance_bridge.main:ingest_infra_event#except InfraCustodyError as exc:",
+    )
     @pytest.mark.asyncio
     async def test_idempotency_retry_recovers_failed_custody_flusher_without_duplicate_stream_entry(
         self,
@@ -1447,6 +1468,12 @@ class TestFailClosedPersistenceAndIdempotency:
         assert report.citable is True
         assert sum(b.entries for b in report.verified) == 8
 
+    @pytest.mark.covers(
+        "src.compliance_bridge.infra_custody:is_inline_custody_flush_enabled#if is_enforcing(source):",
+        "src.compliance_bridge.main:_resolve_inline_custody_flusher#if inline_custodian is None:",
+        "src.compliance_bridge.main:ingest_infra_event#except InfraCustodyError as exc:",
+        "src.compliance_bridge.main:audit_ingest#except InfraCustodyError as exc:",
+    )
     @pytest.mark.asyncio
     async def test_enforcing_posture_defaults_inline_flush_true_and_fails_closed_503_on_infra_and_audit_ingest(
         self,
@@ -1458,7 +1485,12 @@ class TestFailClosedPersistenceAndIdempotency:
         monkeypatch.setenv(
             "CAGE_TRUSTED_OPERATOR_IDENTITIES", "operator:auditor@example.org"
         )
-        # Synthetic, non-secret values satisfying the POAM-018 lifespan pre-flight.
+        # Synthetic, non-secret values satisfying the POAM-018 & POAM-2026-230 lifespan pre-flights.
+        monkeypatch.setenv("ALERT_CHANNEL", "pubsub")
+        monkeypatch.setenv(
+            "COMPLIANCE_ALERT_PUBSUB_TOPIC",
+            "projects/cage-test-01/topics/cage-alerts",
+        )
         for var in LANGFUSE_CREDENTIAL_ENV_VARS:
             monkeypatch.setenv(var, f"synthetic-{var.lower()}")
         monkeypatch.delenv(INFRA_INLINE_FLUSH_ENV, raising=False)

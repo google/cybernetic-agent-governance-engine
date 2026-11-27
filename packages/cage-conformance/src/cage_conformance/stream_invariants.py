@@ -113,6 +113,48 @@ ACTUATION_EVENT_TYPES = frozenset(
     }
 )
 ROLLBACK_STATUSES = frozenset({"ROLLED_BACK", "ROLLED_BACK_UNLEDGERED", "NOOP"})
+
+INFRASTRUCTURE_FAILURE_CODES = frozenset(
+    {
+        "BOUNDING_PROVIDER_UNAVAILABLE",
+        "CAUSAL_TELEMETRY_UNAVAILABLE",
+        "CBF_RECONCILIATION_UNAVAILABLE",
+        "CONFIRM_FAILED",
+        "CONSENSUS_NO_CRITICS_CONFIGURED",
+        "CONSENSUS_NO_INFERENCE_BACKEND",
+        "CONSENSUS_UNAVAILABLE",
+        "DEFER_QUEUE_UNAVAILABLE",
+        "EXECUTION_LEDGER_UNAVAILABLE",
+        "FISCAL_STORE_UNAVAILABLE",
+        "FRIA_PROVIDER_UNAVAILABLE",
+        "FTRA_ERROR",
+        "FTRA_REGISTRY_UNAVAILABLE",
+        "KMS_SIGNING_UNAVAILABLE",
+        "NARROW_RECEIPT_UNAVAILABLE",
+        "OPA_ERROR",
+        "OPA_UNAVAILABLE",
+        "OPA_UNKNOWN_VERDICT",
+        "ROLLBACK_FAILED",
+        "SERVER_INPUT_UNAVAILABLE",
+        "STPA_ERROR",
+        "TIER_EXCEPTION",
+    }
+)
+_INFRA_CODE_RE = re.compile(
+    r"\b(" + "|".join(sorted(INFRASTRUCTURE_FAILURE_CODES)) + r")\b"
+)
+
+
+def _find_infrastructure_failure_code(*fields: object) -> str | None:
+    """Return the first infrastructure failure code named in any text field, else None."""
+    for field_val in fields:
+        if isinstance(field_val, str) and field_val:
+            m = _INFRA_CODE_RE.search(field_val)
+            if m:
+                return m.group(1)
+    return None
+
+
 SETTLEMENT_STATUSES = frozenset({"CONFIRMED", "ROLLED_BACK", "FAILED"})
 #: Fields that name a governance decision by digest (``digest_format``).
 DECISION_DIGEST_FIELDS = frozenset({"governance_decision_digest", "refusal_proof_hash"})
@@ -1470,6 +1512,17 @@ def check_stream(
             else:
                 observed_refusal_hashes.add(str(ph))
             if isinstance(receipt, Mapping):
+                infra_code = _find_infrastructure_failure_code(
+                    receipt.get("violated_rule")
+                )
+                if infra_code is not None:
+                    findings.append(
+                        Finding(
+                            index,
+                            "refusal_evidence",
+                            f"GOVERNANCE_REFUSAL misclassified infrastructure failure {infra_code!r} as policy refusal",
+                        )
+                    )
                 cited_fence, cited_fid, cited_epoch = _extract_fence_citation(
                     (receipt.get("violated_rule"),),
                     receipt.get("tier_failures"),
@@ -1497,6 +1550,17 @@ def check_stream(
                 )
             else:
                 observed_refusal_hashes.add(str(ph))
+            infra_code = _find_infrastructure_failure_code(
+                payload.get("violated_rule"), payload.get("refusal_reason")
+            )
+            if infra_code is not None:
+                findings.append(
+                    Finding(
+                        index,
+                        "refusal_evidence",
+                        f"GOVERNANCE_REFUSAL_RECEIPT misclassified infrastructure failure {infra_code!r} as policy refusal",
+                    )
+                )
             cited_fence, cited_fid, cited_epoch = _extract_fence_citation(
                 (payload.get("violated_rule"), payload.get("refusal_reason")),
                 payload.get("tier_failures"),
@@ -1511,6 +1575,45 @@ def check_stream(
                     caused_fence_epochs=caused_fence_epochs,
                 ):
                     findings.append(Finding(index, "reconciliation_fence", detail))
+
+        elif event_type == "GOVERNANCE_INFRASTRUCTURE_BLOCK":
+            dep = payload.get("dependency")
+            fcode = payload.get("failure_code")
+            if not isinstance(dep, str) or not dep.strip():
+                findings.append(
+                    Finding(
+                        index,
+                        "infrastructure_block",
+                        "GOVERNANCE_INFRASTRUCTURE_BLOCK missing non-empty dependency",
+                    )
+                )
+            if not isinstance(fcode, str) or not fcode.strip():
+                findings.append(
+                    Finding(
+                        index,
+                        "infrastructure_block",
+                        "GOVERNANCE_INFRASTRUCTURE_BLOCK missing non-empty failure_code",
+                    )
+                )
+            if not _is_hex64(payload.get("params_hash")):
+                findings.append(
+                    Finding(
+                        index,
+                        "infrastructure_block",
+                        f"GOVERNANCE_INFRASTRUCTURE_BLOCK missing/invalid params_hash {payload.get('params_hash')!r}",
+                    )
+                )
+            for forbidden in sorted(
+                {"proof_hash", "kms_signature", "attempted_params"} & set(payload)
+            ):
+                if payload[forbidden]:
+                    findings.append(
+                        Finding(
+                            index,
+                            "infrastructure_block",
+                            f"GOVERNANCE_INFRASTRUCTURE_BLOCK must not carry {forbidden}",
+                        )
+                    )
 
         # -- Invariant 5: a refusal-triggered quarantine follows its refusal --
         elif event_type == "WORKLOAD_QUARANTINE_RECEIPT":

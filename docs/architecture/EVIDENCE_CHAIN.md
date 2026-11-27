@@ -7,7 +7,7 @@
 The Evidence Chain is a core component of the Layer 1 Kernel responsible for maintaining a cryptographically verifiable, durable ledger of all governance and compliance events. It elevates standard application logging into a tamper-evident, hash-chained evidence sequence required by ISO 42001 and AARM compliance mandates.
 
 **Trust Boundaries (producer / custodian / verifier split)**:
-- **Producer — gateway (Layer 1)**: [`EvidenceStreamSink`](../../src/gateway/governance/evidence/stream.py) sanitizes, canonicalizes and hash-chains each governance event (from [`verdicts.py`](../../src/gateway/governance/governor/verdicts.py), [`ConsequenceGateway`](../../src/gateway/governance/consequence_gateway.py), [`ingest_actuation_receipt()`](../../src/gateway/governance/execution_actuator.py), [`routing_seal.py`](../../src/gateway/governance/routing_seal.py), and [`GovernanceEventBus`](../../src/compliance_bridge/sse_events.py)) and appends it to a Redis Stream. The gateway holds **no evidence signing key and no cold store**; it cannot attest to or archive its own evidence.
+- **Producer — gateway (Layer 1)**: [`EvidenceStreamSink`](../../src/gateway/governance/evidence/stream.py) sanitizes, canonicalizes and hash-chains each governance event (from [`verdicts.py`](../../src/gateway/governance/governor/verdicts.py), [`ConsequenceGateway`](../../src/gateway/governance/consequence_gateway.py), [`ingest_actuation_receipt()`](../../src/gateway/governance/execution_actuator.py), [`emit_post_execution_sanitized_event()`](../../src/gateway/governance/post_execution_sanitizer.py), [`routing_seal.py`](../../src/gateway/governance/routing_seal.py), and [`GovernanceEventBus`](../../src/compliance_bridge/sse_events.py)) and appends it to a Redis Stream. The gateway holds **no evidence signing key and no cold store**; it cannot attest to or archive its own evidence.
 - **Custodian & Verifier — compliance bridge (Layer 3)**: [`EvidenceCustodian`](../../src/compliance_bridge/evidence_custodian.py) independently re-verifies the chain, signs a per-batch attestation with the dedicated `EVIDENCE_KMS_KEY`, writes batch + attestation to the WORM cold store, and advances a durable cursor. [`CustodyVerifier`](../../src/compliance_bridge/evidence_verifier.py) reads the archive back on `EVIDENCE_VERIFY_INTERVAL_S`, verifies signatures against out-of-band `kid`-resolved trust anchors, re-checks every record and batch link, and gates OSCAL assessment citations (`assert_citable()`).
 - **Downstream (Storage Adapters)**: The custodian and verifier operate through the abstract `EvidenceColdStore` protocol ([`cold_store.py`](../../src/gateway/governance/evidence/cold_store.py)). Concrete backends (`GcsColdStore` in [`src/integrations/storage_gcs/cold_store.py`](../../src/integrations/storage_gcs/cold_store.py), `S3ColdStore` in [`src/integrations/storage_s3/cold_store.py`](../../src/integrations/storage_s3/cold_store.py)) are lazy-imported from Layer 3 by [`factory.py`](../../src/gateway/governance/evidence/factory.py).
 
@@ -110,6 +110,15 @@ evidentiary weight as an ALLOW. Both the actuation seam and the post-FRIA
   happened). Each event also records the receipt's signature `verification`
   status (`VERIFIED` / `UNVERIFIED` / `INVALID`, see
   [`ReceiptVerification`](../../src/gateway/governance/seams/actuation.py)).
+  It is also the only writer of the kernel attempt record
+  ([`ActuationAttempt`](../../src/gateway/governance/execution_idempotency.py),
+  `POAM-2026-252`): it refuses to run outside
+  [`actuation_attempt_scope()`](../../src/gateway/governance/execution_idempotency.py),
+  marks the dispatch before `actuate()` is awaited, and settles it from the
+  receipt only after the receipt is ingested. The domain tool's settlement and
+  ledger decision, `ExecutionLedger.release_unexecuted()`, the finance tool
+  result and `/tools/execute` all read that record to decide whether the
+  action may have executed.
 - **`ConsequenceGateway` decisions (`CONSEQUENCE_GATEWAY_DECISION` / `CONSEQUENCE_GATEWAY_REFUSAL`)**:
   [`ConsequenceGateway.evaluate()`](../../src/gateway/governance/consequence_gateway.py)
   emits every `EXECUTE` (`CONSEQUENCE_GATEWAY_DECISION`) and `BLOCK` / `HOLD`
@@ -120,6 +129,20 @@ evidentiary weight as an ALLOW. Both the actuation seam and the post-FRIA
   `EvidenceChainUnavailableError` on an `EXECUTE` verdict, `ConsequenceGateway`
   fails closed by downgrading the decision to `BLOCK`
   (`EVIDENCE_CHAIN_UNAVAILABLE`).
+- **Post-execution output redaction (`POST_EXECUTION_OUTPUT_SANITIZED`)**:
+  Once a committing run has executed or may have executed (`ActuationAttempt.may_have_executed`
+  or a structured `CommitOutcome` in `{EXECUTED, INDETERMINATE, UNSETTLED_DUPLICATE}`),
+  a post-execution indirect prompt-injection match on `/tools/execute`
+  ([`execute_tool_endpoint()`](../../src/gateway/server/mcp_tool_server.py)) or `/mcp/`
+  ([`patch_mcp_tools()`](../../src/gateway/observability/mcp_tracing.py)) never
+  converts the answer into a refusal (`POAM-2026-253`). Instead,
+  [`evaluate_post_execution_output()`](../../src/gateway/governance/post_execution_sanitizer.py)
+  withholds the untrusted agent-facing text with a constant placeholder while preserving
+  the structured `CommitOutcome` and appends a non-refusal
+  `POST_EXECUTION_OUTPUT_SANITIZED` (`controlId: "SI-15"`, `action_refused: false`,
+  `may_have_executed: true`, `output_withheld: true`) record via
+  `EvidenceStreamSink.ingest()`. Sink errors are logged and counted without
+  discarding the execution outcome.
 
 ### 4.4 PII Sanitization Before Hashing
 

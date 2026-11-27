@@ -51,7 +51,7 @@ class TestContractB7AuditTrailSealing:
             amount=1000.0,
             side="buy",
             venue="NYSE",
-            transaction_id="test-tx-b7-01",
+            idempotency_key="test-tx-b7-01",
         )
 
         # In normal operation, KMSGovernanceSigner class is available
@@ -69,7 +69,7 @@ class TestContractB7AuditTrailSealing:
             amount=1000.0,
             side="buy",
             venue="NYSE",
-            transaction_id="test-tx-b7-02",
+            idempotency_key="test-tx-b7-02",
         )
 
         # Mock ImportError for KMS signer module
@@ -82,7 +82,8 @@ class TestContractB7AuditTrailSealing:
 
         assert result.admitted is False
         assert result.contract_id == "B7"
-        assert result.severity == ContractSeverity.HARD_BLOCK
+        assert result.severity == ContractSeverity.INFRASTRUCTURE
+        assert result.code == "BOUNDING_PROVIDER_UNAVAILABLE"
         assert len(result.findings) == 1
         assert (
             "KMS signer module unavailable" in result.findings[0]["reason"]
@@ -111,7 +112,7 @@ class TestContractB10RollbackWindow:
             side="buy",
             venue="NYSE",
             rollback_window_seconds=300,  # 5 minutes
-            transaction_id="test-tx-b10-01",
+            idempotency_key="test-tx-b10-01",
         )
 
         thresholds = {
@@ -143,7 +144,7 @@ class TestContractB10RollbackWindow:
             side="buy",
             venue="LEGACY_EXCHANGE",
             rollback_window_seconds=300,
-            transaction_id="test-tx-b10-02",
+            idempotency_key="test-tx-b10-02",
         )
 
         thresholds = {
@@ -180,7 +181,7 @@ class TestContractB10RollbackWindow:
             side="buy",
             venue="NYSE",
             rollback_window_seconds=300,
-            transaction_id="test-tx-b10-03",
+            idempotency_key="test-tx-b10-03",
         )
 
         thresholds = {
@@ -219,7 +220,7 @@ class TestContractB10RollbackWindow:
             side="buy",
             venue="FAST_EXCHANGE",
             rollback_window_seconds=600,  # 10 minutes requested
-            transaction_id="test-tx-b10-04",
+            idempotency_key="test-tx-b10-04",
         )
 
         thresholds = {
@@ -260,7 +261,7 @@ class TestContractB10RollbackWindow:
             side="buy",
             venue="NYSE",
             rollback_window_seconds=30,  # Only 30 seconds
-            transaction_id="test-tx-b10-05",
+            idempotency_key="test-tx-b10-05",
         )
 
         thresholds = {
@@ -299,7 +300,7 @@ class TestContractB10RollbackWindow:
             side="buy",
             venue="NYSE",
             rollback_window_seconds=300,
-            transaction_id="test-tx-b10-06",
+            idempotency_key="test-tx-b10-06",
         )
 
         thresholds = {
@@ -317,14 +318,13 @@ class TestContractB10RollbackWindow:
 
         assert result.admitted is False
         assert result.contract_id == "B10"
-        assert result.severity == ContractSeverity.HITL_ESCALATE
+        assert result.severity == ContractSeverity.INFRASTRUCTURE
         assert len(result.findings) == 1
         assert (
             result.findings[0]["reason"] == "Rollback capability provider unavailable"
         )
         assert "Settlement provider unavailable" in result.findings[0]["error"]
-        assert "human approval required" in result.findings[0]["note"]
-        assert result.code == "B10_ROLLBACK_WINDOW_CLOSED"  # parks for approval
+        assert result.code == "BOUNDING_PROVIDER_UNAVAILABLE"
 
     def test_b10_missing_threshold_hard_blocks(self):
         """B10 rejects when threshold is missing, a configuration error stays HARD_BLOCK."""
@@ -334,7 +334,7 @@ class TestContractB10RollbackWindow:
             side="buy",
             venue="NYSE",
             rollback_window_seconds=300,
-            transaction_id="test-tx-b10-07",
+            idempotency_key="test-tx-b10-07",
         )
 
         thresholds = {
@@ -363,7 +363,7 @@ class TestContractB10RollbackWindow:
             side="buy",
             venue="NYSE",
             rollback_window_seconds=300,
-            transaction_id="test-tx-b10-08",
+            idempotency_key="test-tx-b10-08",
         )
 
         thresholds = {
@@ -396,7 +396,7 @@ class TestContractB10RollbackWindow:
             side="buy",
             venue="NYSE",
             rollback_window_seconds=60,  # Exactly at minimum
-            transaction_id="test-tx-b10-09",
+            idempotency_key="test-tx-b10-09",
         )
 
         thresholds = {
@@ -426,7 +426,7 @@ class TestContractB10RollbackWindow:
             side="buy",
             venue="NYSE",
             rollback_window_seconds=600,  # Exactly at max
-            transaction_id="test-tx-b10-10",
+            idempotency_key="test-tx-b10-10",
         )
 
         mock_provider.verify_rollback_window.return_value = {

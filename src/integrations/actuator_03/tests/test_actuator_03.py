@@ -34,8 +34,8 @@ from src.gateway.governance.quarantine_actuator import (
     SimulatedQuarantineActuator,
     clear_local_quarantine_state,
     dispatch_quarantine,
-    is_workload_quarantined,
     load_quarantine_actuator_from_env,
+    probe_workload_quarantine,
 )
 from src.gateway.governance.seams.actuation import (
     ActuationOutcome,
@@ -152,7 +152,7 @@ class TestActuator03Adapter:
             body = _sign_quarantine_receipt(
                 priv,
                 kid="dpu-key-01",
-                rule_id="doca-flow-rule-99",
+                rule_id="actuator-03-flow-rule-99",
                 quarantined=True,
                 envelope_digest=expected_digest,
             )
@@ -160,7 +160,7 @@ class TestActuator03Adapter:
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         adapter = Actuator03Adapter(
-            endpoint="https://dpu-sentry.internal:9443",
+            endpoint="https://dpu-actuator-03.internal:9443",
             signer=_StubSigner(),
             http_client=client,
             receipt_key_resolver=_StubKeyResolver({"dpu-key-01": pub}),
@@ -170,7 +170,7 @@ class TestActuator03Adapter:
         assert receipt.quarantined is True
         assert receipt.outcome is ActuationOutcome.ACCEPTED
         assert receipt.verification is ReceiptVerification.VERIFIED
-        assert receipt.rule_id == "doca-flow-rule-99"
+        assert receipt.rule_id == "actuator-03-flow-rule-99"
         assert receipt.enforcement_plane == "IN_SILICON_DPU"
         await client.aclose()
 
@@ -189,7 +189,7 @@ class TestActuator03Adapter:
             body = _sign_quarantine_receipt(
                 priv,
                 kid="unknown-dpu-kid",
-                rule_id="doca-flow-rule-99",
+                rule_id="actuator-03-flow-rule-99",
                 quarantined=True,
                 envelope_digest=expected_digest,
             )
@@ -198,7 +198,7 @@ class TestActuator03Adapter:
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         adapter = Actuator03Adapter(
-            endpoint="https://dpu-sentry.internal:9443",
+            endpoint="https://dpu-actuator-03.internal:9443",
             signer=_StubSigner(),
             http_client=client,
             receipt_key_resolver=_StubKeyResolver({"dpu-key-01": pub}),
@@ -230,16 +230,14 @@ class TestLayer1QuarantineBackends:
         directive = _make_directive(thread_id="thread-rogue-1", agent_svid=svid)
 
         assert (
-            await is_workload_quarantined(thread_id="thread-rogue-1", agent_svid=svid)
-            is False
-        )
+            await probe_workload_quarantine(thread_id="thread-rogue-1", agent_svid=svid)
+        ).quarantined is False
         receipt = await dispatch_quarantine(directive, actuator=actuator)
         assert receipt.quarantined is True
         assert receipt.enforcement_plane == "CAGE_INFERENCE_PROXY_SVID"
         assert (
-            await is_workload_quarantined(thread_id="thread-rogue-1", agent_svid=svid)
-            is True
-        )
+            await probe_workload_quarantine(thread_id="thread-rogue-1", agent_svid=svid)
+        ).quarantined is True
         assert len(sink.events) == 1
         assert sink.events[0]["type"] == "WORKLOAD_QUARANTINE_RECEIPT"
         assert sink.events[0]["controlId"] == "SC-7"
@@ -316,6 +314,7 @@ class TestLayer1QuarantineBackends:
             == "CAGE_INFERENCE_PROXY_SVID"
         )
         assert (
-            await is_workload_quarantined(thread_id="thread-breach-99", agent_svid=svid)
-            is True
-        )
+            await probe_workload_quarantine(
+                thread_id="thread-breach-99", agent_svid=svid
+            )
+        ).quarantined is True

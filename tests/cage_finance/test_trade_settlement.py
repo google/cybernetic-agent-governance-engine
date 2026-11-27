@@ -29,9 +29,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.cage_finance.tools.tool_provider import execute_trade_action
+from src.gateway.governance.commit_outcome import CommitStatus
 from src.gateway.governance.routing_seal import SymbolicGovernorViolation
 from src.gateway.governance.seams.actuation import ActuationOutcome, ActuationReceipt
-from tests.fixtures.trade_inputs import trade_governor
+from tests.fixtures.trade_inputs import sealed_governance, trade_governor
 
 pytestmark = [
     pytest.mark.unit,
@@ -67,7 +68,7 @@ async def _run(
             patch(
                 "src.cage_finance.tools.tool_provider.enforce_governance",
                 new_callable=AsyncMock,
-                return_value=_SEAL,
+                side_effect=sealed_governance(_SEAL),
             )
         )
         stack.enter_context(
@@ -92,7 +93,7 @@ async def _run(
             currency="USD",
             confidence=0.99,
             governor=governor,
-            **{"transaction_id": str(uuid.uuid4()), **kwargs},
+            **{"idempotency_key": str(uuid.uuid4()), **kwargs},
         )
 
 
@@ -100,26 +101,33 @@ async def _run(
 async def test_accepted_trade_confirms() -> None:
     governor = _governor()
     result = await _run(governor, actuate=AsyncMock(return_value=_receipt(True)))
-    assert result.startswith("EXECUTED")
+    assert result.status is CommitStatus.EXECUTED
+    assert result.message.startswith("EXECUTED")
     governor.settle.assert_awaited_once_with(_SEAL, executed=True)
 
 
 @pytest.mark.asyncio
 async def test_rejected_trade_releases() -> None:
+    from src.gateway.governance.seams.actuation import ActuationRejectedError
+
     governor = _governor()
-    with pytest.raises(SymbolicGovernorViolation, match="Actuation rejected"):
+    with pytest.raises(ActuationRejectedError, match="Actuation rejected") as exc_info:
         await _run(governor, actuate=AsyncMock(return_value=_receipt(False)))
+    assert not isinstance(exc_info.value, SymbolicGovernorViolation)
     governor.settle.assert_awaited_once_with(_SEAL, executed=False)
 
 
 @pytest.mark.asyncio
 async def test_actuation_error_confirms() -> None:
+    from src.gateway.governance.seams.actuation import ActuationIndeterminateError
+
     # An actuator that raised (e.g. timed out mid-request) gives no proof the
     # order did not fill: dispatch_actuation records it as an UNKNOWN receipt,
     # so reservations are confirmed (conservative), never released.
     governor = _governor()
-    with pytest.raises(SymbolicGovernorViolation, match="indeterminate"):
+    with pytest.raises(ActuationIndeterminateError, match="indeterminate") as exc_info:
         await _run(governor, actuate=AsyncMock(side_effect=TimeoutError("broker")))
+    assert not isinstance(exc_info.value, SymbolicGovernorViolation)
     governor.settle.assert_awaited_once_with(_SEAL, executed=True)
 
 
@@ -128,7 +136,8 @@ async def test_dry_run_releases() -> None:
     governor = _governor()
     actuate = AsyncMock()
     result = await _run(governor, actuate=actuate, dry_run=True)
-    assert result.startswith("DRY_RUN")
+    assert result.status is CommitStatus.DRY_RUN
+    assert result.message.startswith("DRY_RUN")
     actuate.assert_not_awaited()
     governor.settle.assert_awaited_once_with(_SEAL, executed=False)
 
@@ -140,7 +149,8 @@ async def test_invalid_seal_releases() -> None:
         side_effect=SymbolicGovernorViolation("expired", action="execute_trade")
     )
     result = await _run(governor, verify=verify)
-    assert result.startswith("BLOCKED")
+    assert result.status is CommitStatus.REFUSED
+    assert result.message.startswith("BLOCKED")
     governor.settle.assert_awaited_once_with(_SEAL, executed=False)
 
 
@@ -171,10 +181,11 @@ async def test_refused_governance_settles_nothing() -> None:
             symbol="AAPL",
             amount=10.0,
             currency="USD",
-            transaction_id=str(uuid.uuid4()),
+            idempotency_key=str(uuid.uuid4()),
             governor=governor,
         )
-    assert result.startswith("BLOCKED")
+    assert result.status is CommitStatus.REFUSED
+    assert result.message.startswith("BLOCKED")
     governor.settle.assert_not_awaited()
 
 
@@ -192,7 +203,8 @@ async def test_settlement_failures_do_not_mask_the_trade_result(caplog) -> None:
         )
     ]
     result = await _run(governor, actuate=AsyncMock(return_value=_receipt(True)))
-    assert result.startswith("EXECUTED")
+    assert result.status is CommitStatus.EXECUTED
+    assert result.message.startswith("EXECUTED")
     assert "settlement (executed=True) failed" in caplog.text
 
 

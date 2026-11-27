@@ -175,6 +175,9 @@ class TestGeneratedSagaNodes:
             f"Expected ESCALATED when no completed entry, got {result.get('safety_status')!r}"
         )
 
+    @pytest.mark.covers(
+        "src.cage_finance.stpa.saga_nodes:saga_router_node#if not rollback_targets:",
+    )
     def test_saga_router_empty_state_returns_blocked(self) -> None:
         """saga_router_node with no completed transactions returns BLOCKED."""
         mod = _import_saga_nodes()

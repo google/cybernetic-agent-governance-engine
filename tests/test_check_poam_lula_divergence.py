@@ -1169,3 +1169,101 @@ def test_poam_235_short_circuit_closed_and_non_implemented_holds_audited(
         and "HOLDS claim cites no resolvable PR-CI runnable" in e
         for e in errs_d
     ), errs_d
+
+    # (e) HOLDS row citing a test suite that sets CAGE_SEAL_STRICT_MODE="false" fails Check 1 & Check 4
+    fallback_test = synthetic_repo / "tests" / "unit" / "test_fallback_seal_mode.py"
+    fallback_test.write_text(
+        "import os\nimport pytest\n"
+        "pytestmark = [pytest.mark.unit, pytest.mark.local]\n"
+        'os.environ.setdefault("CAGE_SEAL_STRICT_MODE", "false")\n\n'
+        "def test_non_strict_roundtrip() -> None:\n"
+        "    assert True\n",
+        encoding="utf-8",
+    )
+    rows_e = json.loads(json.dumps(orig_rows))
+    rows_e[0]["evidence_named"] = ["tests/unit/test_fallback_seal_mode.py"]
+    rows_e[0]["read_back"]["check"] = "tests/unit/test_fallback_seal_mode.py:L6"
+    rows_e[0]["cites"] = ["tests/unit/test_fallback_seal_mode.py:L1-L7"]
+    errs_e, _ = _write_rows(rows_e)
+    assert any(
+        "[Check 1: Read-Back]" in e and "setting CAGE_SEAL_STRICT_MODE=false" in e
+        for e in errs_e
+    ), errs_e
+    assert any(
+        "[Check 4: Census]" in e and "setting CAGE_SEAL_STRICT_MODE=false" in e
+        for e in errs_e
+    ), errs_e
+
+
+def test_active_lula_and_observed_boolean_truth_table_on_holds_rows(
+    synthetic_repo: pathlib.Path,
+) -> None:
+    """When pr_ci_runnable_ok is False, HOLDS requires BOTH active_lula_ok AND observed_ok."""
+    census_file = (
+        synthetic_repo / "compliance" / "oscal" / "evidence_claim_census.jsonl"
+    )
+    reg_file = (
+        synthetic_repo / "docs" / "compliance" / "OSCAL_EVIDENCE_CLAIM_REGISTER.md"
+    )
+    orig_rows = [
+        json.loads(line)
+        for line in census_file.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+    def _eval(
+        evidence_named: list[str],
+        check_text: str,
+    ) -> list[str]:
+        mutated = json.loads(json.dumps(orig_rows))
+        mutated[0]["evidence_named"] = evidence_named
+        mutated[0]["cites"] = list(evidence_named)
+        mutated[0]["read_back"]["check"] = check_text
+        census_file.write_text(
+            "\n".join(json.dumps(r) for r in mutated) + "\n", encoding="utf-8"
+        )
+        reg_file.write_text(
+            census_mod.render_register_markdown(mutated),
+            encoding="utf-8",
+        )
+        errs, _ = drift.audit_poam_and_oscal(synthetic_repo)
+        return errs
+
+    # 1. Observed prose alone (active_lula_ok=False, observed_ok=True) MUST fail
+    errs_obs_only = _eval(
+        [],
+        "Observed 2026-11-20: kubectl get pods -n governance-stack -> 1/1 Running",
+    )
+    assert any(
+        "[Check 1: Read-Back]" in e and "Active Lula + Observed record" in e
+        for e in errs_obs_only
+    ), errs_obs_only
+
+    # 2. Disclaimed Stub Lula + Observed (active_lula_ok=False, observed_ok=True) MUST fail
+    errs_stub_obs = _eval(
+        [],
+        "compliance/lula/lula-validation-ac2.yaml (rated Stub; not evidence) ; "
+        "Observed 2026-11-20: lula validate -> pass",
+    )
+    assert any(
+        "[Check 1: Read-Back]" in e and "Active Lula + Observed record" in e
+        for e in errs_stub_obs
+    ), errs_stub_obs
+
+    # 3. Active Lula alone without Observed (active_lula_ok=True, observed_ok=False) MUST fail
+    errs_lula_only = _eval(
+        ["compliance/lula/lula-validation-sc4.yaml"],
+        "compliance/lula/lula-validation-sc4.yaml",
+    )
+    assert any(
+        "[Check 1: Read-Back]" in e and "Active Lula + Observed record" in e
+        for e in errs_lula_only
+    ), errs_lula_only
+
+    # 4. Active Lula + Observed (active_lula_ok=True, observed_ok=True) MUST pass
+    errs_both = _eval(
+        ["compliance/lula/lula-validation-sc4.yaml"],
+        "compliance/lula/lula-validation-sc4.yaml ; "
+        "Observed 2026-11-20: lula validate -f lula-validation-sc4.yaml -> satisfied",
+    )
+    assert errs_both == [], errs_both

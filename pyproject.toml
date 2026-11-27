@@ -65,7 +65,7 @@ test = [
     # The coverage plugin behind CI's --cov gate: a test tool, not a runtime
     # dependency (it was in the base install until POAM-2026-168).
     "pytest-cov>=7.1.0",
-    "cage-client==0.4.0",
+    "cage-client==0.5.0",
 ]
 dev = [
     { include-group = "test" },
@@ -166,7 +166,7 @@ advisor = [
     # Built as a non-editable standalone wheel from packages/cage-client via
     # [tool.uv.sources] (release-state and site-packages SHA-256 parity enforced
     # by scripts/check_client_sdk_sync.py; never editable or in-tree mirror).
-    "cage-client==0.4.0",
+    "cage-client==0.5.0",
     # litellm: model alias registry in src/governed_financial_advisor/infrastructure/llm/config.py
     "litellm>=1.104.0",
     "langgraph>=1.1.0",
@@ -214,7 +214,6 @@ langfuse = [
 lint = [
     "ruff==0.16.5",
     "mypy>=1.15.0",
-    "codespell>=2.2.0",
     "types-pyyaml>=6.0.12.20240917",
     "types-requests>=2.32.0.20240914",
 ]
@@ -314,10 +313,6 @@ disable_error_code = ["arg-type"]
 [tool.bandit]
 exclude_dirs = ["tests", "examples"]
 skips = ["B101", "B104"]  # assert statements and 0.0.0.0 container interface binds are acceptable in this codebase
-
-[tool.codespell]
-ignore-words-list = "rouge"
-skip = "./locust_env/*,uv.lock,.venv,./frontend,**/*.ipynb"
 
 [build-system]
 requires = ["uv_build>=0.8.14,<0.9.0"]

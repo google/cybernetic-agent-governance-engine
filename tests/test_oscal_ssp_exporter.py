@@ -1584,9 +1584,27 @@ class TestNarrativeSources:
     @pytest.mark.parametrize(
         "data",
         [
-            {"nodes": {"req-missing": {"description": "x"}}},
-            {"remove": ["res-missing"]},
-            {"set_parameters": {"p-missing": ["x"]}},
+            pytest.param(
+                {"nodes": {"req-missing": {"description": "x"}}},
+                id="missing_node",
+                marks=pytest.mark.covers(
+                    "src.gateway.governance.oscal_ssp_exporter:apply_narrative_source#uuid {uid} matches {hits} nodes",
+                ),
+            ),
+            pytest.param(
+                {"remove": ["res-missing"]},
+                id="missing_remove",
+                marks=pytest.mark.covers(
+                    "src.gateway.governance.oscal_ssp_exporter:apply_narrative_source#uuid {uid} matches {hits} nodes",
+                ),
+            ),
+            pytest.param(
+                {"set_parameters": {"p-missing": ["x"]}},
+                id="missing_set_parameter",
+                marks=pytest.mark.covers(
+                    "src.gateway.governance.oscal_ssp_exporter:apply_narrative_source#set-parameter {param_id} matches {hits} nodes",
+                ),
+            ),
         ],
     )
     def test_entry_that_matches_nothing_fails_closed(self, data: dict) -> None:
@@ -1595,6 +1613,9 @@ class TestNarrativeSources:
                 self._doc(), data, generated_uuids=frozenset(), source=Path("n.json")
             )
 
+    @pytest.mark.covers(
+        "src.gateway.governance.oscal_ssp_exporter:apply_narrative_source#uuid {uid} matches {hits} nodes",
+    )
     def test_duplicate_uuid_fails_closed(self) -> None:
         doc = self._doc()
         doc["plan"]["reqs"].append({"uuid": "req-1", "description": "twin"})

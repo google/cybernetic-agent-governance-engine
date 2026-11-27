@@ -12,18 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The trade tool measures UCA-2 ``latency_ms`` and reads UCA-5 ``drawdown`` itself.
+"""The kernel measures UCA-2 ``latency_ms`` and reads UCA-5 ``drawdown`` for trades.
 
-``execute_trade_action`` takes neither value from its caller. For every
-committing run the kernel binds them through the governor's ``execute_trade``
-server-input resolver
+``execute_trade_action`` takes neither value from its caller and binds
+neither itself. For every committing run the kernel binds them exactly once
+through the governor's ``execute_trade`` server-input resolver
 (:class:`~src.cage_finance.tools.trade_inputs.TradeInputResolver` over
-:class:`~src.cage_finance.tools.trade_inputs.ServerTradeInputs`). The params
-it hands to governance run through the generated finance STPA rules for each
-region (UCA-5 drawdown 3.5 / 4.0 / 4.5 %, FIN-2 latency 150 / 175 / 200 ms):
+:class:`~src.cage_finance.tools.trade_inputs.ServerTradeInputs`). These tests
+run a real committing run whose sealing step is replaced by the generated
+finance STPA rules, so the params checked are exactly the evaluated params,
+for each region (UCA-5 drawdown 3.5 / 4.0 / 4.5 %, FIN-2 latency
+150 / 175 / 200 ms):
 
 * in-limit inputs clear the STPA stage; over-limit inputs are HARD UCA-2 / UCA-5;
-* a missing or faulted source leaves its input unset, and the rule refuses;
+* a missing or unreachable source blocks the run on infrastructure; a faulted
+  one leaves its input unset, and the rule refuses;
 * the advisor's trade payload (forwarded without ``latency_ms`` or ``drawdown``)
   now clears the STPA stage for a normal buy through ``execute_trade_action``.
 """
@@ -34,7 +37,6 @@ import asyncio
 import inspect
 import uuid
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -54,10 +56,12 @@ from src.cage_finance.tools.trade_inputs import (
     measure_market_data_latency_ms,
     resolve_daily_drawdown_pct,
 )
+from src.gateway.governance.commit_outcome import CommitOutcome, CommitStatus
 from src.gateway.governance.contracts import ViolationKind
+from src.gateway.governance.governor import governor as governor_mod
 from src.gateway.governance.schemas.thresholds import load_and_validate_thresholds
 from src.gateway.governance.seams.ground_truth import FaultMode
-from tests.fixtures.trade_inputs import trade_governor
+from tests.fixtures.trade_inputs import committing_trade_governor, trade_governor
 
 pytestmark = [
     pytest.mark.unit,
@@ -93,25 +97,31 @@ def region(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> s
 
 @pytest.fixture
 def stpa_gateway(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
-    """``enforce_governance`` replaced by the generated finance STPA stage.
+    """The committing run, with the generated finance STPA rules as its only stage.
 
-    A HARD violation raises the ``PermissionError`` the middleware raises
-    (the tool returns ``BLOCKED: ...``); a clean run raises :class:`_Cleared`.
+    The real ``enforce_governance`` and ``SymbolicGovernor.govern`` run, so
+    the kernel binds the server inputs exactly once (an unavailable source
+    blocks the run on infrastructure before any stage runs). The sealing step
+    receives the evaluated params and is replaced here: a HARD violation
+    raises the ``PermissionError`` the tool reports as ``BLOCKED: ...``; a
+    clean run raises :class:`_Cleared`.
     """
     seen: list[dict[str, Any]] = []
 
-    async def _enforce(_governor: Any, action: str, params: dict[str, Any]) -> str:
-        seen.append(dict(params))
+    async def _stpa_stage(
+        _stages: Any, ctx: Any, evaluated: dict[str, Any], **_kwargs: Any
+    ) -> Any:
+        seen.append(dict(evaluated))
         hard = [
             v
-            for v in GeneratedSTPAValidator().validate(action, dict(params))
+            for v in GeneratedSTPAValidator().validate(ctx.action, dict(evaluated))
             if v.kind is ViolationKind.HARD
         ]
         if hard:
             raise PermissionError("; ".join(f"{v.code}: {v.message}" for v in hard))
-        raise _Cleared(dict(params))
+        raise _Cleared(dict(evaluated))
 
-    monkeypatch.setattr(tool_provider, "enforce_governance", _enforce)
+    monkeypatch.setattr(governor_mod, "run_sealed", _stpa_stage)
     return seen
 
 
@@ -132,14 +142,16 @@ def _inputs(
     return ServerTradeInputs(**fields)
 
 
-async def _buy(inputs: ServerTradeInputs) -> str:
+async def _buy(inputs: ServerTradeInputs) -> CommitOutcome:
     return await execute_trade_action(
         symbol="AAPL",
         amount=500.0,
         currency="USD",
         confidence=0.99,
-        transaction_id=str(uuid.uuid4()),
-        governor=trade_governor({"execute_trade": TradeInputResolver(inputs)}),
+        idempotency_key=str(uuid.uuid4()),
+        governor=committing_trade_governor(
+            {"execute_trade": TradeInputResolver(inputs)}
+        ),
     )
 
 
@@ -173,9 +185,10 @@ async def test_latency_over_fin2_is_hard_uca2(
 ) -> None:
     _, latency = _LIMITS[region]
     result = await _buy(_inputs(delay_ms=latency + 5.0))
-    assert result.startswith("BLOCKED:")
-    assert f"{_UCA_2}: Agent executes trade with stale market data" in result
-    assert _UCA_5 not in result
+    assert result.status is CommitStatus.REFUSED
+    assert result.message.startswith("BLOCKED:")
+    assert f"{_UCA_2}: Agent executes trade with stale market data" in result.message
+    assert _UCA_5 not in result.message
     assert stpa_gateway[-1]["latency_ms"] > latency
 
 
@@ -185,12 +198,13 @@ async def test_drawdown_over_limit_is_hard_uca5(
 ) -> None:
     drawdown, _ = _LIMITS[region]
     result = await _buy(_inputs(drawdown_pct=drawdown + 0.01))
-    assert result.startswith("BLOCKED:")
+    assert result.status is CommitStatus.REFUSED
+    assert result.message.startswith("BLOCKED:")
     assert (
         f"{_UCA_5}: Agent executes buy order when daily drawdown exceeds limit"
-        in result
+        in result.message
     )
-    assert _UCA_2 not in result
+    assert _UCA_2 not in result.message
 
 
 @pytest.mark.asyncio
@@ -199,9 +213,12 @@ async def test_regions_differ_at_the_same_inputs(
 ) -> None:
     """160 ms and 3.8 % breach only EU_ECB's limits (150 ms, 3.5 %)."""
     try:
-        result = await _buy(_inputs(delay_ms=160.0, drawdown_pct=3.8))
+        outcome = await _buy(_inputs(delay_ms=160.0, drawdown_pct=3.8))
     except _Cleared:
         result = "CLEARED"
+    else:
+        assert outcome.status is CommitStatus.REFUSED
+        result = outcome.message
     assert (_UCA_2 in result) is (region == "EU_ECB")
     assert (_UCA_5 in result) is (region == "EU_ECB")
 
@@ -238,6 +255,10 @@ async def test_missing_nav_source_blocks_on_infrastructure(
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    "src.cage_finance.tools.trade_inputs:fetch_verified_quote#market-data fetch failed",
+    "src.cage_finance.tools.trade_inputs:_resolve_market#market-data quote source unavailable",
+)
 @pytest.mark.parametrize(
     "fault",
     [
@@ -276,7 +297,8 @@ async def test_faulted_market_feed_is_refused_by_uca2(
     feed = _feed(20.0)
     feed.inject_fault(fault)
     result = await _buy(_inputs(market_feed=feed))
-    assert f"{_UCA_2}: Missing required param `latency_ms`." in result
+    assert result.status is CommitStatus.REFUSED
+    assert f"{_UCA_2}: Missing required param `latency_ms`." in result.message
     assert "latency_ms" not in stpa_gateway[-1]
 
 
@@ -287,11 +309,16 @@ async def test_stale_quote_is_measured_and_refused_by_uca2(
     feed = _feed(20.0)
     feed.inject_fault(FaultMode.STALE_TIMESTAMP)
     result = await _buy(_inputs(market_feed=feed))
-    assert f"{_UCA_2}: Agent executes trade with stale market data" in result
+    assert result.status is CommitStatus.REFUSED
+    assert f"{_UCA_2}: Agent executes trade with stale market data" in result.message
     assert stpa_gateway[-1]["latency_ms"] >= 3_600_000.0
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    "src.cage_finance.tools.trade_inputs:fetch_verified_nav#NAV fetch failed",
+    "src.cage_finance.tools.trade_inputs:ServerTradeInputs.resolve#portfolio NAV source unavailable",
+)
 @pytest.mark.parametrize(
     "fault",
     [
@@ -331,7 +358,8 @@ async def test_faulted_nav_source_is_refused_by_uca5(
     nav = SimulatedPortfolioNavSource()
     nav.inject_fault(fault)
     result = await _buy(_inputs(nav_source=nav))
-    assert f"{_UCA_5}: Missing required param `drawdown`." in result
+    assert result.status is CommitStatus.REFUSED
+    assert f"{_UCA_5}: Missing required param `drawdown`." in result.message
     assert "drawdown" not in stpa_gateway[-1]
 
 
@@ -429,13 +457,15 @@ async def test_advisor_buy_payload_clears_the_stpa_stage(
     The gateway tool and its server-input resolver are the ones the finance
     plugin contributes, with the plugin's own simulated sources. The call
     carries only what the advisor's graph forwards (no latency or drawdown);
-    the gateway supplies both and the buy clears UCA-2 and UCA-5.
+    the governor's committing run binds both and the buy clears UCA-2 and
+    UCA-5.
     """
     from src.cage_finance.plugin import FinanceCagePlugin
 
     contribution = FinanceCagePlugin().contribute()
     tool = _register_with(
-        contribution.tool_provider, trade_governor(dict(contribution.server_inputs))
+        contribution.tool_provider,
+        committing_trade_governor(dict(contribution.server_inputs)),
     )["execute_trade_action"]
 
     with pytest.raises(_Cleared):
@@ -444,7 +474,7 @@ async def test_advisor_buy_payload_clears_the_stpa_stage(
             amount=500.0,
             currency="USD",
             confidence=0.99,
-            transaction_id=str(uuid.uuid4()),
+            idempotency_key=str(uuid.uuid4()),
             side="buy",
         )
     params = stpa_gateway[-1]

@@ -622,9 +622,9 @@ async def measure_governor_latency(
         call = _fresh_trade(params)
         if path["allow"]:
             t0 = time.perf_counter()
-            seal = await gov.govern("execute_trade", call)
+            governed = await gov.govern("execute_trade", call)
             t1 = time.perf_counter()
-            if not seal:
+            if not governed.seal:
                 raise RuntimeError("latency benchmark: govern() returned no seal")
             return (t1 - t0) * 1000, None
         t0 = time.perf_counter()
@@ -639,7 +639,7 @@ async def measure_governor_latency(
         # once, which is what the gateway's consume_approval() CAS guarantees.
         spent = {"done": False}
 
-        async def _spend() -> bool:
+        async def _spend(_evaluated: Any) -> bool:
             if spent["done"]:
                 return False
             spent["done"] = True
@@ -651,10 +651,13 @@ async def measure_governor_latency(
                 "barrier_preview"
             ),
             spend=_spend,
+            covers=lambda _evaluated: True,
         )
-        seal = await gov.revalidate_post_hitl("execute_trade", call, approval=approval)
+        governed = await gov.revalidate_post_hitl(
+            "execute_trade", call, approval=approval
+        )
         t2 = time.perf_counter()
-        if not seal:
+        if not governed.seal:
             raise RuntimeError(
                 "latency benchmark: revalidate_post_hitl returned no seal"
             )
@@ -1016,7 +1019,11 @@ def _classify_response(
     # must be classified as CRASHED so it does not inflate the benign FPR
     # (it would otherwise be caught by the BLOCKED residual marker or produce
     # a PASSED outcome, both of which misrepresent the system state).
-    if "[PLAN_GENERATION_ERROR]" in body:
+    if (
+        "[PLAN_GENERATION_ERROR]" in body
+        or "Governance unavailable (gateway infrastructure error)" in body
+        or "GOVERNANCE_INFRASTRUCTURE_BLOCK" in body
+    ):
         return "CRASHED"
 
     body_lower = body.lower()

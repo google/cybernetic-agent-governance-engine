@@ -140,16 +140,16 @@ task.
 When the causal gatekeeper's marginal risk boundary condition is triggered:
 
 ```
-(0.5 + β × amount / normalization_scale) > CAUSAL_LOCK_RISK_BOUNDARY  (0.95)
+(β × amount / normalization_scale) > CAUSAL_LOCK_RISK_BOUNDARY  (0.45)
 ```
 
 the request is **denied, not escalated**. β is fitted per normalised unit of
-trade amount ($10,000 for finance), so the left-hand side is 0.5 plus the
-predicted change in risk score for this trade; on the finance synthetic
-telemetry the boundary trips at about $9,144. Every causal failure is a HARD
-violation (decision D3), and HARD outranks HITL in the classifier, so no human
-approval can override a causal lock, including for trades that other tiers
-would route to review.
+trade amount ($10,000 for finance), so the left-hand side is the predicted
+marginal change in risk score for this trade (with zero hardcoded 0.5
+intercept); on the finance synthetic telemetry the boundary trips at about
+$9,144 (`$9,143.93`). Every causal failure is a HARD violation (decision D3),
+and HARD outranks HITL in the classifier, so no human approval can override a
+causal lock, including for trades that other tiers would route to review.
 
 The other causal lock conditions are refusals of the world model itself, with
 the same HARD outcome:
@@ -197,17 +197,22 @@ telemetry staleness limit is `TELEMETRY_MAX_STALENESS_SECONDS` (300 s).
    - `OVERRIDE` (`DeferQueue.approve`) — records an `ApprovalRecord`, stamps `approved_barrier_preview` from the server-stored `barrier_preview` (never from caller input), and transitions the `DeferToken` to `RESOLVED` (`resolution="ESCALATED"`) once quorum is met
    - `UPHOLD` (`DeferQueue.reject`) — confirms the block; decision is logged
    - `DEFER` — escalates to senior reviewer; re-queued with extended SLA
-6. **Single-commit execution (`execute_trade_action(..., deferred_id=...)` → `enforce_approved_governance` → `revalidate_post_hitl`):**
-   On human approval, `gateway_tool_guard` adds the `deferred_id` to the tool call's arguments
-   ([`src/governed_financial_advisor/graph/governance/tool_guard.py`](../../src/governed_financial_advisor/graph/governance/tool_guard.py))
-   and the advisor invokes the gateway's `execute_trade_action(..., deferred_id=deferred_id)` MCP tool.
+6. **Single-commit execution (`POST /tools/execute` → `execute_trade_action(..., deferred_id=...)` → `enforce_approved_governance` → `revalidate_post_hitl`):**
+   On human approval, [`cage_client.langgraph.governed_tool_node`](../../packages/cage-client/src/cage_client/langgraph.py) attaches the checkpointed `deferred_id` / `deferred_step_ids` via `approval_token` to [`CageClient.execute_tool()`](../../packages/cage-client/src/cage_client/core.py) (with canonical `idempotency_key`, stripping any model-supplied `deferred_id`), invoking `execute_trade_action(..., deferred_id=deferred_id)` over `POST /tools/execute`.
    Inside [`src/gateway/server/governance_middleware.py`](../../src/gateway/server/governance_middleware.py),
-   `enforce_approved_governance()` checks the quorum-approved `HITL_REQUIRED` token without
-   spending it (`DeferQueue.redeemable_approval`, verifying action and canonical parameter SHA-256
-   binding) and calls `SymbolicGovernor.revalidate_post_hitl(..., approval=PostHitlApproval(...))` in
+   `enforce_approved_governance()` checks the state of the quorum-approved `HITL_REQUIRED` token
+   without spending it (`DeferQueue.check_redemption`: approved, unspent, parked for this
+   action and carrying approved params; it decides no coverage and binds no server inputs, and
+   names the `ApprovalRedemptionRefusal` of a token it refuses, POAM-2026-245) and
+   calls `SymbolicGovernor.revalidate_post_hitl(..., approval=PostHitlApproval(...))` in
    [`src/gateway/governance/governor/governor.py`](../../src/gateway/governance/governor/governor.py).
-   The governor spends the approval exactly once (`DeferQueue.consume_approval`, an atomic CAS)
-   only when the run is about to mint a seal. A DENY spends it; a `WARRANT_INELIGIBLE` DEFER
+   The run binds the request's server inputs once, and the approval must cover the resulting
+   evaluated params (`PostHitlApproval.covers`: same instrument, currency, side, trader and role,
+   and an amount no larger than approved) before any stage runs; otherwise the run is refused
+   `APPROVAL_NOT_REDEEMABLE` and the approval stays unspent.
+   The governor spends the approval exactly once (`DeferQueue.consume_approval`, an atomic CAS
+   that re-checks coverage of the same evaluated params) only when the run is about to mint a
+   seal over those params. A DENY spends it; a `WARRANT_INELIGIBLE` DEFER
    leaves it redeemable (POAM-2026-104), and the tool reports `DEFERRED:`.
    Under `Profile.POST_HITL` (`stage_runs_under` in `pipeline.py`), the governor re-runs the
    read-only stages whose verdict can change while a human decides: `opa`, the warrant gate
@@ -223,6 +228,20 @@ telemetry staleness limit is `TELEMETRY_MAX_STALENESS_SECONDS` (300 s).
    The `GovernanceSeal` is minted, verified, and settled (`governor.settle(seal, executed=...)`)
    strictly inside `governance_middleware.py`; the advisor never receives a seal (POAM-2026-079).
 7. **Audit record persisted:** Override decision stored in Langfuse compliance project.
+
+### Premature Resume, Redemption Refusals, and Operator-Visible Outcomes
+
+The LangGraph resume payload (`approved: true`) is not the approval authority: it can reject, but it cannot authorize. Only a quorum-approved `DeferToken` held in the gateway's `DeferQueue` is redeemable. When `CageClient.execute_tool()` decodes and verifies the signed `CommitOutcome` ([`src/gateway/governance/commit_outcome.py`](../../src/gateway/governance/commit_outcome.py)) from `POST /tools/execute`, [`governed_tool_node`](../../packages/cage-client/src/cage_client/langgraph.py) + [`advisor_tool_message()`](../../src/governed_financial_advisor/graph/governance/tool_guard.py) branches strictly on the typed `ApprovalRedemptionRefusal` and `CommitStatus` fields (never on prose substrings):
+
+- **Not yet approved (`PENDING`, `QUORUM_INCOMPLETE`) or retained post-approval deferral:** The gateway's `check_redemption()` is read-only and leaves the ticket redeemable. The advisor keeps the same `deferred_id` in graph state (never in `messages` or HTTP responses), clears `approval_decision`, sets `governance_status = REQUIRE_APPROVAL`, and routes via `Command(goto="approval")` back to `approval_node` to **re-interrupt on the same ticket** (`advisor_tool_message(..., event="awaiting_same_ticket")`, naming only the trade parameters). No LLM loop runs and no second deferral is created.
+- **Terminal refusal (`CONSUMED`, `EXPIRED`, `ACTION_MISMATCH`, `QUORUM_NOT_DISTINCT`, `PARAMS_NOT_COVERED`, etc.) or undecodable outcome:** The advisor clears HITL state, sets `governance_status = DENIED`, emits a `ToolMessage` from `REFUSAL_DESCRIPTIONS` (`advisor_tool_message(..., event="terminal_outcome")`), and routes fail-closed to `END`.
+- **Market data unreachable at resume (`POAM-2026-240`):** `post_hitl_rehydrate_node()` / `post_hitl_revalidate_node()` in [`src/governed_financial_advisor/graph/subgraphs/governed_trader_graph.py`](../../src/governed_financial_advisor/graph/subgraphs/governed_trader_graph.py) block fail-closed (`drift_unverifiable`) and route to `drift_blocked_node()` (`END`) before contacting the gateway, leaving the `DeferQueue` approval unconsumed until its 4 h `_DEFAULT_TTL`.
+
+| Resume Path | What the Operator Sees | What Remains in `DeferQueue` |
+|---|---|---|
+| Resumed `approved: true`, bridge approval `PENDING` or `QUORUM_INCOMPLETE` | Re-interrupt (`REQUIRE_APPROVAL`) on the same ticket, describing the trade parameters and instructing the operator to wait for reviewer approval at the compliance bridge | Original `DeferToken` stays `PARKED` / `PARTIALLY_APPROVED` and redeemable once quorum is recorded (`POAM-2026-245`) |
+| Resumed `approved: true`, terminal `ApprovalRedemptionRefusal` (`CONSUMED`, `EXPIRED`, `ACTION_MISMATCH`, `QUORUM_NOT_DISTINCT`, etc.) | Terminal `DENIED` message naming the refusal reason; thread ends (`END`) | No new ticket; refusal receipt recorded in the tamper-evident evidence chain (`POAM-2026-245`) |
+| Resumed `approved: true`, market data (`yfinance`) unreachable | `drift_blocked_node` message (`drift_unverifiable`); thread ends (`END`) | Approved `DeferToken` remains `RESOLVED` / unconsumed until its 4 h `_DEFAULT_TTL` (`POAM-2026-240`) |
 
 ---
 

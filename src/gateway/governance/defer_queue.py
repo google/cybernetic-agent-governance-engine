@@ -63,12 +63,18 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Sequ
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any
+from typing import Any, NamedTuple
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from src.gateway.governance.commit_outcome import ApprovalRedemptionRefusal
 from src.gateway.governance.contracts import ViolationKind
-from src.gateway.governance.env_posture import DeploymentPosture
+from src.gateway.governance.env_posture import DeploymentPosture, is_enforcing
+from src.gateway.governance.webauthn_verifier import (
+    WebAuthnConfigError,
+    WebAuthnVerificationError,
+    verify_webauthn_assertion,
+)
 from src.gateway.infrastructure.redis_single_use import new_op_id
 
 logger = logging.getLogger(__name__)
@@ -305,109 +311,54 @@ class ApprovalRecord(BaseModel):
     def verify_webauthn_challenge(
         self, *, expected_bindings: Collection[str] | None = None
     ) -> bool:
-        """Verify WebAuthn CollectedClientData challenge binding (POAM-2026-196).
+        """Verify cryptographic W3C WebAuthn assertion and challenge binding (POAM-2026-210).
 
-        Validates that ``client_data_json`` decodes to a W3C ``webauthn.get``
-        CollectedClientData JSON object whose base64url ``challenge`` decodes
-        to the exact 32-byte SHA-256 ``challenge_binding`` digest, and when
-        ``expected_bindings`` is provided, matches one of the server-derived
-        decision bindings for the target parked token.
-
-        Returns:
-            True if verification succeeds, False otherwise.
+        Validates all five assertion fields (``credential_id``, ``client_data_json``,
+        ``authenticator_data``, ``signature``, ``challenge_binding``) independently of
+        caller-stamped ``auth_method``, resolves the registered asymmetric public key
+        out-of-band for ``(approver_urn, credential_id)``, verifies RP-ID hash,
+        ``UP``/``UV`` flags, allowed HTTPS ``origin``, and ``challenge_binding``
+        (against ``expected_bindings`` when supplied), and verifies the cryptographic
+        signature over ``authenticatorData || SHA-256(clientDataJSON)``.
         """
-        import base64
-
-        if (
-            not self.client_data_json
-            or not self.client_data_json.strip()
-            or not self.challenge_binding
-            or not self.challenge_binding.strip()
-        ):
-            return False
-
-        if self.auth_method == "WEBAUTHN" and (
-            not self.authenticator_data
-            or not self.authenticator_data.strip()
-            or not self.signature
-            or not self.signature.strip()
-        ):
-            return False
-
         try:
-            if self.authenticator_data is not None:
-                if not self.authenticator_data.strip():
-                    return False
-                ad_str = self.authenticator_data.strip()
-                ad_bytes = base64.urlsafe_b64decode(ad_str + "=" * (-len(ad_str) % 4))
-                if not ad_bytes:
-                    return False
-            if self.signature is not None:
-                if not self.signature.strip():
-                    return False
-                sig_str = self.signature.strip()
-                sig_bytes = base64.urlsafe_b64decode(
-                    sig_str + "=" * (-len(sig_str) % 4)
-                )
-                if not sig_bytes:
-                    return False
-
-            b64_str = self.client_data_json.strip()
-            pad = "=" * (-len(b64_str) % 4)
-            client_data_bytes = base64.urlsafe_b64decode(b64_str + pad)
-
-            computed_hash = hashlib.sha256(client_data_bytes).hexdigest()
+            verified = verify_webauthn_assertion(
+                approver_urn=self.approver_urn,
+                credential_id=self.credential_id,
+                client_data_json=self.client_data_json,
+                authenticator_data=self.authenticator_data,
+                signature=self.signature,
+                challenge_binding=self.challenge_binding,
+                expected_bindings=expected_bindings,
+            )
             if self.client_data_hash is None:
-                object.__setattr__(self, "client_data_hash", computed_hash)
-
-            client_data = json.loads(client_data_bytes.decode("utf-8"))
-            if (
-                not isinstance(client_data, dict)
-                or client_data.get("type") != "webauthn.get"
-            ):
-                return False
-
-            challenge_b64 = client_data.get("challenge", "")
-            if not isinstance(challenge_b64, str) or not challenge_b64.strip():
-                return False
-
-            pad_challenge = "=" * (-len(challenge_b64) % 4)
-            challenge_bytes = base64.urlsafe_b64decode(challenge_b64 + pad_challenge)
-
-            binding_hex = self.challenge_binding.strip().lower()
-            expected_bytes = bytes.fromhex(binding_hex)
-            if len(expected_bytes) != 32:
-                return False
-            if not hmac.compare_digest(challenge_bytes, expected_bytes):
-                return False
-            if expected_bindings is not None:
-                matched_server_binding = any(
-                    isinstance(candidate, str)
-                    and len(candidate.strip()) == 64
-                    and hmac.compare_digest(binding_hex, candidate.strip().lower())
-                    for candidate in expected_bindings
-                )
-                if not matched_server_binding:
-                    return False
+                object.__setattr__(self, "client_data_hash", verified.client_data_hash)
+            object.__setattr__(self, "credential_id", verified.credential_id)
             return True
-
-        except (ValueError, KeyError, json.JSONDecodeError) as exc:
-            logger.warning("WebAuthn challenge verification failed: %s", exc)
+        except WebAuthnConfigError as exc:
+            if is_enforcing():
+                raise
+            logger.warning("WebAuthn trust configuration unavailable: %s", exc)
+            return False
+        except WebAuthnVerificationError as exc:
+            logger.warning("WebAuthn assertion verification failed: %s", exc)
             return False
 
     @model_validator(mode="after")
     def _validate_enforcing_webauthn_binding(self) -> ApprovalRecord:
-        """Require verified WebAuthn challenge binding in enforcing postures (POAM-2026-196)."""
+        """Require cryptographically verified WebAuthn assertion in enforcing postures (POAM-2026-210)."""
         if DeploymentPosture.from_env().is_enforcing():
             if (
-                not self.client_data_json
-                or not self.client_data_json.strip()
-                or not self.challenge_binding
-                or not self.challenge_binding.strip()
+                not (self.credential_id and self.credential_id.strip())
+                or not (self.client_data_json and self.client_data_json.strip())
+                or not (self.authenticator_data and self.authenticator_data.strip())
+                or not (self.signature and self.signature.strip())
+                or not (self.challenge_binding and self.challenge_binding.strip())
             ):
                 raise ValueError(
-                    "WebAuthn client_data_json and challenge_binding are mandatory "
-                    f"in enforcing postures for {self.approver_urn!r} (POAM-2026-196)"
+                    "WebAuthn credential_id, client_data_json, authenticator_data, "
+                    "signature, and challenge_binding are mandatory in enforcing "
+                    f"postures for {self.approver_urn!r} (POAM-2026-196 / POAM-2026-210)"
                 )
             if not self.verify_webauthn_challenge():
                 raise ValueError(
@@ -654,7 +605,7 @@ def _is_duplicate_approval(
     """
     cand_urn = candidate.approver_urn.strip()
     cand_hash = candidate.auth_principal_hash.strip().lower()
-    cand_cred = (candidate.credential_id or "").strip()
+    cand_cred = (candidate.credential_id or "").strip().rstrip("=")
 
     for prev in existing:
         if prev.approver_urn.strip() == cand_urn:
@@ -662,7 +613,7 @@ def _is_duplicate_approval(
         prev_hash = prev.auth_principal_hash.strip().lower()
         if cand_hash and prev_hash and hmac.compare_digest(cand_hash, prev_hash):
             return True
-        prev_cred = (prev.credential_id or "").strip()
+        prev_cred = (prev.credential_id or "").strip().rstrip("=")
         if cand_cred and prev_cred and hmac.compare_digest(cand_cred, prev_cred):
             return True
     return False
@@ -675,6 +626,71 @@ def _distinct_approver_count(approvals: Sequence[ApprovalRecord]) -> int:
         if not _is_duplicate_approval(accepted, rec):
             accepted.append(rec)
     return len(accepted)
+
+
+class Redemption(NamedTuple):
+    """An approval check: the redeemable (or consumed) token, or why there is none.
+
+    Exactly one of ``token`` / ``refusal`` is set.
+    """
+
+    token: DeferToken | None
+    refusal: ApprovalRedemptionRefusal | None
+
+
+#: Status of a ticket still collecting approvals, by how far it got.
+_AWAITING_APPROVAL: dict[str, ApprovalRedemptionRefusal] = {
+    "PARKED": ApprovalRedemptionRefusal.PENDING,
+    "PARTIALLY_APPROVED": ApprovalRedemptionRefusal.QUORUM_INCOMPLETE,
+}
+
+#: Resolutions other than a quorum approval (``ESCALATED``).
+_RESOLVED_WITHOUT_QUORUM: dict[str | None, ApprovalRedemptionRefusal] = {
+    "EXPIRED": ApprovalRedemptionRefusal.EXPIRED,
+    "INJECTED": ApprovalRedemptionRefusal.RESOLVED_WITHOUT_APPROVAL,
+}
+
+
+def _redemption_refusal(
+    token: DeferToken, status: str | None, action: str
+) -> ApprovalRedemptionRefusal | None:
+    """The one refusal ``token`` (in ``status``) maps to for ``action``; ``None`` if redeemable.
+
+    Checked in order: the ticket must be a human-approval deferral; it must
+    have left the approval-collecting statuses (``PARKED`` → ``PENDING``,
+    ``PARTIALLY_APPROVED`` → ``QUORUM_INCOMPLETE``, both retryable) and not
+    been spent (``CONSUMED``); it must be ``RESOLVED`` by a quorum approval
+    (``ESCALATED``; ``EXPIRED`` and ``INJECTED`` resolutions are terminal) of
+    enough distinct approvers; and then parked for ``action``, approved
+    against its current ``barrier_preview`` (D-H) and carrying approved
+    params. A status or resolution the kernel does not know is
+    ``UNRECOGNIZED_STATE``.
+    """
+    if token.defer_reason != DeferReason.HITL_REQUIRED:
+        return ApprovalRedemptionRefusal.NOT_AN_APPROVAL
+    if status in _AWAITING_APPROVAL:
+        return _AWAITING_APPROVAL[status]
+    if status == "CONSUMED":
+        return ApprovalRedemptionRefusal.CONSUMED
+    if status != "RESOLVED":
+        return ApprovalRedemptionRefusal.UNRECOGNIZED_STATE
+    if token.resolution != "ESCALATED":
+        return _RESOLVED_WITHOUT_QUORUM.get(
+            token.resolution, ApprovalRedemptionRefusal.UNRECOGNIZED_STATE
+        )
+    if _distinct_approver_count(token.approvals) < token.required_quorum:
+        return ApprovalRedemptionRefusal.QUORUM_NOT_DISTINCT
+    if token.opa_input_snapshot.get("action") != action:
+        return ApprovalRedemptionRefusal.ACTION_MISMATCH
+    if any(
+        a.approved_barrier_preview != token.barrier_preview for a in token.approvals
+    ):
+        # Every approval must have been given against the snapshot the
+        # committing run will be checked against (D-H).
+        return ApprovalRedemptionRefusal.STALE_BARRIER_PREVIEW
+    if not isinstance(token.opa_input_snapshot.get("params"), dict):
+        return ApprovalRedemptionRefusal.NO_APPROVED_PARAMS
+    return None
 
 
 async def _is_logically_expired(redis_client: Any, defer_id: str) -> bool:
@@ -1251,75 +1267,64 @@ class DeferQueue:
             return False
 
     # ------------------------------------------------------------------
-    # redeemable_approval / consume_approval — check, then spend exactly once
+    # redeemable_token / consume_approval — check state, then spend exactly once
     # ------------------------------------------------------------------
 
-    async def redeemable_approval(
+    async def check_redemption(
         self,
         defer_id: str,
         *,
         action: str,
-        covers: Callable[[dict[str, Any]], bool],
-    ) -> DeferToken | None:
-        """The approved ``HITL_REQUIRED`` token for ``action``, if it is unspent.
+    ) -> Redemption:
+        """Whether the ``HITL_REQUIRED`` token for ``action`` is redeemable, and if not, why.
 
-        Read-only: nothing is consumed. The token must be a governor-parked
-        approval (``HITL_REQUIRED``) that ``approve()`` resolved by reaching
-        quorum (``resolution == "ESCALATED"``, status ``RESOLVED``), that was
-        parked for ``action``, whose approvals were all given against the
-        token's current ``barrier_preview`` (D-H), and whose approved params
-        satisfy ``covers``. A token whose key has expired is unknown.
+        Read-only and state-only: nothing is consumed and no coverage is
+        decided. The token must be a governor-parked approval
+        (``HITL_REQUIRED``) that ``approve()`` resolved by reaching quorum
+        (``resolution == "ESCALATED"``, status ``RESOLVED``), that was parked
+        for ``action``, whose approvals were all given against the token's
+        current ``barrier_preview`` (D-H), and whose approved params are a
+        dict. A token whose key has expired is unknown.
 
-        The committing run checks this before it runs and spends the token
-        with :meth:`consume_approval` only once it commits, so a run that
-        defers (POAM-2026-104) leaves the approval redeemable.
+        The gateway's pre-check (``enforce_approved_governance``) uses this
+        to fetch the token. It cannot spend: the only spend is
+        :meth:`consume_redemption`, which requires ``covers``. Coverage is
+        decided against the committing run's evaluated params, before any
+        stage runs (``PostHitlApproval.covers``) and again inside
+        :meth:`consume_redemption`, which runs only once the run commits, so
+        a run that defers (POAM-2026-104) leaves the approval redeemable.
 
         Returns:
-            The token, or ``None`` when it is unknown or expired, is not an
-            approval, is not (yet) approved, was parked for another action,
-            does not cover the request, or was already consumed. Every
-            ``None`` must block execution.
+            ``Redemption(token, None)`` when redeemable, else
+            ``Redemption(None, refusal)`` naming the one
+            :class:`ApprovalRedemptionRefusal` the token's state maps to
+            (:func:`_redemption_refusal`). Every refusal blocks execution;
+            only ``RETRYABLE_REDEMPTION_REFUSALS`` can later turn into a
+            redeemable approval on the same ticket.
         """
         token, status, _rev = await self._read_token_with_rev(defer_id)
-        if token is None:
-            logger.warning(
-                "[defer_queue] approval check: unknown defer_id=%s", defer_id
-            )
-            return None
-        distinct_approvers = _distinct_approver_count(token.approvals)
-        approved_params = token.opa_input_snapshot.get("params")
-        refusal = None
-        if token.defer_reason != DeferReason.HITL_REQUIRED:
-            refusal = f"reason {token.defer_reason.value} is not an approval"
-        elif status != "RESOLVED" or token.resolution != "ESCALATED":
-            refusal = (
-                f"status={status} resolution={token.resolution} is not an approval"
-            )
-        elif distinct_approvers < token.required_quorum:
-            refusal = f"{distinct_approvers}/{token.required_quorum} approvals"
-        elif token.opa_input_snapshot.get("action") != action:
-            refusal = (
-                f"parked for {token.opa_input_snapshot.get('action')!r}, not {action!r}"
-            )
-        elif any(
-            a.approved_barrier_preview != token.barrier_preview for a in token.approvals
-        ):
-            # Every approval must have been given against the snapshot the
-            # committing run will be checked against (D-H).
-            refusal = (
-                f"approvals bound to {sorted({str(a.approved_barrier_preview) for a in token.approvals})}, "
-                f"token barrier_preview={token.barrier_preview!r}"
-            )
-        elif not isinstance(approved_params, dict) or not covers(approved_params):
-            refusal = "approved params do not cover the request"
+        refusal = (
+            ApprovalRedemptionRefusal.UNKNOWN_OR_EXPIRED
+            if token is None
+            else _redemption_refusal(token, status, action)
+        )
         if refusal is not None:
             logger.warning(
                 "[defer_queue] approval refused defer_id=%s: %s",
                 defer_id,
-                refusal,
+                refusal.value,
             )
-            return None
-        return token
+            return Redemption(None, refusal)
+        return Redemption(token, None)
+
+    async def redeemable_token(
+        self,
+        defer_id: str,
+        *,
+        action: str,
+    ) -> DeferToken | None:
+        """The redeemable token of :meth:`check_redemption`, or ``None`` when refused."""
+        return (await self.check_redemption(defer_id, action=action)).token
 
     async def consume_approval(
         self,
@@ -1328,32 +1333,64 @@ class DeferQueue:
         action: str,
         covers: Callable[[dict[str, Any]], bool],
     ) -> DeferToken | None:
+        """The consumed token of :meth:`consume_redemption`, or ``None`` when refused."""
+        return (
+            await self.consume_redemption(defer_id, action=action, covers=covers)
+        ).token
+
+    async def consume_redemption(
+        self,
+        defer_id: str,
+        *,
+        action: str,
+        covers: Callable[[dict[str, Any]], bool],
+    ) -> Redemption:
         """Consume an approved ``HITL_REQUIRED`` token for ``action``, exactly once.
 
-        Re-checks :meth:`redeemable_approval` (so a mismatched request, or a
-        token that expired since it was checked, does not burn the approval),
-        then spends it with the ``RESOLVED -> CONSUMED`` compare-and-swap in
-        :meth:`_atomic_resolve`: of any number of concurrent callers at most
-        one receives the token. A ``RESOLVED`` approval is immutable (neither
-        ``approve()`` nor ``_resolve()`` leaves ``RESOLVED``), so the token
-        checked is the token consumed.
+        Re-checks :meth:`check_redemption`, then ``covers(approved_params)``
+        (mandatory: the committing run passes the coverage check of the exact
+        evaluated params it is about to seal), so a mismatched request, or a
+        token that expired since it was checked, does not burn the approval.
+        Only then is it spent with the ``RESOLVED -> CONSUMED``
+        compare-and-swap in :meth:`_atomic_resolve`: of any number of
+        concurrent callers at most one receives the token. A ``RESOLVED``
+        approval is immutable (neither ``approve()`` nor ``_resolve()`` leaves
+        ``RESOLVED``), so the token checked is the token consumed.
 
         Returns:
-            The consumed token, or ``None`` (see :meth:`redeemable_approval`,
-            plus: another caller consumed it first). Every ``None`` must
-            block execution.
+            ``Redemption(token, None)`` for the consumed token, else
+            ``Redemption(None, refusal)``: the :meth:`check_redemption`
+            refusal, ``PARAMS_NOT_COVERED`` when the approved params do not
+            satisfy ``covers``, or, when another caller won the
+            compare-and-swap, the state the token was left in (``CONSUMED``,
+            or ``UNKNOWN_OR_EXPIRED`` once its key is gone). Every refusal
+            must block execution.
         """
-        token = await self.redeemable_approval(defer_id, action=action, covers=covers)
+        checked = await self.check_redemption(defer_id, action=action)
+        token = checked.token
         if token is None:
-            return None
+            return checked
+        approved_params = token.opa_input_snapshot.get("params")
+        if not isinstance(approved_params, dict) or not covers(approved_params):
+            logger.warning(
+                "[defer_queue] approval refused defer_id=%s: %s",
+                defer_id,
+                ApprovalRedemptionRefusal.PARAMS_NOT_COVERED.value,
+            )
+            return Redemption(None, ApprovalRedemptionRefusal.PARAMS_NOT_COVERED)
         if not await self._atomic_resolve(
             defer_id,
             expected_status="RESOLVED",
             new_status="CONSUMED",
             raise_on_error=True,
         ):
-            return None  # another caller consumed it first (replay)
-        return token
+            # Another caller consumed it first (replay), or its key expired.
+            after = await self.check_redemption(defer_id, action=action)
+            return Redemption(
+                None,
+                after.refusal or ApprovalRedemptionRefusal.UNRECOGNIZED_STATE,
+            )
+        return Redemption(token, None)
 
     # ------------------------------------------------------------------
     # approve — append an approval and check quorum (Phase 2, Stream B)
@@ -1399,33 +1436,63 @@ class DeferQueue:
 
         enforcing = DeploymentPosture.from_env().is_enforcing()
         if enforcing and (
-            not (record.client_data_json and record.client_data_json.strip())
+            not (record.credential_id and record.credential_id.strip())
+            or not (record.client_data_json and record.client_data_json.strip())
+            or not (record.authenticator_data and record.authenticator_data.strip())
+            or not (record.signature and record.signature.strip())
             or not (record.challenge_binding and record.challenge_binding.strip())
         ):
             logger.warning(
-                "[defer_queue] Missing mandatory WebAuthn challenge binding in enforcing posture: defer_id=%s approver=%s",
+                "[defer_queue] Missing mandatory WebAuthn assertion fields in enforcing posture: defer_id=%s approver=%s",
                 defer_id,
                 record.approver_urn,
             )
             raise ValueError(
-                "WebAuthn client_data_json and challenge_binding are mandatory "
-                f"in enforcing postures for {record.approver_urn!r} (POAM-2026-196)"
+                "WebAuthn credential_id, client_data_json, authenticator_data, "
+                "signature, and challenge_binding are mandatory in enforcing "
+                f"postures for {record.approver_urn!r} (POAM-2026-196 / POAM-2026-210)"
             )
 
-        if (
+        requires_webauthn = (
             enforcing
-            or record.auth_method == "WEBAUTHN"
-            or record.client_data_json is not None
-            or record.challenge_binding is not None
-        ) and not record.verify_webauthn_challenge():
-            logger.warning(
-                "[defer_queue] WebAuthn challenge verification failed: defer_id=%s approver=%s",
-                defer_id,
-                record.approver_urn,
+            or record.auth_method.strip().upper() == "WEBAUTHN"
+            or any(
+                val is not None
+                for val in (
+                    record.client_data_json,
+                    record.authenticator_data,
+                    record.signature,
+                    record.challenge_binding,
+                )
             )
-            raise ValueError(
-                f"WebAuthn challenge binding verification failed for {record.approver_urn!r}"
-            )
+        )
+        if requires_webauthn:
+            try:
+                verified_pre = verify_webauthn_assertion(
+                    approver_urn=record.approver_urn,
+                    credential_id=record.credential_id,
+                    client_data_json=record.client_data_json,
+                    authenticator_data=record.authenticator_data,
+                    signature=record.signature,
+                    challenge_binding=record.challenge_binding,
+                )
+                if record.client_data_hash is None:
+                    object.__setattr__(
+                        record, "client_data_hash", verified_pre.client_data_hash
+                    )
+                object.__setattr__(record, "credential_id", verified_pre.credential_id)
+            except WebAuthnConfigError:
+                raise
+            except (WebAuthnVerificationError, ValueError) as exc:
+                logger.warning(
+                    "[defer_queue] WebAuthn assertion verification failed: defer_id=%s approver=%s err=%s",
+                    defer_id,
+                    record.approver_urn,
+                    exc,
+                )
+                raise ValueError(
+                    f"WebAuthn challenge binding verification failed for {record.approver_urn!r}: {exc}"
+                ) from exc
 
         for attempt in range(max_retries):
             # Read current token state with revision
@@ -1465,24 +1532,31 @@ class DeferQueue:
                 )
                 return (ApprovalStatus.NOT_FOUND, None)
 
-            if (
-                enforcing
-                or record.auth_method == "WEBAUTHN"
-                or record.client_data_json is not None
-                or record.challenge_binding is not None
-            ) and not record.verify_webauthn_challenge(
-                expected_bindings=token.expected_webauthn_bindings(
-                    record.approver_urn, slot=len(token.approvals)
-                )
-            ):
-                logger.warning(
-                    "[defer_queue] WebAuthn challenge_binding does not match parked decision: defer_id=%s approver=%s",
-                    defer_id,
-                    record.approver_urn,
-                )
-                raise ValueError(
-                    f"WebAuthn challenge binding verification failed for {record.approver_urn!r}"
-                )
+            if requires_webauthn:
+                try:
+                    verify_webauthn_assertion(
+                        approver_urn=record.approver_urn,
+                        credential_id=record.credential_id,
+                        client_data_json=record.client_data_json,
+                        authenticator_data=record.authenticator_data,
+                        signature=record.signature,
+                        challenge_binding=record.challenge_binding,
+                        expected_bindings=token.expected_webauthn_bindings(
+                            record.approver_urn, slot=len(token.approvals)
+                        ),
+                    )
+                except WebAuthnConfigError:
+                    raise
+                except (WebAuthnVerificationError, ValueError) as exc:
+                    logger.warning(
+                        "[defer_queue] WebAuthn challenge_binding does not match parked decision: defer_id=%s approver=%s err=%s",
+                        defer_id,
+                        record.approver_urn,
+                        exc,
+                    )
+                    raise ValueError(
+                        f"WebAuthn challenge binding verification failed for {record.approver_urn!r}: {exc}"
+                    ) from exc
 
             # Separation-of-duties (POAM-2026-196, F-42): the initiator who
             # triggered the deferred action cannot approve their own token.

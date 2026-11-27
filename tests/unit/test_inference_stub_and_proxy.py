@@ -105,7 +105,7 @@ TRADE_TOOLS: list[dict[str, Any]] = [
                     "amount": {"type": "number"},
                     "currency": {"type": "string"},
                     "confidence": {"type": "number"},
-                    "transaction_id": {"type": "string"},
+                    "idempotency_key": {"type": "string"},
                     "side": {"type": "string"},
                     "deferred_id": {"type": "string"},
                 },
@@ -316,7 +316,9 @@ def test_volatility_invariance_across_timestamps_uuids_and_digests() -> None:
     assert args["currency"] == "USD"
     assert args["side"] == "buy"
     assert args["confidence"] == 0.98
-    assert isinstance(args["transaction_id"], str) and len(args["transaction_id"]) == 36
+    assert (
+        isinstance(args["idempotency_key"], str) and len(args["idempotency_key"]) == 36
+    )
 
 
 def test_scenario_tags_deferred_redemption_guided_json_and_tool_turn() -> None:
@@ -338,14 +340,14 @@ def test_scenario_tags_deferred_redemption_guided_json_and_tool_turn() -> None:
     assert scen.scenario_id == "redeem_approved_trade"
     assert scen.symbol == "MSFT"
     assert scen.amount == 7500.0
-    assert scen.transaction_id == explicit_tx
+    assert scen.idempotency_key == explicit_tx
     assert scen.deferred_id == defer_id
     assert scen.confidence == 0.99
 
     dec = resolve_chat_completion({"messages": redeem_msgs, "tools": TRADE_TOOLS})
     call_args = json.loads(dec.tool_calls[0]["function"]["arguments"])
     assert call_args["deferred_id"] == defer_id
-    assert call_args["transaction_id"] == explicit_tx
+    assert call_args["idempotency_key"] == explicit_tx
 
     # Once a role=="tool" result is appended, the stub summarizes and stops instead of looping.
     done_dec = resolve_chat_completion(
@@ -822,6 +824,12 @@ async def test_proxy_enforces_stage1_block_quota_429_and_forwards_clean_stub_tur
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    'src.gateway.server.inference_proxy:chat_completions#extra={"iso42001_control": "A.5.2", "ingress_stage": 1}',
+    'src.gateway.server.inference_proxy:chat_completions#event_type="TOKEN_QUOTA_DENIED"',
+    "src.gateway.server.inference_proxy:_emit_proxy_evidence#Inference proxy evidence emission failed closed",
+    "src.gateway.server.inference_proxy:_evidence_unavailable_response#evidence_chain_unavailable",
+)
 async def test_proxy_refusal_paths_fail_closed_503_when_blocking_evidence_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -834,6 +842,10 @@ async def test_proxy_refusal_paths_fail_closed_503_when_blocking_evidence_unavai
     monkeypatch.setattr(evidence_stream, "_evidence_sink", None)
     monkeypatch.setattr(evidence_stream, "get_evidence_sink", lambda: None)
     monkeypatch.setattr(evidence_stream, "is_evidence_chain_blocking", lambda: True)
+    quarantine_redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    monkeypatch.setattr(
+        inference_proxy.inference_app.state, "redis", quarantine_redis, raising=False
+    )
 
     stub_app = create_stub_app(environ={"CAGE_ENV": "staging"})
     stub_client = httpx.AsyncClient(
@@ -908,5 +920,6 @@ async def test_proxy_refusal_paths_fail_closed_503_when_blocking_evidence_unavai
             assert quota_resp.status_code == 503
             assert quota_resp.json()["error"] == "evidence_chain_unavailable"
             assert stub_app.state.request_count == 0
+            uca_mock.log_quota_exceeded.assert_awaited_once()
     finally:
         await stub_client.aclose()

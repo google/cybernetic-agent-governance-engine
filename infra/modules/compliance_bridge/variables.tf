@@ -111,8 +111,38 @@ variable "vllm_api_key" {
 }
 
 variable "alert_channel" {
-  type    = string
-  default = "console"
+  description = "Compliance-bridge ALERT_CHANNEL ('pubsub', 'webhook', 'slack', 'pagerduty'; 'console' allowed only in non-enforcing dev/test/ci postures; POAM-2026-230)."
+  type        = string
+  default     = "console"
+}
+
+variable "alert_pubsub_topic" {
+  description = "GCP Pub/Sub topic ('projects/<project>/topics/<topic>') injected as COMPLIANCE_ALERT_PUBSUB_TOPIC when alert_channel = 'pubsub' (POAM-2026-230)."
+  type        = string
+  default     = ""
+}
+
+variable "alert_webhook_configured" {
+  description = "True when an https:// webhook URL is populated in Secret/compliance-alert-secrets ('webhook-url') for alert_channel = 'webhook' or 'slack' (POAM-2026-230)."
+  type        = bool
+  default     = false
+}
+
+variable "pagerduty_routing_key_configured" {
+  description = "True when a non-empty PagerDuty Events API v2 routing key is populated in Secret/compliance-alert-secrets ('pagerduty-routing-key') for alert_channel = 'pagerduty' (POAM-2026-230)."
+  type        = bool
+  default     = false
+}
+
+variable "alert_heartbeat_interval_seconds" {
+  description = "Interval in seconds between synthetic non-paging compliance-bridge notifier heartbeats (ALERT_HEARTBEAT_INTERVAL_SECONDS; 0 disables; POAM-2026-230)."
+  type        = number
+  default     = 21600
+
+  validation {
+    condition     = var.alert_heartbeat_interval_seconds >= 0 && floor(var.alert_heartbeat_interval_seconds) == var.alert_heartbeat_interval_seconds
+    error_message = "alert_heartbeat_interval_seconds must be a non-negative integer."
+  }
 }
 
 variable "oscal_s3_bucket" {
@@ -137,6 +167,17 @@ variable "startup_grace_hours" {
   validation {
     condition     = var.startup_grace_hours >= 0 && floor(var.startup_grace_hours) == var.startup_grace_hours
     error_message = "startup_grace_hours must be a non-negative integer."
+  }
+}
+
+variable "lula_audit_max_age_seconds" {
+  description = "Maximum allowed age in seconds (2 x CronJob/lula-audit schedule) of the most recent auditor-healthy lula_audit custody record before the CA-7 dead-man's switch breaches (LULA_AUDIT_MAX_AGE_SECONDS)."
+  type        = number
+  default     = 43200
+
+  validation {
+    condition     = var.lula_audit_max_age_seconds > 0 && floor(var.lula_audit_max_age_seconds) == var.lula_audit_max_age_seconds
+    error_message = "lula_audit_max_age_seconds must be a positive integer."
   }
 }
 
@@ -308,6 +349,24 @@ variable "enable_e2e_mode" {
   description = "True when deployed via opt-in non-production enable_e2e_advisor verification mode (POAM-2026-191). Refused in prod/production."
   type        = bool
   default     = false
+}
+
+variable "webauthn_rp_id" {
+  description = "Relying Party ID for human HITL WebAuthn assertion verification (CAGE_WEBAUTHN_RP_ID; POAM-2026-210)."
+  type        = string
+  default     = "console.cage.example"
+}
+
+variable "webauthn_allowed_origins" {
+  description = "Allowed HTTPS Relying Party origins for human HITL WebAuthn assertions (CAGE_WEBAUTHN_ALLOWED_ORIGINS; POAM-2026-210)."
+  type        = list(string)
+  default     = ["https://console.cage.example"]
+}
+
+variable "webauthn_credentials_json" {
+  description = "Out-of-band public-key WebAuthn operator credential registry JSON (CAGE_WEBAUTHN_CREDENTIALS_JSON; POAM-2026-210). Must contain only public keys."
+  type        = string
+  default     = ""
 }
 
 variable "trusted_infra_producers" {

@@ -229,6 +229,9 @@ class TestCBFSequenceValidation:
         assert int(r.get("reconciliation:sequence:last_accepted")) == 42
 
     @pytest.mark.asyncio
+    @pytest.mark.covers(
+        "src.gateway.governance.safety.cbf_engine:ControlBarrierFunction._validate_sequence#validation error (fail-closed):"
+    )
     async def test_sequence_validation_fails_closed_on_redis_error(self) -> None:
         """A Redis error rejects the reconciled payload (fail-closed)."""
         broken = MagicMock()
@@ -341,6 +344,9 @@ class TestReconciliationSequenceIntegration:
         assert result.sequence == 1
         mock_redis.incr.assert_not_called()
 
+    @pytest.mark.covers(
+        "src.gateway.governance.reconciliation.daemon:GroundTruthReconciler.reconcile#Failed to increment sequence counter: {seq_exc}"
+    )
     def test_reconcile_fails_closed_when_sequence_incr_raises(self) -> None:
         """Verify reconcile() fails closed when Redis INCR for sequence raises an exception."""
         from src.cage_finance.ground_truth import SimulatedCashLedgerProvider

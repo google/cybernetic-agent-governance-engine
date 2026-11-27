@@ -350,7 +350,7 @@ def test_quickstart_documents_dev_only_ed25519_and_seal_mint_verify_step() -> No
 
 
 def test_quickstart_smoke_workflow_exercises_live_seal_and_ledger_replay() -> None:
-    """quickstart-smoke in ci.yml must exercise live Redis routing-seal nonce replay (INV-2) and duplicate transaction_id replay."""
+    """quickstart-smoke in ci.yml must exercise live Redis routing-seal nonce replay (INV-2) and duplicate idempotency_key replay."""
     ci_workflow = yaml.safe_load(
         (_REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     )

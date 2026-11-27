@@ -214,11 +214,67 @@ class TestHitlWorkloadRefusalAndPosture:
         )
         monkeypatch.setattr(bridge_main, "_get_defer_queue_cls", lambda: DeferQueue)
 
+        from cryptography.hazmat.primitives import hashes, serialization
+
+        webauthn_priv = ec.generate_private_key(ec.SECP256R1())
+        webauthn_pub_pem = (
+            webauthn_priv.public_key()
+            .public_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PublicFormat.SubjectPublicKeyInfo,
+            )
+            .decode("utf-8")
+        )
+        cred_id = "Y3JlZC1hbGljZS1zdGFnaW5n"
+        rp_id = "console.cage.example"
+        origin = "https://console.cage.example"
+        monkeypatch.setenv("CAGE_WEBAUTHN_RP_ID", rp_id)
+        monkeypatch.setenv("CAGE_WEBAUTHN_ALLOWED_ORIGINS", origin)
+        monkeypatch.setenv(
+            "CAGE_WEBAUTHN_CREDENTIALS_JSON",
+            json.dumps(
+                {
+                    "credentials": [
+                        {
+                            "credential_id": cred_id,
+                            "operator_urn": human_principal.operator_urn,
+                            "alg": "ES256",
+                            "public_key_pem": webauthn_pub_pem,
+                        }
+                    ]
+                }
+            ),
+        )
+        auth_data_bytes = (
+            hashlib.sha256(rp_id.encode("utf-8")).digest()
+            + b"\x05"
+            + (1).to_bytes(4, "big")
+        )
+        auth_data_b64 = (
+            base64.urlsafe_b64encode(auth_data_bytes).rstrip(b"=").decode("ascii")
+        )
+        cdj_raw = base64.urlsafe_b64decode(
+            client_data_json + "=" * (-len(client_data_json) % 4)
+        )
+        sig_mismatch = (
+            base64.urlsafe_b64encode(
+                webauthn_priv.sign(
+                    auth_data_bytes + hashlib.sha256(cdj_raw).digest(),
+                    ec.ECDSA(hashes.SHA256()),
+                )
+            )
+            .rstrip(b"=")
+            .decode("ascii")
+        )
+
         with pytest.raises(HTTPException) as mismatch_exc:
             await defer_escalate(
                 defer_id="defer-enforcing-1",
                 body=DeferEscalateRequest(
+                    credential_id=cred_id,
                     client_data_json=client_data_json,
+                    authenticator_data=auth_data_b64,
+                    signature=sig_mismatch,
                     challenge_binding=wrong_binding,
                 ),
                 operator=human_principal,
@@ -227,8 +283,21 @@ class TestHitlWorkloadRefusalAndPosture:
         assert isinstance(mismatch_exc.value.detail, dict)
         assert mismatch_exc.value.detail["error"] == "APPROVAL_VALIDATION_FAILED"
 
-        # 3. Valid WebAuthn binding + human OIDC principal succeeds without CAGE_INTERNAL_TOKEN
+        # 3. Valid signed WebAuthn assertion + human OIDC principal succeeds without CAGE_INTERNAL_TOKEN
         valid_cdj, valid_binding = _make_valid_webauthn_binding(b"seed-valid")
+        valid_cdj_raw = base64.urlsafe_b64decode(
+            valid_cdj + "=" * (-len(valid_cdj) % 4)
+        )
+        valid_sig = (
+            base64.urlsafe_b64encode(
+                webauthn_priv.sign(
+                    auth_data_bytes + hashlib.sha256(valid_cdj_raw).digest(),
+                    ec.ECDSA(hashes.SHA256()),
+                )
+            )
+            .rstrip(b"=")
+            .decode("ascii")
+        )
         parked_tok = DeferToken(
             defer_id="defer-enforcing-1",
             thread_id="thr-enforcing-1",
@@ -246,7 +315,10 @@ class TestHitlWorkloadRefusalAndPosture:
         resp = await defer_escalate(
             defer_id="defer-enforcing-1",
             body=DeferEscalateRequest(
+                credential_id=cred_id,
                 client_data_json=valid_cdj,
+                authenticator_data=auth_data_b64,
+                signature=valid_sig,
                 challenge_binding=valid_binding,
             ),
             operator=human_principal,
@@ -328,12 +400,14 @@ class TestHitlWorkloadRefusalAndPosture:
 
 
 class TestEnforcingWebAuthnChallengeBinding:
-    """POAM-2026-196: Mandatory W3C WebAuthn challenge binding in enforcing postures."""
+    """POAM-2026-196 & POAM-2026-210: Mandatory cryptographic W3C WebAuthn assertion in enforcing postures."""
 
     @pytest.mark.asyncio
     async def test_approval_record_and_defer_queue_enforce_webauthn_in_production(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        from cryptography.hazmat.primitives import hashes, serialization
+
         # Construct un-bound record in test posture first to test DeferQueue.approve defense-in-depth
         monkeypatch.setenv("CAGE_ENV", "test")
         unbound_record = ApprovalRecord(
@@ -343,12 +417,43 @@ class TestEnforcingWebAuthnChallengeBinding:
             auth_principal_hash=hashlib.sha256(b"alice@example.com").hexdigest(),
         )
 
+        # Register an out-of-band ES256 WebAuthn credential for alice@example.com
+        rp_id = "console.cage.example"
+        origin = "https://console.cage.example"
+        cred_id = "Y3JlZC1hbGljZS1wcm9k"
+        webauthn_priv = ec.generate_private_key(ec.SECP256R1())
+        webauthn_pub_pem = (
+            webauthn_priv.public_key()
+            .public_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PublicFormat.SubjectPublicKeyInfo,
+            )
+            .decode("utf-8")
+        )
+        monkeypatch.setenv("CAGE_WEBAUTHN_RP_ID", rp_id)
+        monkeypatch.setenv("CAGE_WEBAUTHN_ALLOWED_ORIGINS", origin)
+        monkeypatch.setenv(
+            "CAGE_WEBAUTHN_CREDENTIALS_JSON",
+            json.dumps(
+                {
+                    "credentials": [
+                        {
+                            "credential_id": cred_id,
+                            "operator_urn": "alice@example.com",
+                            "alg": "ES256",
+                            "public_key_pem": webauthn_pub_pem,
+                        }
+                    ]
+                }
+            ),
+        )
+
         # Switch to enforcing production posture
         monkeypatch.setenv("CAGE_ENV", "production")
 
         with pytest.raises(
             ValueError,
-            match="WebAuthn client_data_json and challenge_binding are mandatory",
+            match="credential_id, client_data_json, authenticator_data, signature, and challenge_binding are mandatory",
         ):
             ApprovalRecord(
                 approver_urn="alice@example.com",
@@ -357,9 +462,46 @@ class TestEnforcingWebAuthnChallengeBinding:
                 auth_principal_hash=hashlib.sha256(b"alice@example.com").hexdigest(),
             )
 
-        # Wrong WebAuthn ceremony type (webauthn.create instead of webauthn.get) rejected
+        # Even with client_data_json + challenge_binding, omitting signature/authenticator_data under auth_method="OIDC" fails closed
+        only_cdj, only_binding = _make_valid_webauthn_binding(b"oidc-channel-check")
+        with pytest.raises(
+            ValueError,
+            match="credential_id, client_data_json, authenticator_data, signature, and challenge_binding are mandatory",
+        ):
+            ApprovalRecord(
+                approver_urn="alice@example.com",
+                approved_at_utc="2026-11-08T12:00:00Z",
+                auth_method="OIDC",
+                auth_principal_hash=hashlib.sha256(b"alice@example.com").hexdigest(),
+                client_data_json=only_cdj,
+                challenge_binding=only_binding,
+            )
+
+        auth_data_bytes = (
+            hashlib.sha256(rp_id.encode("utf-8")).digest()
+            + b"\x05"
+            + (1).to_bytes(4, "big")
+        )
+        auth_data_b64 = (
+            base64.urlsafe_b64encode(auth_data_bytes).rstrip(b"=").decode("ascii")
+        )
+
+        # Wrong WebAuthn ceremony type (webauthn.create instead of webauthn.get) rejected even when signed
         bad_type_cdj, bad_type_binding = _make_valid_webauthn_binding(
             b"ceremony-check", ceremony_type="webauthn.create"
+        )
+        bad_cdj_raw = base64.urlsafe_b64decode(
+            bad_type_cdj + "=" * (-len(bad_type_cdj) % 4)
+        )
+        bad_sig = (
+            base64.urlsafe_b64encode(
+                webauthn_priv.sign(
+                    auth_data_bytes + hashlib.sha256(bad_cdj_raw).digest(),
+                    ec.ECDSA(hashes.SHA256()),
+                )
+            )
+            .rstrip(b"=")
+            .decode("ascii")
         )
         with pytest.raises(
             ValueError, match="WebAuthn challenge binding verification failed"
@@ -369,7 +511,10 @@ class TestEnforcingWebAuthnChallengeBinding:
                 approved_at_utc="2026-11-08T12:00:00Z",
                 auth_method="OIDC",
                 auth_principal_hash=hashlib.sha256(b"alice@example.com").hexdigest(),
+                credential_id=cred_id,
                 client_data_json=bad_type_cdj,
+                authenticator_data=auth_data_b64,
+                signature=bad_sig,
                 challenge_binding=bad_type_binding,
             )
 
@@ -378,19 +523,35 @@ class TestEnforcingWebAuthnChallengeBinding:
         queue = DeferQueue(mock_redis)
         with pytest.raises(
             ValueError,
-            match="WebAuthn client_data_json and challenge_binding are mandatory",
+            match="credential_id, client_data_json, authenticator_data, signature, and challenge_binding are mandatory",
         ):
             await queue.approve("defer-prod-1", unbound_record)
         mock_redis.hmget.assert_not_awaited()
 
-        # Valid webauthn.get challenge binding succeeds and populates client_data_hash
+        # Valid signed ES256 webauthn.get assertion succeeds under auth_method="OIDC" and populates client_data_hash
         valid_cdj, valid_binding = _make_valid_webauthn_binding(b"prod-challenge-ok")
+        valid_cdj_raw = base64.urlsafe_b64decode(
+            valid_cdj + "=" * (-len(valid_cdj) % 4)
+        )
+        valid_sig = (
+            base64.urlsafe_b64encode(
+                webauthn_priv.sign(
+                    auth_data_bytes + hashlib.sha256(valid_cdj_raw).digest(),
+                    ec.ECDSA(hashes.SHA256()),
+                )
+            )
+            .rstrip(b"=")
+            .decode("ascii")
+        )
         valid_record = ApprovalRecord(
             approver_urn="alice@example.com",
             approved_at_utc="2026-11-08T12:00:00Z",
             auth_method="OIDC",
             auth_principal_hash=hashlib.sha256(b"alice@example.com").hexdigest(),
+            credential_id=cred_id,
             client_data_json=valid_cdj,
+            authenticator_data=auth_data_b64,
+            signature=valid_sig,
             challenge_binding=valid_binding,
         )
         assert valid_record.verify_webauthn_challenge() is True

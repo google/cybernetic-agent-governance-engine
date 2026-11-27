@@ -1,0 +1,207 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Post-Merge `main` Required-Check Result Reconciler (POAM-2026-171)
+#
+# Verifies every 2 hours that every commit on `main` older than the grace
+# window has completed `success` check runs from GitHub Actions (`app.id == 15368`)
+# across all 11 post-merge checks (`EXPECTED_MAIN_PUSH_CHECKS` in
+# `scripts/check_repo_rules.py`, after `POAM-2026-172` separated
+# `Apache 2.0 License Headers` from `license-check`).
+#
+# Dual-delivery & 2-layer watcher chain:
+#   - Step A (durable repository sink, executed first): updates the
+#     `main-check-reconciliation` GitHub issue (`last-checked: <UTC>` on every
+#     run, opening/reopening with a violation table on failure and closing on
+#     PASS) so repository-integrity alerts survive GCP stack teardown.
+#   - Step B (keyless OIDC WIF GCP sink, executed second): publishes heartbeat
+#     and CRITICAL `main_check_violation` envelopes to
+#     `CAGE_ALERT_VERIFY_PUBSUB_TOPIC` and writes
+#     `custom.googleapis.com/cage/main_result_reconciler_heartbeat = 1` watched
+#     by `google_monitoring_alert_policy.main_result_reconciler_absent`.
+
+name: main-result-reconciler
+
+on:
+  schedule:
+    - cron: "37 */2 * * *"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref to reconcile (default: main)"
+        required: false
+        type: string
+        default: "main"
+      grace_minutes:
+        description: "Skip commits whose committer timestamp is newer than N minutes"
+        required: false
+        type: string
+        default: "45"
+      floor_sha:
+        description: "Optional exclusive lower-bound commit SHA (stop walking before this SHA)"
+        required: false
+        type: string
+        default: ""
+      skip_ledger_check:
+        description: "Omit post-merge review-bypass ledger check (for synthetic non-PR probe refs only)"
+        required: false
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: main-result-reconciler
+  cancel-in-progress: false
+
+jobs:
+  reconcile-main-checks:
+    name: "Reconcile post-merge required check results on main"
+    if: github.repository == 'google/cybernetic-agent-governance-engine' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version-file: "pyproject.toml"
+
+      - name: Fail closed if reconciler WIF or target variables are unset
+        env:
+          WIF_PROVIDER: ${{ secrets.CAGE_ALERT_VERIFIER_WIF_PROVIDER || vars.CAGE_ALERT_VERIFIER_WIF_PROVIDER }}
+          WIF_SA: ${{ secrets.CAGE_ALERT_VERIFIER_SERVICE_ACCOUNT || vars.CAGE_ALERT_VERIFIER_SERVICE_ACCOUNT }}
+          TARGET_PROJECT: ${{ secrets.CAGE_ALERT_VERIFY_GCP_PROJECT || vars.CAGE_ALERT_VERIFY_GCP_PROJECT }}
+          TARGET_TOPIC: ${{ secrets.CAGE_ALERT_VERIFY_PUBSUB_TOPIC || vars.CAGE_ALERT_VERIFY_PUBSUB_TOPIC }}
+        run: |
+          set -euo pipefail
+          missing=()
+          [[ -z "${WIF_PROVIDER}" ]] && missing+=("CAGE_ALERT_VERIFIER_WIF_PROVIDER")
+          [[ -z "${WIF_SA}" ]] && missing+=("CAGE_ALERT_VERIFIER_SERVICE_ACCOUNT")
+          [[ -z "${TARGET_PROJECT}" ]] && missing+=("CAGE_ALERT_VERIFY_GCP_PROJECT")
+          [[ -z "${TARGET_TOPIC}" ]] && missing+=("CAGE_ALERT_VERIFY_PUBSUB_TOPIC")
+          if (( ${#missing[@]} > 0 )); then
+            echo "::error::[POAM-2026-171] NOT WIRED (exit 3): missing required repository secrets/variables for main-result-reconciler GCP delivery: ${missing[*]}"
+            exit 3
+          fi
+
+      - name: Mint short-lived GCP access token via keyless WIF
+        id: gcp_auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ secrets.CAGE_ALERT_VERIFIER_WIF_PROVIDER || vars.CAGE_ALERT_VERIFIER_WIF_PROVIDER }}
+          service_account: ${{ secrets.CAGE_ALERT_VERIFIER_SERVICE_ACCOUNT || vars.CAGE_ALERT_VERIFIER_SERVICE_ACCOUNT }}
+          token_format: access_token
+          create_credentials_file: false
+          export_environment_variables: false
+
+      - name: Reconcile post-merge required checks and deliver to GitHub issue + GCP sinks
+        id: reconcile
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GOOGLE_OAUTH_ACCESS_TOKEN: ${{ steps.gcp_auth.outputs.access_token }}
+          TARGET_PROJECT: ${{ secrets.CAGE_ALERT_VERIFY_GCP_PROJECT || vars.CAGE_ALERT_VERIFY_GCP_PROJECT }}
+          TARGET_TOPIC: ${{ secrets.CAGE_ALERT_VERIFY_PUBSUB_TOPIC || vars.CAGE_ALERT_VERIFY_PUBSUB_TOPIC }}
+          INPUT_REF: ${{ inputs.ref || 'main' }}
+          INPUT_GRACE_MINUTES: ${{ inputs.grace_minutes || '45' }}
+          INPUT_FLOOR_SHA: ${{ inputs.floor_sha || vars.CAGE_MAIN_RECONCILER_FLOOR_SHA || '' }}
+          INPUT_SKIP_LEDGER: ${{ inputs.skip_ledger_check || false }}
+        run: |
+          set -euo pipefail
+          extra_args=()
+          if [[ -n "${INPUT_FLOOR_SHA}" ]]; then
+            extra_args+=(--floor-sha "${INPUT_FLOOR_SHA}")
+          fi
+          if [[ "${INPUT_SKIP_LEDGER}" == "true" ]]; then
+            extra_args+=(--no-ledger-check)
+          fi
+          set +e
+          python3 scripts/reconcile_main_check_results.py \
+            --ref "${INPUT_REF}" \
+            --grace-minutes "${INPUT_GRACE_MINUTES}" \
+            --sync-github-issue \
+            --gcp-project "${TARGET_PROJECT}" \
+            --pubsub-topic "${TARGET_TOPIC}" \
+            --require-gcp-delivery \
+            "${extra_args[@]}"
+          rc=$?
+          set -e
+          case "${rc}" in
+            0) ;;
+            1)
+              echo "::error::[POAM-2026-171] FOUND VIOLATIONS (exit 1): post-merge required-check violations detected on ${INPUT_REF}; GitHub issue and GCP alerts updated."
+              exit 1
+              ;;
+            2)
+              echo "::error::[POAM-2026-171] DELIVERY BROKEN (exit 2): operational error or GCP Pub/Sub / Cloud Monitoring sink failure suppressed the heartbeat metric."
+              exit 2
+              ;;
+            *)
+              echo "::error::[POAM-2026-171] UNEXPECTED FAILURE (exit ${rc}): reconcile_main_check_results.py exited with status ${rc}."
+              exit "${rc}"
+              ;;
+          esac
+
+      # Teardown backstop: if GCP WIF preflight failed (e.g., WIF pool destroyed
+      # during full project teardown) before `steps.reconcile` ran, still update
+      # the durable GitHub issue; the job remains FAILED from the prior step.
+      - name: Sync durable GitHub issue when GCP WIF preflight fails
+        if: failure() && steps.reconcile.outcome == 'skipped'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          INPUT_REF: ${{ inputs.ref || 'main' }}
+          INPUT_GRACE_MINUTES: ${{ inputs.grace_minutes || '45' }}
+          INPUT_FLOOR_SHA: ${{ inputs.floor_sha || vars.CAGE_MAIN_RECONCILER_FLOOR_SHA || '' }}
+          INPUT_SKIP_LEDGER: ${{ inputs.skip_ledger_check || false }}
+        run: |
+          set -euo pipefail
+          extra_args=()
+          if [[ -n "${INPUT_FLOOR_SHA}" ]]; then
+            extra_args+=(--floor-sha "${INPUT_FLOOR_SHA}")
+          fi
+          if [[ "${INPUT_SKIP_LEDGER}" == "true" ]]; then
+            extra_args+=(--no-ledger-check)
+          fi
+          set +e
+          python3 scripts/reconcile_main_check_results.py \
+            --ref "${INPUT_REF}" \
+            --grace-minutes "${INPUT_GRACE_MINUTES}" \
+            --sync-github-issue \
+            "${extra_args[@]}"
+          rc=$?
+          set -e
+          case "${rc}" in
+            0) ;;
+            1)
+              echo "::error::[POAM-2026-171] FOUND VIOLATIONS (exit 1) during WIF-skipped fallback issue sync on ${INPUT_REF}."
+              exit 1
+              ;;
+            2)
+              echo "::error::[POAM-2026-171] OPERATIONAL FAILURE (exit 2) during WIF-skipped fallback issue sync on ${INPUT_REF}."
+              exit 2
+              ;;
+            *)
+              echo "::error::[POAM-2026-171] UNEXPECTED FAILURE (exit ${rc}) during WIF-skipped fallback issue sync."
+              exit "${rc}"
+              ;;
+          esac
