@@ -204,7 +204,7 @@ nine, `Approved review or recorded bypass`, passes only on an approving review o
 signed record that the head was unreviewed, and a recorded bypass is not a review
 (`.github/branch-protection-rules.md` §3.1). No ruleset covers `rc-v*` or `release/**`;
 create one before creating such a branch. Release tags
-(`v*`, `client-v*`) cannot be deleted, moved or force-pushed.
+(`v*`, `client-v*`, `conformance-v*`) cannot be deleted, moved or force-pushed.
 
 The local pre-push hook refuses pushes to `main`, and to `rc-v*` through its branch-name check, whichever branch is checked out. Tags pass, so step 3 of the release process works from `main`. The hook runs only where it is installed; the rulesets are what GitHub enforces.
 

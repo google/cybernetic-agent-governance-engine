@@ -12,7 +12,8 @@
       ],
       "include": [
         "refs/tags/v*",
-        "refs/tags/client-v*"
+        "refs/tags/client-v*",
+        "refs/tags/conformance-v*"
       ]
     }
   },
