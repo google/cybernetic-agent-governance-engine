@@ -73,7 +73,7 @@ MAKEFILE_PATH = REPO_ROOT / "Makefile"
 GITLEAKS_TOML_PATH = REPO_ROOT / ".gitleaks.toml"
 STAGING_LIFECYCLE_PATH = REPO_ROOT / "scripts" / "staging_lifecycle.sh"
 
-# Complete classification of all 23 workflows in .github/workflows/
+# Complete classification of all 24 workflows in .github/workflows/
 NON_GATE_WORKFLOWS: frozenset[str] = frozenset(
     {
         "publish-client-sdk.yml",  # Tag/manual release workflow building & pushing cage-client wheel/GHCR package
@@ -90,6 +90,9 @@ GATE_WORKFLOWS: frozenset[str] = frozenset(
         "ci-integration.yml",
         "ci-partner-integration.yml",
         "ci.yml",
+        # Scheduled conformance-v* tag, GitHub Release, and GHCR freshness
+        # reconciler; planted-defect tests in tests/unit/test_reconcile_conformance_release.py.
+        "conformance-release-reconciler.yml",
         "dependency-review.yml",
         "eu-ecb-compliance.yml",
         "license_guard.yml",
@@ -168,7 +171,7 @@ def test_workflow_inventory_is_complete_and_classified() -> None:
         "Register new workflows in GATE_WORKFLOWS and add adversarial gate tests."
     )
     assert not missing, f"Classified workflow(s) missing from disk: {missing}"
-    assert len(on_disk) == 23, f"Expected 23 workflows, found {len(on_disk)}"
+    assert len(on_disk) == 24, f"Expected 24 workflows, found {len(on_disk)}"
 
     # Verify publish-client-sdk.yml is genuinely a release workflow, not a disguised test gate
     pub_data = yaml.safe_load(
@@ -2059,15 +2062,22 @@ def test_publish_client_sdk_tag_version_guard_and_per_tag_scoping(
     assert "refs/tags/conformance-v" in ghcr_conf_if
     assert "refs/tags/client-v" not in ghcr_conf_if
     ghcr_conf_run = str(ghcr_conf["run"])
-    assert "FROM python:3.12-slim" not in ghcr_conf_run
-    assert "cgr.dev/chainguard/wolfi-base@sha256:" in ghcr_conf_run
+    dockerfile_text = (
+        REPO_ROOT / "packages" / "cage-conformance" / "Dockerfile"
+    ).read_text(encoding="utf-8")
+    assert "FROM python:3.12-slim" not in dockerfile_text
+    assert "FROM scratch" not in dockerfile_text
+    assert "cgr.dev/chainguard/wolfi-base@sha256:" in dockerfile_text
+    assert 'ENTRYPOINT ["cage-conformance"]' in dockerfile_text
+    assert "USER 65532:65532" in dockerfile_text
+    assert 'org.opencontainers.image.revision="${COMMIT_SHA}"' in dockerfile_text
+    assert 'org.opencontainers.image.version="${CONF_VERSION}"' in dockerfile_text
+    assert "packages/cage-conformance/Dockerfile" in ghcr_conf_run
     assert "sha256sum -c -" in ghcr_conf_run
     assert "trivy image" in ghcr_conf_run
     assert "--severity CRITICAL,HIGH" in ghcr_conf_run
     assert "--exit-code 1" in ghcr_conf_run
-    assert 'ENTRYPOINT ["cage-conformance"]' in ghcr_conf_run
     assert 'grep -Fx "${CONF_VERSION}"' in ghcr_conf_run
-    assert "FROM scratch" not in ghcr_conf_run
     assert "${{" not in ghcr_conf_run
     assert (
         ghcr_conf_run.index("docker run --rm")

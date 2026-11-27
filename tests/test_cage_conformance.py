@@ -994,3 +994,118 @@ def test_cli_trace_mode_accepts_packaged_trace_v1_vector_bundle(
     assert parsed.inputs == (
         cc.InputDigest.of_bytes("trace_v1.json", vec_path.read_bytes()),
     )
+
+
+# ── Producer-contract parity (outside SYNC_PAIRS) ────────────────────────────
+
+
+def test_substrate_v1_against_real_governance_app(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Run substrate-v1 against the real FastAPI governance_app over ASGI TestClient."""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from fastapi import FastAPI
+    from starlette.testclient import TestClient
+
+    from src.gateway.governance.jwks import JWKSet
+    from src.gateway.server.governance_middleware import governance_app
+
+    private_key = ec.generate_private_key(ec.SECP256R1())
+    pub_pem = private_key.public_key().public_bytes(
+        serialization.Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    test_jwks = JWKSet()
+    test_jwks.add_key(pub_pem, kid="substrate-parity-test-kid")
+    monkeypatch.setattr("src.gateway.governance.jwks.get_jwks", lambda: test_jwks)
+
+    wrapper = FastAPI()
+    wrapper.mount("/governance", governance_app)
+    client = TestClient(wrapper)
+
+    def _asgi_requester(
+        method: str,
+        url: str,
+        headers: dict[str, str] | Any,
+        body: bytes | None,
+        _timeout_s: float,
+    ) -> cc.HttpResponse:
+        from urllib.parse import urlparse
+
+        parsed = urlparse(url)
+        path = parsed.path + (f"?{parsed.query}" if parsed.query else "")
+        resp = client.request(method, path, headers=dict(headers), content=body)
+        return cc.HttpResponse(
+            status_code=resp.status_code,
+            headers=dict(resp.headers),
+            body=resp.content,
+        )
+
+    report = cc.verify_endpoint(
+        "https://gateway.example.test",
+        profile="substrate-v1",
+        provenance=_endpoint_provenance("substrate-v1"),
+        http_requester=_asgi_requester,
+    )
+    assert report.conformant is True, [
+        f"{a.assertion_id}: {a.detail}" for a in report.assertions if not a.passed
+    ]
+    assert {a.assertion_id for a in report.assertions} == {
+        "SUBSTRATE-POLICY-VERSION",
+        "SUBSTRATE-JWKS",
+        "SUBSTRATE-WELL-KNOWN-JWKS",
+    }
+
+
+def test_provider_01_v02_vector_matches_provider_builder() -> None:
+    """Keep provider_01_v02.json aligned with provider_01's v0.2 request builder and vocabulary."""
+    from src.integrations.provider_01.provider import (
+        _PROVIDER_01_ALLOW,
+        _PROVIDER_01_ESCALATE,
+        _PROVIDER_01_REFUSE,
+        _build_cage_authority_request,
+    )
+
+    vec_path = _PACKAGE_SRC / "cage_conformance" / "vectors" / "provider_01_v02.json"
+    vector_doc = json.loads(vec_path.read_text(encoding="utf-8"))
+    template = vector_doc["base_request_template"]
+
+    built_v02 = _build_cage_authority_request(
+        {
+            "correlation_id": "exec-parity-001",
+            "thread_id": "thread-parity-001",
+            "action": "payment.release",
+            "operator_urn": "agent-treasury-01",
+            "params": {"target": "TREASURY_GATEWAY", "amount": 500000.0},
+        },
+        contract_version="v0.2",
+    )
+    assert set(template) == set(built_v02)
+    assert len(template) == 37
+    assert vector_doc["default_validate_path"] == "/cage/validate"
+
+    allowed_decisions = {_PROVIDER_01_ALLOW, _PROVIDER_01_REFUSE, _PROVIDER_01_ESCALATE}
+    for case in vector_doc["wire_vectors"]:
+        if "expected_decision" in case:
+            assert case["expected_decision"] in allowed_decisions
+
+
+def test_audit_corroboration_contracts_match_repo_producers() -> None:
+    """Verify audit_corroboration constants match src/ compliance and reconciliation schemas."""
+    from src.compliance_bridge.evidence_custodian import (
+        ATTESTATION_SCHEMA_V1,
+        ATTESTATION_SCHEMA_V2,
+    )
+    from src.gateway.governance.evidence.stream import (
+        RECONCILIATION_DISCREPANCY_FENCE_EVENT_TYPE,
+    )
+
+    assert cc.audit_corroboration.EVIDENCE_BATCH_SCHEMA_V1 == ATTESTATION_SCHEMA_V1
+    assert cc.audit_corroboration.EVIDENCE_BATCH_SCHEMA_V2 == ATTESTATION_SCHEMA_V2
+    assert (
+        cc.audit_corroboration.DISCREPANCY_FENCE_TYPE
+        == RECONCILIATION_DISCREPANCY_FENCE_EVENT_TYPE
+    )
+    assert set(cc.DEFAULT_EXPECTED_KEY_CALLERS) == set(cc.KNOWN_SIGNING_KEYS)
+    assert cc.audit_corroboration.GOVERNANCE_NAMESPACE == "governance-stack"

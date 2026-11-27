@@ -1365,3 +1365,79 @@ jobs:
       - name: Build & Two-Phase Smoke-Test cage-client Wheel
         if: steps.changed.outputs.run == 'true'
         run: bash scripts/smoke_test_client_wheel.sh
+
+  conformance-wheel-smoke:
+    name: "Conformance Built-Wheel & Container Smoke"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Check whether conformance verifier or proof surface changed
+        id: changed
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            changed=$(git diff --name-only "$BASE_SHA"...HEAD -- \
+              proof/ \
+              packages/cage-conformance/ \
+              scripts/check_conformance_sync.py \
+              scripts/smoke_test_conformance_wheel.sh \
+              .github/workflows/publish-client-sdk.yml \
+              .github/workflows/ci.yml)
+            if [ -n "$changed" ]; then
+              echo "run=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "run=false" >> "$GITHUB_OUTPUT"
+              echo "No proof/ or cage-conformance changes in PR; skipping wheel & container smoke."
+            fi
+          fi
+      - name: Install uv
+        if: steps.changed.outputs.run == 'true'
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          enable-cache: true
+      - name: Set up Python
+        if: steps.changed.outputs.run == 'true'
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version-file: "pyproject.toml"
+      - name: Build & Smoke-Test cage-conformance Wheel & Sdist
+        if: steps.changed.outputs.run == 'true'
+        env:
+          COMMIT_SHA: ${{ github.sha }}
+        run: bash scripts/smoke_test_conformance_wheel.sh
+      - name: Build & Smoke-Test cage-conformance Wolfi Container
+        if: steps.changed.outputs.run == 'true'
+        env:
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          CONF_VERSION=$(python3 -c 'import tomllib; print(tomllib.load(open("packages/cage-conformance/pyproject.toml", "rb"))["project"]["version"])')
+          SMOKE_IMAGE="cage-conformance-ci-smoke:${CONF_VERSION}"
+          docker build \
+            -f packages/cage-conformance/Dockerfile \
+            --build-arg "CONF_VERSION=${CONF_VERSION}" \
+            --build-arg "COMMIT_SHA=${COMMIT_SHA}" \
+            -t "${SMOKE_IMAGE}" \
+            packages/cage-conformance
+          docker run --rm "${SMOKE_IMAGE}" --version | grep -Fx "${CONF_VERSION}"
+          docker run --rm \
+            -v "$PWD/packages/cage-conformance/src/cage_conformance/vectors:/vectors:ro" \
+            "${SMOKE_IMAGE}" verify \
+            --trace /vectors/trace_v1.json \
+            --provider-id cage-conformance-ci-container-smoke \
+            --adapter-author-org "Google LLC" \
+            --counterparty-org "Google LLC" \
+            --adapter-version "${CONF_VERSION}" \
+            --adapter-commit "${COMMIT_SHA::12}" \
+            --runner-org "Google LLC" \
+            --runner-identity "ci-container-smoke@github-actions"
+          docker rmi -f "${SMOKE_IMAGE}"
