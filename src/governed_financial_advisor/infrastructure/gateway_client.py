@@ -15,11 +15,12 @@
 """
 GatewayClient — async HTTP client for the governed inference gateway.
 
-Governance previews (``POST /governance/validate-action``) go through the
-installed ``cage-client`` wheel. ``CageClient`` resolves the gateway's signing
-key out of band by ``kid`` from ``GET /governance/.well-known/jwks.json`` and
-verifies each envelope's signature, ``expires_at`` freshness and
-``subject.action_hash`` binding before the advisor routes on its verdict.
+Governance previews (``POST /governance/validate-action``) and committing tool
+executions (``POST /tools/execute``) go through the installed ``cage-client``
+wheel via :meth:`GatewayClient.sdk_client`. ``CageClient`` resolves the
+gateway's signing key out of band by ``kid`` from
+``GET /governance/.well-known/jwks.json`` and verifies each envelope or commit
+outcome's signature, freshness, and subject binding before routing.
 
 Uses a lazy singleton pattern so the underlying httpx.AsyncClient is
 created only on the first call, not at import time.
@@ -28,26 +29,16 @@ created only on the first call, not at import time.
 from __future__ import annotations
 
 import asyncio
-import contextvars
-import json
 import logging
 import os
 import random
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass
-from typing import Any, NoReturn
+from typing import Any
 
 import httpx
-from cage_client import (
-    CageClient,
-    CageGatewayError,
-    DeferralPending,
-    PolicyViolationException,
-    RoutingSealVerificationError,
-)
+from cage_client import CageClient
 from opentelemetry.propagate import inject as otel_inject
 
-from src.gateway.governance.decisions import GovernanceDecision
 from src.gateway.governance.seams.state_commitment import (
     StateCommitmentError,
     StateCommitmentLinkage,
@@ -62,35 +53,9 @@ _GATEWAY_URL_DEFAULT = "http://localhost:8080"
 _MAX_RETRY_ATTEMPTS = 3
 _RETRY_BASE_SECONDS = 0.2
 _RETRY_CAP_SECONDS = 2.0
-_VALIDATE_ACTION_PATH = "/governance/validate-action"
-#: ``agent_id`` the SDK sends with each preview. The gateway identifies the
-#: caller by its mesh workload identity, never by this field.
-_ADVISOR_AGENT_ID = "governed-financial-advisor"
-
-#: Verdicts the advisor may route on. DENY arrives as HTTP 403; anything else
-#: (including a missing or legacy verdict string) is refused.
-_ROUTABLE_VERDICTS = frozenset(
-    {
-        GovernanceDecision.ALLOW,
-        GovernanceDecision.NARROW,
-        GovernanceDecision.REQUIRE_APPROVAL,
-        GovernanceDecision.DEFER,
-    }
-)
 
 #: Canonical advisory decisions returned by ``POST /governance/policy-precheck``.
 _POLICY_PRECHECK_DECISIONS = frozenset({"ALLOW", "DENY", "MANUAL_REVIEW"})
-
-
-def _is_policy_drift(exc: PolicyViolationException) -> bool:
-    """Return True iff a cryptographically verified refusal reports substrate policy drift."""
-    details = (
-        exc.violation_details if isinstance(exc.violation_details, Mapping) else {}
-    )
-    violations = details.get("violations")
-    if not isinstance(violations, list) or not violations:
-        return False
-    return any("Substrate Policy Drift Detected" in str(v) for v in violations)
 
 
 def _retry_delay_seconds(response: httpx.Response, attempt: int) -> float:
@@ -137,33 +102,12 @@ async def _post_with_retries(
     return response
 
 
-@dataclass
-class _Preview:
-    """What one ``validate_action`` call shares with :class:`_AdvisorTransport`."""
+class _GatewayHttpTransport(httpx.AsyncBaseTransport):
+    """Forward ``CageClient`` requests through ``GatewayClient._http`` with advisor headers.
 
-    policy_version_id: str | None
-    timeout: float
-    #: The final ``/governance/validate-action`` response the SDK received.
-    response: httpx.Response | None = None
-
-
-_current_preview: contextvars.ContextVar[_Preview | None] = contextvars.ContextVar(
-    "advisor_gateway_preview", default=None
-)
-
-
-class _AdvisorTransport(httpx.AsyncBaseTransport):
-    """Sends the SDK's requests through the advisor's HTTP client.
-
-    ``CageClient`` builds the governance exchange and cryptographically verifies
-    every HTTP 200 and HTTP 403 answer before mediating any verdict. Sending it
-    through the advisor's ``httpx.AsyncClient`` keeps the advisor's W3C trace
-    context and ``x-cage-principal`` headers plus its 429 rate-limit retry
-    budget (matching ``execute_tool``: 503 is never retried, so a governance or
-    mesh outage surfaces once as ``GATEWAY_ERROR`` without multiplying
-    hash-chained ``GOVERNANCE_INFRASTRUCTURE_BLOCK`` events). Policy-drift
-    pin refresh runs only in :meth:`GatewayClient.validate_action` **after**
-    ``CageClient`` has cryptographically verified the 403 refusal envelope.
+    Each request executes once with no HTTP 429 or 503 retry loop so rate-limit
+    and availability responses surface directly through ``CageClient`` as
+    ``GovernanceDecision.UNAVAILABLE`` / ``GatewayUnavailableError``.
     """
 
     def __init__(self, owner: GatewayClient, http: httpx.AsyncClient) -> None:
@@ -171,8 +115,6 @@ class _AdvisorTransport(httpx.AsyncBaseTransport):
         self._http = http
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        preview = _current_preview.get()
-        timeout = preview.timeout if preview is not None else 60.0
         headers = {
             name.lower(): value
             for name, value in request.headers.items()
@@ -181,93 +123,20 @@ class _AdvisorTransport(httpx.AsyncBaseTransport):
         for name, value in self._owner._build_headers().items():
             headers[name.lower()] = value
         path = request.url.raw_path.decode("ascii")
-
-        if request.method != "POST":
-            return await self._http.request(
-                request.method, path, headers=headers, timeout=timeout
-            )
-
-        body = json.loads(request.content)
-        # Only the preview POST carries the pin and reports back its response.
-        current = preview if path == _VALIDATE_ACTION_PATH else None
-        if current is not None:
-            body["policy_version_id"] = current.policy_version_id
-
-        async def _post() -> httpx.Response:
-            return await self._http.post(
-                path, json=body, headers=headers, timeout=timeout
-            )
-
-        response = await _post_with_retries(_post, retry_statuses=frozenset({429}))
-        if current is not None:
-            current.response = response
-        return response
-
-
-def _verified_result(response: httpx.Response | None) -> dict[str, Any]:
-    """Unwrap the 200 envelope the SDK has verified: its payload plus provenance.
-
-    The SDK verifies an envelope's signature, freshness and subject binding
-    before it returns ALLOW or mediates any other verdict, so a mediated 200
-    response is a verified one. A deferral or narrowing that did not arrive
-    as a 200 envelope carries no signature and is refused.
-    """
-    if response is None or response.status_code != 200:
-        raise CageGatewayError(
-            "Governance answered without a signed envelope; refusing to route on it"
+        ext_timeout = request.extensions.get("timeout")
+        timeout = (
+            float(ext_timeout["read"])
+            if isinstance(ext_timeout, Mapping)
+            and isinstance(ext_timeout.get("read"), (int, float))
+            else 60.0
         )
-    body = json.loads(response.content)
-    nested = body.get("envelope")
-    envelope: dict[str, Any] = nested if isinstance(nested, dict) and nested else body
-    result = dict(envelope.get("payload") or {})
-    for key in (
-        "envelope_id",
-        "envelope_version",
-        "issuer",
-        "subject",
-        "signature",
-        "governance_context",
-    ):
-        result[key] = envelope.get(key)
-    result["external_attestations"] = envelope.get("external_attestations") or []
-    return result
-
-
-def _denial_reasons(exc: PolicyViolationException) -> str:
-    details = exc.violation_details if isinstance(exc.violation_details, dict) else {}
-    violations = details.get("violations")
-    if isinstance(violations, list) and violations:
-        return "; ".join(str(v) for v in violations)
-    return exc.reason_code
-
-
-_UNSIGNED_200_PREFIXES = (
-    "Invalid JSON in ALLOW response",
-    "ALLOW response ",
-    "Failed to parse governance envelope",
-)
-
-
-def _raise_unrouted(
-    action: str, exc: CageGatewayError, response: httpx.Response | None
-) -> NoReturn:
-    """Re-raise an SDK error without collapsing un-evidenced HTTP errors into policy denials."""
-    if isinstance(exc.__cause__, httpx.RequestError):
-        # Transport failure or timeout: surface the original httpx error.
-        raise exc.__cause__ from None
-    if response is not None and response.status_code >= 400:
-        response.raise_for_status()
-    if (
-        response is not None
-        and response.status_code == 200
-        and not str(exc).startswith(_UNSIGNED_200_PREFIXES)
-    ):
-        # Cryptographically verified 200 GovernanceEnvelope carrying an
-        # unrecognised or incomplete verdict payload.
-        raise PermissionError(
-            f"Governance returned no routable verdict for '{action}': {exc}"
-        ) from exc
-    raise exc
+        if request.method == "POST":
+            return await self._http.post(
+                path, content=request.content, headers=headers, timeout=timeout
+            )
+        return await self._http.request(
+            request.method, path, headers=headers, timeout=timeout
+        )
 
 
 class GatewayClient:
@@ -313,7 +182,7 @@ class GatewayClient:
         sdk = CageClient(
             gateway_url=f"{base.scheme}://{base.netloc.decode('ascii')}",
             timeout_s=timeout,
-            http_transport=_AdvisorTransport(self, http),
+            http_transport=_GatewayHttpTransport(self, http),
         )
         self._sdk = sdk
         self._sdk_http = http
@@ -322,19 +191,6 @@ class GatewayClient:
     async def sdk_client(self, timeout: float = 60.0) -> CageClient:
         """Return the singleton's :class:`CageClient` bound to its active HTTP transport."""
         return await self._ensure_sdk(await self._ensure_client(), timeout)
-
-    @staticmethod
-    def _set_preview_pin(
-        policy_version_id: str | None, timeout: float = 60.0
-    ) -> tuple[contextvars.Token[_Preview | None], _Preview]:
-        """Bind a ``policy_version_id`` preview pin for the current async context."""
-        preview = _Preview(policy_version_id=policy_version_id, timeout=timeout)
-        return _current_preview.set(preview), preview
-
-    @staticmethod
-    def _reset_preview_pin(token: contextvars.Token[_Preview | None]) -> None:
-        """Reset the active ``policy_version_id`` preview context."""
-        _current_preview.reset(token)
 
     def _build_headers(self) -> dict[str, str]:
         """Construct outbound request headers with W3C trace context and x-cage-principal.
@@ -475,170 +331,6 @@ class GatewayClient:
                 exc,
             )
             return "DENY"
-
-    @side_effect_node(kind="api_call", external_system="gateway_api")
-    async def validate_action(
-        self,
-        action: str,
-        params: dict[str, Any],
-        policy_version_id: str | None = None,
-        timeout: float = 60.0,
-    ) -> dict[str, Any]:
-        """Ask the gateway how ``action`` must be routed; nothing is committed.
-
-        Calls ``POST /governance/validate-action`` through the installed
-        ``cage-client`` SDK. The gateway runs the non-committing (DRY_RUN)
-        profile and never mints a routing seal: the single committing run
-        happens inside the gateway when the governed tool (e.g.
-        ``execute_trade_action``) executes.
-
-        The SDK resolves the gateway's signing key by ``kid`` from
-        ``GET /governance/.well-known/jwks.json`` and verifies the envelope's
-        signature, ``expires_at`` freshness and ``subject.action_hash``
-        binding to ``action`` and ``params`` before any verdict is routed.
-        The returned dictionary is built only from that verified envelope.
-
-        W3C Trace Context Propagation
-        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        The active OpenTelemetry span context is injected into the outbound
-        HTTP headers via ``opentelemetry.propagate.inject(headers)`` so the
-        gateway's ``cage.validate_action`` span is a child of the advisor's
-        ``cage.tool_execute`` span in Langfuse (one trace tree, not two).
-
-        Args:
-            action:            Tool / policy action name (e.g. ``"execute_trade"``).
-            params:            Structured execution plan parameters dict.
-            policy_version_id: Pinned baseline policy version signature hash (optional).
-            timeout:           HTTP timeout in seconds (default 60s; covers OPA
-                               cold start after a pod rollout).
-
-        Returns:
-            The verified envelope's payload with its provenance metadata.
-            ``verdict`` is a :class:`GovernanceDecision` value other than
-            ``DENY``: ``ALLOW``, ``NARROW`` (with ``narrowed_params``),
-            ``REQUIRE_APPROVAL`` (with the ``deferred_id`` of the
-            gateway-held approval token) or ``DEFER``.
-
-        Raises:
-            PermissionError: On an evidenced refusal (HTTP 403 carrying
-                a cryptographically signed HTTP 403 ``DENIED`` envelope carrying
-                ``proof_hash`` / ``audit_id``, or a signed HTTP 200 ``DENY``
-                envelope) or a signed 200 envelope outside the canonical
-                vocabulary — the caller must block.
-            cage_client.RoutingSealVerificationError: If a 200 or 403 envelope's
-                signature, ``kid``, freshness or request binding fails
-                verification — the caller must block.
-            cage_client.CageGatewayError: If an HTTP 200/202 body lacks a
-                valid signed ``GovernanceEnvelope``.
-            httpx.HTTPStatusError: On non-envelope or un-evidenced 403 or other
-                4xx / 5xx errors.
-            httpx.TimeoutException: If the Gateway does not respond within timeout.
-        """
-        sdk = await self._ensure_sdk(await self._ensure_client(), timeout)
-        active_pin = policy_version_id
-        preview: _Preview | None = None
-        for attempt in range(2):
-            preview = _Preview(policy_version_id=active_pin, timeout=timeout)
-            token = _current_preview.set(preview)
-            try:
-                await sdk.validate_action(
-                    action=action, parameters=params, agent_id=_ADVISOR_AGENT_ID
-                )
-                break
-            except PolicyViolationException as exc:
-                if (
-                    attempt == 0
-                    and preview.response is not None
-                    and preview.response.status_code == 403
-                    and _is_policy_drift(exc)
-                ):
-                    logger.warning(
-                        "Substrate drift caught during session (verified 403 envelope). "
-                        "Fetching updated baseline pin and replaying."
-                    )
-                    active_pin = await self.get_policy_version(timeout=timeout)
-                    continue
-                narrowed = (
-                    exc.reason_code == "NARROWED"
-                    and preview.response is not None
-                    and preview.response.status_code == 200
-                )
-                if not narrowed:
-                    raise PermissionError(
-                        f"Governance DENIED '{action}': {_denial_reasons(exc)}"
-                    ) from exc
-                break
-            except DeferralPending:
-                break  # routed below on the verified 200 envelope
-            except RoutingSealVerificationError:
-                raise  # an unverifiable envelope is neither routed nor relabelled
-            except CageGatewayError as exc:
-                _raise_unrouted(action, exc, preview.response)
-            finally:
-                _current_preview.reset(token)
-
-        result = _verified_result(preview.response if preview is not None else None)
-        verdict = result.get("verdict")
-        if verdict not in _ROUTABLE_VERDICTS:
-            violations = [str(v) for v in result.get("violations") or []]
-            logger.warning(
-                "🚫 validate_action refused: action=%s verdict=%s violations=%s",
-                action,
-                verdict,
-                violations,
-            )
-            raise PermissionError(
-                f"Governance returned no routable verdict for '{action}' "
-                f"(verdict={verdict!r}): {'; '.join(violations)}"
-            )
-        if verdict == GovernanceDecision.REQUIRE_APPROVAL and not result.get(
-            "deferred_id"
-        ):
-            # No approval token was parked, so no human can ever approve it.
-            raise PermissionError(
-                f"Governance requires approval for '{action}' but parked no deferred_id"
-            )
-        logger.info(
-            "validate_action: action=%s verdict=%s latency=%.1fms",
-            action,
-            verdict,
-            result.get("latency_ms", 0),
-        )
-        return result
-
-    @side_effect_node(kind="api_call", external_system="gateway_api")
-    async def execute_tool(
-        self,
-        tool_name: str,
-        params: dict[str, Any],
-        timeout: float = 60.0,
-    ) -> dict[str, Any]:
-        """Run a gateway-hosted tool via ``POST /tools/execute``.
-
-        Governed tools (``simulate_governance_check``, ``evaluate_policy``,
-        ``execute_trade_action``, ...) execute in the gateway process, where the
-        governor, OPA client and ``ActuatorRegistry`` live.
-
-        Returns:
-            The gateway's ``{"status": ..., "output"|"error": ...}`` body.
-        """
-        client = await self._ensure_client()
-        headers = self._build_headers()
-
-        async def _post() -> httpx.Response:
-            return await client.post(
-                "/tools/execute",
-                json={"tool_name": tool_name, "params": params},
-                headers=headers,
-                timeout=timeout,
-            )
-
-        # HTTP 429 is rejected by the gateway rate limiter before any tool
-        # execution occurs, so retrying on 429 is side-effect free.
-        response = await _post_with_retries(_post, retry_statuses=frozenset({429}))
-        response.raise_for_status()
-        body: dict[str, Any] = response.json()
-        return body
 
     @side_effect_node(kind="api_call", external_system="gateway_api")
     async def commit_state(

@@ -223,14 +223,35 @@ async def test_invalid_amount_is_sent_back_without_a_dry_run(monkeypatch) -> Non
 
 @pytest.mark.asyncio
 async def test_safety_gate_submits_the_same_payload(monkeypatch) -> None:
+    from cage_client import GovernanceDecision as SdkDecision
+    from cage_client import PreviewResult
+
     seen: dict[str, Any] = {}
 
+    class _Sdk:
+        async def preview(
+            self,
+            *,
+            action: str,
+            parameters: dict[str, Any],
+            agent_id: str,
+            policy_version_id: str | None = None,
+        ) -> PreviewResult:
+            seen.update(
+                action=action,
+                params=parameters,
+                agent_id=agent_id,
+                policy_version_id=policy_version_id,
+            )
+            return PreviewResult(
+                decision=SdkDecision.ALLOWED,
+                gateway_verdict="ALLOW",
+                audit_id="e1",
+            )
+
     class _Client:
-        async def validate_action(
-            self, *, action: str, params: dict[str, Any]
-        ) -> dict[str, Any]:
-            seen.update(action=action, params=params)
-            return {"verdict": GovernanceDecision.ALLOW, "envelope_id": "e1"}
+        async def sdk_client(self) -> _Sdk:
+            return _Sdk()
 
     monkeypatch.setattr(safety_mod, "GatewayClient", _Client)
     plan = {"action": "execute_trade", **_TRADE_STEP["parameters"]}
@@ -276,18 +297,43 @@ async def test_safety_gate_extracts_trade_step_from_structured_execution_plan(
     monkeypatch,
 ) -> None:
     """safety_check_node extracts the trade step from a structured ExecutionPlan dict."""
+    from datetime import datetime, timezone
+
+    from cage_client import GovernanceDecision as SdkDecision
+    from cage_client import GovernanceEnvelope, PreviewResult
+
     seen: dict[str, Any] = {}
+    env = GovernanceEnvelope(
+        envelope_version="3.0",
+        envelope_id="e1",
+        issued_at=datetime.now(timezone.utc),
+        expires_at=datetime.now(timezone.utc),
+        issuer={"service": "cage-gateway"},
+        subject={"action": TRADE_ACTION, "action_hash": "h"},
+        payload={"verdict": "ALLOW", "violations": []},
+        governance_context={"tiers_passed": []},
+        signature={"algorithm": "EdDSA", "kid": "k1", "value": "sig-1"},
+    )
+
+    class _Sdk:
+        async def preview(
+            self,
+            *,
+            action: str,
+            parameters: dict[str, Any],
+            agent_id: str,
+            policy_version_id: str | None = None,
+        ) -> PreviewResult:
+            seen.update(action=action, params=parameters)
+            return PreviewResult(
+                decision=SdkDecision.ALLOWED,
+                gateway_verdict="ALLOW",
+                envelope=env,
+            )
 
     class _Client:
-        async def validate_action(
-            self, *, action: str, params: dict[str, Any]
-        ) -> dict[str, Any]:
-            seen.update(action=action, params=params)
-            return {
-                "verdict": GovernanceDecision.ALLOW,
-                "envelope_id": "e1",
-                "signature": "sig-1",
-            }
+        async def sdk_client(self) -> _Sdk:
+            return _Sdk()
 
     monkeypatch.setattr(safety_mod, "GatewayClient", _Client)
     structured_plan = _plan(_CONFIDENT_TRADE_STEP)
@@ -309,6 +355,7 @@ async def test_allow_routing_verdict_reused_across_evaluator_safety_and_tool_gua
 ) -> None:
     """A fresh ALLOW verdict from evaluator_node is reused by safety_check_node and governed_tool_node."""
     import httpx
+    from cage_client import PreviewResult
     from langchain_core.messages import AIMessage
 
     from src.governed_financial_advisor.graph.subgraphs.governed_trader_graph import (
@@ -331,13 +378,15 @@ async def test_allow_routing_verdict_reused_across_evaluator_safety_and_tool_gua
 
     validate_calls = 0
 
-    class _FailingClient:
-        async def validate_action(
-            self, *, action: str, params: dict[str, Any]
-        ) -> dict[str, Any]:
+    class _FailingSdk:
+        async def preview(self, **kwargs: Any) -> PreviewResult:
             nonlocal validate_calls
             validate_calls += 1
-            raise AssertionError("validate_action should be skipped on fresh ALLOW hit")
+            raise AssertionError("preview should be skipped on fresh ALLOW hit")
+
+    class _FailingClient:
+        async def sdk_client(self) -> _FailingSdk:
+            return _FailingSdk()
 
     monkeypatch.setattr(safety_mod, "GatewayClient", _FailingClient)
 
@@ -411,6 +460,9 @@ async def test_narrow_and_require_approval_never_populate_or_reuse_routing_cache
     monkeypatch, verdict: str
 ) -> None:
     """NARROW and REQUIRE_APPROVAL must never reuse a cached verdict."""
+    from cage_client import GovernanceDecision as SdkDecision
+    from cage_client import PreviewResult
+
     _install_dry_run(monkeypatch, verdict)
     structured_plan = _plan(_TRADE_STEP)
 
@@ -421,16 +473,26 @@ async def test_narrow_and_require_approval_never_populate_or_reuse_routing_cache
 
     validate_calls = 0
 
-    class _RecordingClient:
-        async def validate_action(
-            self, *, action: str, params: dict[str, Any]
-        ) -> dict[str, Any]:
+    class _RecordingSdk:
+        async def preview(self, **kwargs: Any) -> PreviewResult:
             nonlocal validate_calls
             validate_calls += 1
-            return {
-                "verdict": getattr(GovernanceDecision, verdict),
-                "deferred_id": "d-1" if verdict == "REQUIRE_APPROVAL" else None,
-            }
+            if verdict == "NARROW":
+                return PreviewResult(
+                    decision=SdkDecision.NARROWED,
+                    gateway_verdict="NARROW",
+                    narrowed_params={"amount": 100.0},
+                )
+            return PreviewResult(
+                decision=SdkDecision.DEFERRED,
+                gateway_verdict="REQUIRE_APPROVAL",
+                deferred_id="d-1",
+                requires_approval=True,
+            )
+
+    class _RecordingClient:
+        async def sdk_client(self) -> _RecordingSdk:
+            return _RecordingSdk()
 
     monkeypatch.setattr(safety_mod, "GatewayClient", _RecordingClient)
 

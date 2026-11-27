@@ -39,6 +39,12 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from cage_client.outcomes import (
+    GovernanceDecision as SdkDecision,
+)
+from cage_client.outcomes import (
+    PreviewResult,
+)
 
 from src.gateway.governance.decisions import GovernanceDecision
 from src.gateway.governance.langgraph_harness import (
@@ -268,13 +274,16 @@ def _mock_governor():
 
 def _opa_patches():
     """Return a list of patch context managers for the OPA safety node."""
-    mock_client = MagicMock()
-    mock_client.validate_action = AsyncMock(
-        return_value={
-            "verdict": GovernanceDecision.ALLOW.value,
-            "signature": "mock_sig",
-        }
+    mock_sdk = MagicMock()
+    mock_sdk.preview = AsyncMock(
+        return_value=PreviewResult(
+            decision=SdkDecision.ALLOWED,
+            gateway_verdict=GovernanceDecision.ALLOW.value,
+            audit_id="audit-latency-mock",
+        )
     )
+    mock_client = MagicMock()
+    mock_client.sdk_client = AsyncMock(return_value=mock_sdk)
     mock_gateway_client_cls = MagicMock(return_value=mock_client)
 
     return [
@@ -508,8 +517,9 @@ class TestPipelineCumulativeLatency:
         # --- Tier 3: Safety/STPA node ---
         safety_state = _opa_state()
 
-        opa_patches2 = _opa_patches()
-        with opa_patches2[0]:
+        with contextlib.ExitStack() as stack:
+            for p in _opa_patches():
+                stack.enter_context(p)
             t3_start = time.perf_counter()
             await safety_check_node(safety_state)
             t3_end = time.perf_counter()
@@ -589,8 +599,9 @@ class TestLatencyReportPrinted:
         t2_ms = _elapsed_ms(t2_start, t2_end)
 
         # --- Tier 3 ---
-        opa_patches2 = _opa_patches()
-        with opa_patches2[0]:
+        with contextlib.ExitStack() as stack:
+            for p in _opa_patches():
+                stack.enter_context(p)
             t3_start = time.perf_counter()
             await safety_check_node(_opa_state())
             t3_end = time.perf_counter()

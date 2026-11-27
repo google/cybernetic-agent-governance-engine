@@ -218,16 +218,22 @@ def _client_with(handler) -> object:
     return client
 
 
-def test_gateway_client_has_no_post_hitl_path() -> None:
+def test_gateway_client_has_no_post_hitl_or_legacy_wrapper_paths() -> None:
     from src.governed_financial_advisor.infrastructure.gateway_client import (
         GatewayClient,
     )
 
     assert not hasattr(GatewayClient, "revalidate_post_hitl")
+    assert not hasattr(GatewayClient, "validate_action")
+    assert not hasattr(GatewayClient, "execute_tool")
+    assert not hasattr(GatewayClient, "_set_preview_pin")
+    assert not hasattr(GatewayClient, "_reset_preview_pin")
 
 
 @pytest.mark.asyncio
 async def test_validate_action_returns_require_approval_with_deferred_id() -> None:
+    from cage_client import GovernanceDecision as SdkDecision
+
     seen = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -242,25 +248,27 @@ async def test_validate_action_returns_require_approval_with_deferred_id() -> No
             },
         )
 
-    result = await _client_with(handler).validate_action(
-        "execute_trade", {"amount": 1.0}
+    sdk = await _client_with(handler).sdk_client()
+    result = await sdk.preview(
+        "execute_trade", {"amount": 1.0}, "governed-financial-advisor"
     )
 
-    assert result["verdict"] == "REQUIRE_APPROVAL"
-    assert result["deferred_id"] == "d-1"
-    assert "seal" not in result
+    assert result.decision is SdkDecision.DEFERRED
+    assert result.gateway_verdict == "REQUIRE_APPROVAL"
+    assert result.requires_approval is True
+    assert result.deferred_id == "d-1"
     assert seen["path"] == "/governance/validate-action"
     assert seen["body"]["params"] == {"amount": 1.0}
 
 
 @pytest.mark.asyncio
 async def test_validate_action_unwraps_allow_envelope() -> None:
-    client = _client_with(
+    sdk = await _client_with(
         lambda request: httpx.Response(200, json={"verdict": "ALLOW", "violations": []})
-    )
-    result = await client.validate_action("execute_trade", {})
-    assert result["verdict"] == "ALLOW"
-    assert result["signature"]["algorithm"] == "EdDSA"
+    ).sdk_client()
+    env = await sdk.validate_action("execute_trade", {}, "governed-financial-advisor")
+    assert env.payload["verdict"] == "ALLOW"
+    assert env.signature["algorithm"] == "EdDSA"
 
 
 @pytest.mark.asyncio
@@ -279,8 +287,11 @@ async def test_validate_action_refuses_an_envelope_signed_by_an_unknown_key() ->
             ),
         )
 
+    sdk = await _client_with(handler).sdk_client()
     with pytest.raises(RoutingSealVerificationError):
-        await _client_with(handler).validate_action("execute_trade", {"amount": 1.0})
+        await sdk.validate_action(
+            "execute_trade", {"amount": 1.0}, "governed-financial-advisor"
+        )
 
 
 @pytest.mark.asyncio
@@ -297,13 +308,28 @@ async def test_validate_action_refuses_an_envelope_signed_by_an_unknown_key() ->
             },
         ),
         httpx.Response(200, json={"verdict": "DENIED"}),
+    ],
+    ids=["denied_403", "denied_200"],
+)
+async def test_validate_action_denied_raises_policy_violation(
+    response: httpx.Response,
+) -> None:
+    from cage_client import PolicyViolationException
+
+    sdk = await _client_with(lambda request: response).sdk_client()
+    with pytest.raises(PolicyViolationException):
+        await sdk.validate_action("execute_trade", {}, "governed-financial-advisor")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "response",
+    [
         httpx.Response(200, json={"verdict": "APPROVED"}),
         httpx.Response(200, json={"verdict": "REQUIRE_APPROVAL"}),
         httpx.Response(200, json={}),
     ],
     ids=[
-        "denied_403",
-        "denied_200",
         "legacy_approved",
         "approval_without_token",
         "no_verdict",
@@ -312,16 +338,23 @@ async def test_validate_action_refuses_an_envelope_signed_by_an_unknown_key() ->
 async def test_validate_action_without_routable_verdict_raises(
     response: httpx.Response,
 ) -> None:
-    client = _client_with(lambda request: response)
-    with pytest.raises(PermissionError):
-        await client.validate_action("execute_trade", {})
+    from cage_client import CageGatewayError
+
+    sdk = await _client_with(lambda request: response).sdk_client()
+    with pytest.raises(CageGatewayError):
+        await sdk.validate_action("execute_trade", {}, "governed-financial-advisor")
 
 
 @pytest.mark.asyncio
 async def test_validate_action_server_error_raises() -> None:
-    client = _client_with(lambda request: httpx.Response(500))
-    with pytest.raises(httpx.HTTPStatusError):
-        await client.validate_action("execute_trade", {})
+    from cage_client import CageGatewayError
+    from cage_client import GovernanceDecision as SdkDecision
+
+    sdk = await _client_with(lambda request: httpx.Response(500)).sdk_client()
+    preview = await sdk.preview("execute_trade", {}, "governed-financial-advisor")
+    assert preview.decision is SdkDecision.UNAVAILABLE
+    with pytest.raises(CageGatewayError):
+        await sdk.validate_action("execute_trade", {}, "governed-financial-advisor")
 
 
 # ---------------------------------------------------------------------------

@@ -621,9 +621,10 @@ async def test_hard_plus_opa_unavailable_signs_v5_receipt_with_skipped_opa_stage
 
 @pytest.mark.asyncio
 async def test_advisor_gateway_client_does_not_retry_503_validate_action() -> None:
-    """GatewayClient.validate_action must not retry HTTP 503 policy_engine_unavailable."""
+    """GatewayClient().sdk_client().preview() must not retry HTTP 503 policy_engine_unavailable."""
+    from cage_client import GovernanceDecision
+
     from src.governed_financial_advisor.infrastructure.gateway_client import (
-        CageGatewayError,
         GatewayClient,
     )
 
@@ -645,14 +646,16 @@ async def test_advisor_gateway_client_does_not_retry_503_validate_action() -> No
 
         with patch("httpx.AsyncClient", return_value=mock_http):
             client = GatewayClient()
-            with pytest.raises((httpx.HTTPStatusError, CageGatewayError)) as exc_info:
-                await client.validate_action(
-                    "execute_trade",
-                    {"symbol": "AAPL", "quantity": 10},
-                    policy_version_id="sha256:pinned",
-                )
+            sdk = await client.sdk_client()
+            res = await sdk.preview(
+                "execute_trade",
+                {"symbol": "AAPL", "quantity": 10},
+                "governed-financial-advisor",
+                policy_version_id="sha256:pinned",
+            )
 
-        assert "503" in str(exc_info.value)
+        assert res.decision is GovernanceDecision.UNAVAILABLE
+        assert "503" in str(res.error)
         assert mock_http.post.call_count == 1
     finally:
         GatewayClient._instance = None

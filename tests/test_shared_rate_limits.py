@@ -317,20 +317,18 @@ class TestSharedGCRADualBucket:
 
 
 class TestGatewayClientPrincipalAndRetries:
-    """Verify GatewayClient sends x-cage-principal and retries on 429/503."""
+    """Verify GatewayClient injects x-cage-principal and surfaces 429/503 as UNAVAILABLE without retrying."""
 
     @pytest.mark.asyncio
     @pytest.mark.covers(
-        "src.governed_financial_advisor.infrastructure.gateway_client:_AdvisorTransport.handle_async_request#retry_statuses=frozenset({429})",
         "src.governed_financial_advisor.infrastructure.gateway_client:_post_with_retries#response.status_code not in retry_statuses",
-        "src.governed_financial_advisor.infrastructure.gateway_client:_raise_unrouted#response.raise_for_status()",
-        "src.governed_financial_advisor.infrastructure.gateway_client:GatewayClient.validate_action#_raise_unrouted",
     )
-    async def test_validate_action_sends_principal_retries_429_and_never_retries_503(
+    async def test_preview_sends_principal_and_never_retries_429_or_503(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        from cage_client import GovernanceDecision as SdkDecision
+
         from src.governed_financial_advisor.infrastructure.gateway_client import (
-            CageGatewayError,
             GatewayClient,
         )
         from src.governed_financial_advisor.utils.context import user_context
@@ -340,61 +338,95 @@ class TestGatewayClientPrincipalAndRetries:
 
         token = user_context.set("advisor-session-77")
         seen_headers: list[dict[str, str]] = []
-        attempts = 0
+        attempts_429 = 0
         attempts_503 = 0
 
-        envelope = {
-            "verdict": GovernanceDecision.ALLOW.value,
-            "latency_ms": 1.2,
-        }
+        def _precheck_handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "schema_version": "1.0.0",
+                    "action": "execute_trade",
+                    "decision": "ALLOW",
+                    "dry_run": True,
+                    "advisory": True,
+                },
+            )
 
         def _handler(request: httpx.Request) -> httpx.Response:
-            nonlocal attempts, attempts_503
+            nonlocal attempts_429, attempts_503
             body = json.loads(request.content.decode("utf-8"))
             if body.get("params", {}).get("trigger_503"):
                 attempts_503 += 1
                 return httpx.Response(503, json={"error": "policy_engine_unavailable"})
-            attempts += 1
-            seen_headers.append(dict(request.headers))
-            if attempts == 1:
+            if body.get("params", {}).get("trigger_429"):
+                attempts_429 += 1
                 return httpx.Response(
                     429,
                     headers={"Retry-After": "0.001"},
                     json={"error": "rate_limit_exceeded"},
                 )
-            return httpx.Response(200, json=envelope)
+            seen_headers.append(dict(request.headers))
+            return httpx.Response(
+                200,
+                json={"verdict": GovernanceDecision.ALLOW.value, "latency_ms": 1.2},
+            )
 
         from tests.fixtures.signed_gateway import SignedGatewayStub
 
+        GatewayClient._instance = None
         client = GatewayClient()
         old_http = client._http
-        client._http = httpx.AsyncClient(
-            transport=httpx.MockTransport(
-                SignedGatewayStub().transport_handler(_handler)
-            ),
+        precheck_client = httpx.AsyncClient(
+            transport=httpx.MockTransport(_precheck_handler),
             base_url="http://gateway.test",
         )
+        client._http = precheck_client
         try:
-            res = await client.validate_action("execute_trade", {"amount": 100.0})
-            assert res["verdict"] == GovernanceDecision.ALLOW.value
-            assert attempts == 2
+            assert await client.evaluate_policy_dry_run("execute_trade", {}) == "ALLOW"
+            await precheck_client.aclose()
+
+            client._http = httpx.AsyncClient(
+                transport=httpx.MockTransport(
+                    SignedGatewayStub().transport_handler(_handler)
+                ),
+                base_url="http://gateway.test",
+            )
+            sdk = await client.sdk_client()
+            res = await sdk.preview(
+                "execute_trade", {"amount": 100.0}, "governed-financial-advisor"
+            )
+            assert res.decision is SdkDecision.ALLOWED
             assert seen_headers[0].get("x-cage-principal") == "advisor-session-77"
 
-            with pytest.raises(httpx.HTTPStatusError) as exc_503:
-                await client.validate_action(
-                    "execute_trade", {"amount": 100.0, "trigger_503": True}
-                )
-            assert exc_503.value.response.status_code == 503
+            res_429 = await sdk.preview(
+                "execute_trade",
+                {"amount": 100.0, "trigger_429": True},
+                "governed-financial-advisor",
+            )
+            assert res_429.decision is SdkDecision.UNAVAILABLE
+            assert res_429.reason_code == "GATEWAY_UNAVAILABLE"
+            assert attempts_429 == 1
+
+            res_503 = await sdk.preview(
+                "execute_trade",
+                {"amount": 100.0, "trigger_503": True},
+                "governed-financial-advisor",
+            )
+            assert res_503.decision is SdkDecision.UNAVAILABLE
             assert attempts_503 == 1
         finally:
-            await client._http.aclose()
+            await client.close()
             client._http = old_http
+            GatewayClient._instance = None
             user_context.reset(token)
 
     @pytest.mark.asyncio
-    async def test_execute_tool_retries_on_429_and_raises_when_exhausted(
+    async def test_sdk_execute_tool_does_not_retry_429_and_raises_unavailable(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        from cage_client import GatewayUnavailableError
+
         from src.governed_financial_advisor.infrastructure.gateway_client import (
             GatewayClient,
         )
@@ -413,6 +445,7 @@ class TestGatewayClientPrincipalAndRetries:
                 content=json.dumps({"error": "rate_limit_exceeded"}).encode(),
             )
 
+        GatewayClient._instance = None
         client = GatewayClient()
         old_http = client._http
         client._http = httpx.AsyncClient(
@@ -420,10 +453,12 @@ class TestGatewayClientPrincipalAndRetries:
             base_url="http://gateway.test",
         )
         try:
-            with pytest.raises(httpx.HTTPStatusError) as exc_info:
-                await client.execute_tool("execute_trade_action", {"symbol": "AAPL"})
-            assert exc_info.value.response.status_code == 429
-            assert call_count == 3
+            sdk = await client.sdk_client()
+            with pytest.raises(GatewayUnavailableError) as exc_info:
+                await sdk.execute_tool("execute_trade_action", {"symbol": "AAPL"})
+            assert exc_info.value.status_code == 429
+            assert call_count == 1
         finally:
-            await client._http.aclose()
+            await client.close()
             client._http = old_http
+            GatewayClient._instance = None

@@ -18,8 +18,8 @@ OPA Guardrail Refactor Integrity Tests (P2).
 Dead-man's switch tests that permanently enforce the architectural invariant:
 
   OPA invocation in the mandatory safety_check LangGraph node MUST go to the
-  gateway's governor PDP (via ``GatewayClient().validate_action()``) and MUST NOT go
-  through any MCP client.
+  gateway's governor PDP (via ``GatewayClient().sdk_client()`` and
+  ``CageClient.preview()``) and MUST NOT go through any MCP client.
 
 If any of these tests fail, it means the MCP bypass has been reintroduced and
 the security-critical guardrail is agent-bypassable.  CI must block the merge.
@@ -78,7 +78,8 @@ class TestOPAGuardrailIntegrity:
 
         Any call to `call_tool` in the safety node would be an agent-visible
         MCP dispatch — a bypassable OPA path.  The only permitted OPA invocation
-        pattern is ``GatewayClient().validate_action()`` against the gateway PDP.
+        pattern is ``GatewayClient().sdk_client()`` -> ``CageClient.preview()``
+        against the gateway PDP.
         """
         safety_node_candidates = list(pathlib.Path("src").rglob("*safety*node*"))
         assert safety_node_candidates, "Could not find safety node file under src/"
@@ -97,8 +98,9 @@ class TestOPAGuardrailIntegrity:
 
     def test_safety_node_routes_through_gateway_governor(self):
         """
-        The safety node MUST call ``validate_action()`` on the advisor's
-        standard ``GatewayClient`` (``POST /governance/validate-action``).
+        The safety node MUST obtain the SDK via ``GatewayClient().sdk_client()``
+        and invoke ``CageClient.preview()`` (via
+        ``preview_trade_with_drift_revalidation``).
 
         This ensures it is wired to the gateway's governor PDP (checked at AST
         level, so a comment or string mentioning the governor does not count).
@@ -109,7 +111,8 @@ class TestOPAGuardrailIntegrity:
         assert safety_node_candidates, "Could not find safety node file under src/"
 
         found_client_import = False
-        found_validate_call = False
+        found_sdk_client_call = False
+        found_preview_helper_call = False
         for candidate in safety_node_candidates:
             tree = ast.parse(candidate.read_text())
             for node in ast.walk(tree):
@@ -120,13 +123,40 @@ class TestOPAGuardrailIntegrity:
                 if (
                     isinstance(node, ast.Call)
                     and isinstance(node.func, ast.Attribute)
-                    and node.func.attr == "validate_action"
+                    and node.func.attr == "sdk_client"
                 ):
-                    found_validate_call = True
+                    found_sdk_client_call = True
+                if isinstance(node, ast.Call) and (
+                    (
+                        isinstance(node.func, ast.Name)
+                        and node.func.id == "preview_trade_with_drift_revalidation"
+                    )
+                    or (
+                        isinstance(node.func, ast.Attribute)
+                        and node.func.attr == "preview"
+                    )
+                ):
+                    found_preview_helper_call = True
 
-        assert found_client_import and found_validate_call, (
-            "safety_check_node does not call GatewayClient().validate_action() — "
-            "the mandatory OPA guardrail path may be missing"
+        tool_guard_path = pathlib.Path(
+            "src/governed_financial_advisor/graph/governance/tool_guard.py"
+        )
+        tool_guard_tree = ast.parse(tool_guard_path.read_text())
+        found_sdk_preview_in_guard = any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "preview"
+            for node in ast.walk(tool_guard_tree)
+        )
+
+        assert (
+            found_client_import
+            and found_sdk_client_call
+            and found_preview_helper_call
+            and found_sdk_preview_in_guard
+        ), (
+            "safety_check_node does not route through GatewayClient().sdk_client() and "
+            "CageClient.preview() — the mandatory OPA guardrail path may be missing"
         )
 
     def test_evaluate_policy_not_exposed_as_mcp_tool(self):

@@ -482,7 +482,7 @@ async def _exercise_advisor_sdk_in_mesh(gateway_url: str) -> dict[str, Any]:
     GatewayClient._instance = None
     gw_client = GatewayClient()
     try:
-        # 1. ALLOW via safety_check_node -> GatewayClient -> CageClient (Cloud KMS ES256 JWKS) -> execute_tool
+        # 1. ALLOW via safety_check_node -> GatewayClient().sdk_client() -> execute_tool
         s_allow = await safety_check_node(
             {
                 "consecutive_denials": 0,
@@ -493,19 +493,22 @@ async def _exercise_advisor_sdk_in_mesh(gateway_url: str) -> dict[str, Any]:
         assert s_allow.get("governance_signature"), s_allow
         assert s_allow.get("routing_verdict_cache") is not None, s_allow
 
-        exec_res = await gw_client.execute_tool(
+        sdk = await gw_client.sdk_client()
+        exec_outcome = await sdk.execute_tool(
             "execute_trade_action",
-            {"idempotency_key": str(uuid.uuid4()), **_trade(500.0)},
+            _trade(500.0),
+            idempotency_key=str(uuid.uuid4()),
         )
-        assert exec_res.get("status") == "SUCCESS" and str(
-            exec_res.get("output", "")
-        ).startswith("EXECUTED"), exec_res
+        assert exec_outcome.status.value == "EXECUTED" and str(
+            exec_outcome.message
+        ).startswith("EXECUTED"), exec_outcome
 
-        # 2. REQUIRE_APPROVAL via CageClient DeferralPending (#673) -> GatewayClient (#732) -> safety_check_node (#672)
-        req_res = await gw_client.validate_action("execute_trade", _trade(7_500.0))
-        assert req_res["verdict"] == "REQUIRE_APPROVAL", req_res
-        assert req_res["signature"]["algorithm"] == "ES256", req_res["signature"]
-        sdk_deferred_id = str(req_res["deferred_id"])
+        # 2. REQUIRE_APPROVAL via CageClient.preview() -> safety_check_node
+        req_res = await sdk.preview(
+            "execute_trade", _trade(7_500.0), "governed-financial-advisor"
+        )
+        assert req_res.gateway_verdict == "REQUIRE_APPROVAL", req_res
+        sdk_deferred_id = str(req_res.deferred_id or "")
         assert sdk_deferred_id
 
         s_req = await safety_check_node(

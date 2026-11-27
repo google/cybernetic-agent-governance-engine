@@ -13,14 +13,11 @@
 # limitations under the License.
 
 """
-GovernanceEnvelope v3.0 handling in the advisor's ``GatewayClient``.
+GovernanceEnvelope v3.0 handling in the advisor's ``GatewayClient().sdk_client()``.
 
-``GatewayClient.validate_action()`` delegates the exchange to the installed
-``cage-client`` wheel, which verifies the envelope's out-of-band ``kid``
-signature, ``expires_at`` freshness and ``subject.action_hash`` binding. These
-tests drive the real client over an ``httpx.MockTransport`` and check that a
-verified envelope is unwrapped into the advisor's routing dictionary, and that
-an unsigned or tampered answer is never routed.
+``GatewayClient().sdk_client()`` returns the installed ``cage-client`` ``CageClient``
+bound to the advisor transport, which verifies the envelope's out-of-band ``kid``
+signature, ``expires_at`` freshness, and ``subject.action_hash`` binding.
 """
 
 from __future__ import annotations
@@ -30,8 +27,16 @@ from collections.abc import Callable
 
 import httpx
 import pytest
-from cage_client import CageGatewayError, RoutingSealVerificationError
+from cage_client import (
+    CageGatewayError,
+    GovernanceDecision,
+    PolicyViolationException,
+    RoutingSealVerificationError,
+)
 
+from src.governed_financial_advisor.graph.governance.tool_guard import (
+    preview_trade_with_drift_revalidation,
+)
 from src.governed_financial_advisor.infrastructure.gateway_client import GatewayClient
 from tests.fixtures.signed_gateway import SignedGatewayStub
 
@@ -61,7 +66,7 @@ def _reset_singleton():
 
 @pytest.mark.asyncio
 async def test_gfa_unwraps_v3_envelope_correctly() -> None:
-    """A verified ALLOW envelope is unwrapped: payload fields plus provenance."""
+    """A verified ALLOW envelope carries verified payload fields plus provenance."""
     client = _client(
         lambda request: httpx.Response(
             200,
@@ -72,24 +77,26 @@ async def test_gfa_unwraps_v3_envelope_correctly() -> None:
         )
     )
 
-    result = await client.validate_action(
-        "execute_trade", {"symbol": "AAPL", "amount": 1000}
+    sdk = await client.sdk_client()
+    env = await sdk.validate_action(
+        "execute_trade",
+        {"symbol": "AAPL", "amount": 1000},
+        "governed-financial-advisor",
     )
 
-    assert result["verdict"] == "ALLOW"
-    assert "seal" not in result
-    assert result["violations"] == []
-    assert result["latency_ms"] == 42.5
-    assert result["envelope_id"] == "env-test-12345"
-    assert result["envelope_version"] == "3.0"
-    assert result["issuer"]["service"] == "cage-gateway"
-    assert result["subject"]["action"] == "execute_trade"
-    assert result["governance_context"]["tiers_passed"] == ["stpa"]
+    assert env.payload["verdict"] == "ALLOW"
+    assert env.payload["violations"] == []
+    assert env.payload["latency_ms"] == 42.5
+    assert env.envelope_id == "env-test-12345"
+    assert env.envelope_version == "3.0"
+    assert env.issuer["service"] == "cage-gateway"
+    assert env.subject["action"] == "execute_trade"
+    assert env.governance_context["tiers_passed"] == ["stpa"]
 
 
 @pytest.mark.asyncio
-async def test_gfa_raises_permission_error_on_denied_verdict() -> None:
-    """A verified DENIED envelope raises PermissionError naming the violation."""
+async def test_gfa_raises_policy_violation_on_denied_verdict() -> None:
+    """A verified DENIED envelope raises PolicyViolationException naming the violation."""
     client = _client(
         lambda request: httpx.Response(
             200,
@@ -101,26 +108,32 @@ async def test_gfa_raises_permission_error_on_denied_verdict() -> None:
         )
     )
 
-    with pytest.raises(PermissionError) as exc_info:
-        await client.validate_action(
-            "execute_trade", {"symbol": "AAPL", "amount": 999999}
+    sdk = await client.sdk_client()
+    with pytest.raises(PolicyViolationException) as exc_info:
+        await sdk.validate_action(
+            "execute_trade",
+            {"symbol": "AAPL", "amount": 999999},
+            "governed-financial-advisor",
         )
 
-    assert "execute_trade" in str(exc_info.value)
-    assert "trade_amount exceeds limit" in str(exc_info.value)
+    assert "trade_amount exceeds limit" in str(exc_info.value.violation_details)
 
 
 @pytest.mark.asyncio
 async def test_gfa_preserves_envelope_metadata() -> None:
-    """Envelope metadata sits alongside the payload fields in the result."""
+    """Envelope metadata is preserved on the returned GovernanceEnvelope."""
     client = _client(
         lambda request: httpx.Response(
             200, json={"verdict": "ALLOW", "violations": [], "latency_ms": 12.0}
         )
     )
 
-    result = await client.validate_action("execute_trade", {"symbol": "AAPL"})
+    sdk = await client.sdk_client()
+    env = await sdk.validate_action(
+        "execute_trade", {"symbol": "AAPL"}, "governed-financial-advisor"
+    )
 
+    dumped = env.model_dump()
     for field in (
         "envelope_id",
         "envelope_version",
@@ -129,13 +142,10 @@ async def test_gfa_preserves_envelope_metadata() -> None:
         "signature",
         "governance_context",
         "external_attestations",
-        "verdict",
-        "violations",
-        "latency_ms",
+        "payload",
     ):
-        assert field in result
-    assert "seal" not in result
-    assert set(result["signature"]) == {"algorithm", "kid", "value"}
+        assert field in dumped
+    assert set(env.signature) == {"algorithm", "kid", "value"}
 
 
 @pytest.mark.asyncio
@@ -148,8 +158,11 @@ async def test_gfa_refuses_an_unsigned_legacy_flat_dict() -> None:
         sign=False,
     )
 
+    sdk = await client.sdk_client()
     with pytest.raises(CageGatewayError, match="missing required 'envelope' field"):
-        await client.validate_action("execute_trade", {"symbol": "AAPL"})
+        await sdk.validate_action(
+            "execute_trade", {"symbol": "AAPL"}, "governed-financial-advisor"
+        )
 
 
 @pytest.mark.asyncio
@@ -172,8 +185,11 @@ async def test_gfa_refuses_a_tampered_envelope() -> None:
         base_url="http://gateway.test",
     )
 
+    sdk = await client.sdk_client()
     with pytest.raises(RoutingSealVerificationError):
-        await client.validate_action("execute_trade", {"symbol": "AAPL"})
+        await sdk.validate_action(
+            "execute_trade", {"symbol": "AAPL"}, "governed-financial-advisor"
+        )
 
 
 @pytest.mark.asyncio
@@ -197,9 +213,12 @@ async def test_gfa_refuses_an_envelope_bound_to_other_params() -> None:
         base_url="http://gateway.test",
     )
 
+    sdk = await client.sdk_client()
     with pytest.raises(RoutingSealVerificationError):
-        await client.validate_action(
-            "execute_trade", {"symbol": "AAPL", "amount": 9000}
+        await sdk.validate_action(
+            "execute_trade",
+            {"symbol": "AAPL", "amount": 9000},
+            "governed-financial-advisor",
         )
 
 
@@ -233,11 +252,17 @@ async def test_gfa_unwraps_v3_envelope_on_retry_path() -> None:
         )
 
     client = _client(handler)
-    result = await client.validate_action(
-        "execute_trade", {"symbol": "AAPL"}, policy_version_id="sha256:policy-v1"
+    sdk = await client.sdk_client()
+    result = await preview_trade_with_drift_revalidation(
+        sdk,
+        "execute_trade",
+        {"symbol": "AAPL"},
+        "governed-financial-advisor",
+        {"policy_version_id": "sha256:policy-v1"},
     )
 
     assert pins == ["sha256:policy-v1", "sha256:policy-v2"]
-    assert result["verdict"] == "ALLOW"
-    assert result["envelope_id"] == "env-test-12345"
-    assert result["envelope_version"] == "3.0"
+    assert result.decision is GovernanceDecision.ALLOWED
+    assert result.envelope is not None
+    assert result.envelope.envelope_id == "env-test-12345"
+    assert result.envelope.envelope_version == "3.0"
