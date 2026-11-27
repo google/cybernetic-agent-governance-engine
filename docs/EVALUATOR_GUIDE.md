@@ -17,18 +17,18 @@ Path A verifies exported governance traces (`GOVERNANCE_TRACE`), tamper-evident 
 
 #### Installation (Published Release Wheel or Source Checkout)
 
-The standalone verifier [`packages/cage-conformance/`](../packages/cage-conformance/) (`v0.4.1`, published under standalone `conformance-v*` release tags) declares zero third-party runtime dependencies (`dependencies = []` in [`packages/cage-conformance/pyproject.toml`](../packages/cage-conformance/pyproject.toml)) so an auditor can verify traces, hash chains, and conformance reports using only the Python `>=3.10` standard library. Its formal transition model and invariant engine (`model.py`, `trace_conformance.py`, `stream_invariants.py`) are byte-identical copies of [`proof/model.py`](../proof/model.py), [`proof/trace_conformance.py`](../proof/trace_conformance.py), and [`proof/stream_invariants.py`](../proof/stream_invariants.py), enforced in CI by [`scripts/check_conformance_sync.py`](../scripts/check_conformance_sync.py).
+The standalone verifier [`packages/cage-conformance/`](../packages/cage-conformance/) (`v0.4.2`, published under standalone `conformance-v*` release tags) declares zero third-party runtime dependencies (`dependencies = []` in [`packages/cage-conformance/pyproject.toml`](../packages/cage-conformance/pyproject.toml)) so an auditor can verify traces, hash chains, and conformance reports using only the Python `>=3.10` standard library. Its formal transition model and invariant engine (`model.py`, `trace_conformance.py`, `stream_invariants.py`) are byte-identical copies of [`proof/model.py`](../proof/model.py), [`proof/trace_conformance.py`](../proof/trace_conformance.py), and [`proof/stream_invariants.py`](../proof/stream_invariants.py), enforced in CI by [`scripts/check_conformance_sync.py`](../scripts/check_conformance_sync.py).
 
 ```bash
-# Option 1: Install the standalone wheel from the conformance-v0.4.1 GitHub Release (no repo clone needed;
+# Option 1: Install the standalone wheel from the conformance-v0.4.2 GitHub Release (no repo clone needed;
 # standalone `conformance-v*` tags publish `cage-conformance`, separate from `client-v*` tags for `cage-client`)
-pip install "https://github.com/google/cybernetic-agent-governance-engine/releases/download/conformance-v0.4.1/cage_conformance-0.4.1-py3-none-any.whl"
+pip install "https://github.com/google/cybernetic-agent-governance-engine/releases/download/conformance-v0.4.2/cage_conformance-0.4.2-py3-none-any.whl"
 
 # Optional: install `cryptography` only if verifying RS256 OIDC-attested reports (`attest` / `verify-report`)
 pip install "cryptography>=42"
 
-# Optional: install `cage-client` (v0.3.0) to test out-of-band `kid` GovernanceEnvelope verification
-pip install "https://github.com/google/cybernetic-agent-governance-engine/releases/download/client-v0.3.0/cage_client-0.3.0-py3-none-any.whl"
+# Optional: install `cage-client` (v0.6.0) to test out-of-band `kid` GovernanceEnvelope verification
+pip install "https://github.com/google/cybernetic-agent-governance-engine/releases/download/client-v0.6.0/cage_client-0.6.0-py3-none-any.whl"
 ```
 
 From a local CAGE repository checkout:
