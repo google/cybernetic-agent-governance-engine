@@ -374,3 +374,10 @@ def test_runs_under_python_isolated_stdlib_only(tmp_path: Path) -> None:
     assert "actuator_01 receipt diagnostic: AGREEMENT" in proc.stdout
     assert "RECEIPT_DOMAIN_TAG" not in proc.stderr
     assert RECEIPT_DOMAIN_TAG.decode("ascii") in proc.stdout
+
+
+def test_receipt_domain_tag_matches_actuator_01_constants() -> None:
+    """Offline diagnostic domain tag must match actuator_01 runtime verifier constant."""
+    from src.integrations.actuator_01.constants import RECEIPT_SIGNATURE_DOMAIN_TAG
+
+    assert RECEIPT_DOMAIN_TAG == RECEIPT_SIGNATURE_DOMAIN_TAG

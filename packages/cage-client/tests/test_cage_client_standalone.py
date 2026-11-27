@@ -336,7 +336,7 @@ def _standalone_test_posture(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_standalone_exports() -> None:
     """Verify all top-level symbols export correctly and retired @cage_guard is absent."""
-    assert cage_client.__version__ == "0.5.0"
+    assert cage_client.__version__ == "0.6.0"
     assert cage_client.CageClient is CageClient
     assert cage_client.GovernanceEnvelope is GovernanceEnvelope
     assert cage_client.JwksKeyResolver is JwksKeyResolver
@@ -373,7 +373,7 @@ def test_standalone_base_import_does_not_pull_optional_extras() -> None:
 
     probe = (
         "import sys, cage_client\n"
-        "assert cage_client.__version__ == '0.5.0', cage_client.__version__\n"
+        "assert cage_client.__version__ == '0.6.0', cage_client.__version__\n"
         "for mod in ('langgraph', 'langchain_core', 'cage_client.langgraph'):\n"
         "    assert mod not in sys.modules, f'import cage_client loaded {mod}'\n"
     )
@@ -424,7 +424,7 @@ def test_pyproject_declares_cryptography_and_docs_describe_envelope_verification
     pyproject_data = tomllib.loads(
         (subpackage_root / "pyproject.toml").read_text(encoding="utf-8")
     )
-    assert pyproject_data["project"]["version"] == "0.5.0"
+    assert pyproject_data["project"]["version"] == "0.6.0"
     runtime_deps = pyproject_data["project"]["dependencies"]
     assert any(dep.startswith("cryptography>=41.0.0") for dep in runtime_deps), (
         f"cryptography>=41.0.0 must be declared in pyproject.toml: {runtime_deps}"
@@ -1458,3 +1458,76 @@ def test_standalone_jwks_outage_concurrent_callers_bounded_by_cooldown() -> None
                 await client.aclose()
 
         asyncio.run(_run_burst())
+
+
+def test_validate_action_policy_version_id_headers_and_fail_closed_validation() -> None:
+    """validate_action() emits stripped policy_version_id and custom headers when supplied and rejects invalid inputs fail-closed."""
+    priv, _, jwk = _make_ec_keypair(kid="kid-pvid-01")
+    seen_requests: list[tuple[dict[str, Any], dict[str, str]]] = []
+    params = {"symbol": "AAPL", "amount": 50}
+    unsigned_ok = _build_unsigned_envelope(
+        action="query_resource",
+        parameters=params,
+    )
+
+    def _handler(req: httpx.Request) -> httpx.Response:
+        import json as _json
+
+        if req.url.path == "/governance/.well-known/jwks.json":
+            return httpx.Response(200, json={"keys": [jwk]})
+        seen_requests.append((_json.loads(req.content), dict(req.headers)))
+        return httpx.Response(
+            200,
+            json=_sign_for_request(
+                req,
+                unsigned_ok,
+                priv_key=priv,
+                kid="kid-pvid-01",
+                algorithm="ES256",
+            ),
+        )
+
+    async def _run() -> None:
+        async with CageClient(
+            gateway_url="https://cage-standalone.example.test",
+            http_transport=httpx.MockTransport(_handler),
+        ) as client:
+            await client.validate_action(
+                "query_resource",
+                params,
+                "agent-01",
+                policy_version_id="  sha256:pin-v1  ",
+                headers={"x-cage-principal": "trader-9"},
+                timeout_s=2.5,
+            )
+            assert len(seen_requests) == 1
+            body_pinned, hdrs_pinned = seen_requests[0]
+            assert body_pinned["policy_version_id"] == "sha256:pin-v1"
+            assert hdrs_pinned.get("x-cage-principal") == "trader-9"
+            assert hdrs_pinned.get("user-agent") == "CageClient/0.6.0"
+
+            await client.validate_action("query_resource", params, "agent-01")
+            body_unpinned, _ = seen_requests[1]
+            assert "policy_version_id" not in body_unpinned
+
+            for bad_pin in ("", "   ", 123):
+                with pytest.raises(ValueError, match="policy_version_id"):
+                    await client.validate_action(
+                        "query_resource",
+                        params,
+                        "agent-01",
+                        policy_version_id=bad_pin,  # type: ignore[arg-type]
+                    )
+
+            for bad_timeout in (0.0, -1.0, float("nan")):
+                with pytest.raises(ValueError, match="timeout_s"):
+                    await client.validate_action(
+                        "query_resource",
+                        params,
+                        "agent-01",
+                        timeout_s=bad_timeout,
+                    )
+
+            assert len(seen_requests) == 2
+
+    asyncio.run(_run())

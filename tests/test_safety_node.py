@@ -241,7 +241,7 @@ class TestSafetyNodeVerdicts:
 
         assert result["safety_status"] == "DEFERRED"
         assert result["deferral_ticket_id"] == "tok-default-reason"
-        assert result["deferral_reason"] == "CONFIDENCE_BELOW_THRESHOLD"
+        assert result["deferral_reason"] == "Human approval required"
 
 
 class TestSafetyNodeFailClosed:
@@ -290,6 +290,26 @@ class TestSafetyNodeFailClosed:
         assert result["safety_status"] == "GATEWAY_ERROR"
         assert result["consecutive_denials"] == 1
         assert result["last_violation"]["policy_rule"] == "GATEWAY_ERROR"
+        assert result["last_violation"]["recoverable"] is False
+
+    @pytest.mark.asyncio
+    async def test_gateway_429_returns_gateway_error_without_retrying(
+        self, gateway
+    ) -> None:
+        seen = gateway(
+            lambda r: httpx.Response(
+                429,
+                headers={"Retry-After": "0.001"},
+                json={"error": "rate_limit_exceeded"},
+            )
+        )
+
+        result = await safety_check_node(_trade_state(consecutive_denials=1))
+
+        assert len(seen) == 1
+        assert result["safety_status"] == "GATEWAY_ERROR"
+        assert result["consecutive_denials"] == 1
+        assert result["last_violation"]["reason_code"] == "GATEWAY_ERROR"
         assert result["last_violation"]["recoverable"] is False
 
     @pytest.mark.asyncio
@@ -342,7 +362,7 @@ class TestSafetyNodeFailClosed:
         assert result["safety_status"] == "GATEWAY_ERROR"
         assert result["consecutive_denials"] == 1
         assert result["last_violation"]["policy_rule"] == "GATEWAY_ERROR"
-        assert "ReadTimeout" in result["last_violation"]["evidence"]
+        assert "gateway too slow" in result["last_violation"]["evidence"]
 
     @pytest.mark.asyncio
     async def test_gateway_unreachable_blocks(self, gateway) -> None:
@@ -355,35 +375,7 @@ class TestSafetyNodeFailClosed:
 
         assert result["safety_status"] == "GATEWAY_ERROR"
         assert result["consecutive_denials"] == 1
-        assert "ConnectError" in result["last_violation"]["evidence"]
-
-    @pytest.mark.parametrize(
-        "body",
-        [
-            {"verdict": "DEFER", "defer_id": "legacy-only"},
-            {
-                "envelope_version": "3.0",
-                "envelope_id": "env-legacy",
-                "payload": {"verdict": "DEFER", "defer_id": "legacy-only"},
-            },
-        ],
-        ids=[
-            "legacy-defer-id-flat",
-            "legacy-defer-id-envelope",
-        ],
-    )
-    @pytest.mark.asyncio
-    async def test_defer_without_valid_defer_token_fails_closed(
-        self, gateway, body: dict[str, Any]
-    ) -> None:
-        gateway(lambda r: httpx.Response(200, json=body))
-
-        result = await safety_check_node(_trade_state(consecutive_denials=0))
-
-        assert result["safety_status"] == "BLOCKED"
-        assert result["consecutive_denials"] == 1
-        assert result["last_violation"]["reason_code"] == "NOT_APPROVED"
-        assert result["last_violation"]["recoverable"] is False
+        assert "connection refused" in result["last_violation"]["evidence"]
 
     @pytest.mark.parametrize(
         "defer_token",
@@ -396,6 +388,10 @@ class TestSafetyNodeFailClosed:
         ],
     )
     @pytest.mark.asyncio
+    @pytest.mark.covers(
+        "src.governed_financial_advisor.graph.nodes.safety_node:_route_trade#return gateway_error(reason)",
+        "cage_client.core:CageClient.preview#Preview gateway call unavailable fail-closed",
+    )
     async def test_defer_without_any_ticket_fails_closed(
         self, gateway, defer_token: Any
     ) -> None:
@@ -404,10 +400,10 @@ class TestSafetyNodeFailClosed:
 
         result = await safety_check_node(_trade_state(consecutive_denials=0))
 
-        assert result["safety_status"] == "BLOCKED"
-        assert result["consecutive_denials"] == 1
-        assert result["last_violation"]["reason_code"] == "GOVERNANCE_DENIED"
-        assert "no routable verdict" in result["last_violation"]["evidence"]
+        assert result["safety_status"] == "GATEWAY_ERROR"
+        assert result["consecutive_denials"] == 0
+        assert result["last_violation"]["reason_code"] == "GATEWAY_ERROR"
+        assert result["last_violation"]["recoverable"] is False
 
     @pytest.mark.parametrize(
         "body",
@@ -428,12 +424,9 @@ class TestSafetyNodeFailClosed:
 
         result = await safety_check_node(_trade_state())
 
-        assert result["safety_status"] == "BLOCKED"
-        # GatewayClient defaults a missing verdict to DENIED; both labels block.
-        assert result["last_violation"]["reason_code"] in {
-            "NOT_APPROVED",
-            "GOVERNANCE_DENIED",
-        }
+        assert result["safety_status"] == "GATEWAY_ERROR"
+        assert result["last_violation"]["reason_code"] == "GATEWAY_ERROR"
+        assert result["last_violation"]["recoverable"] is False
 
     @pytest.mark.asyncio
     async def test_denial_budget_exhaustion_hard_pauses(self, gateway) -> None:

@@ -82,6 +82,7 @@ STREAM_RULES: dict[str, str] = {
     "evidence_loss": "No evidence was dropped or failed to publish",
     "digest_format": "Every governance_decision_digest and refusal_proof_hash, at any depth of any record, is lowercase SHA-256 hex",
     "reconciliation_fence": "Every reconciliation fence event or refusal follows a hash-chained RECONCILIATION_DISCREPANCY_FENCE cause record",
+    "infrastructure_block": "Every GOVERNANCE_INFRASTRUCTURE_BLOCK carries dependency, failure_code, and params_hash without proof_hash, kms_signature, or attempted_params",
 }
 
 INPUT_ASSERTION = "input"

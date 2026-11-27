@@ -359,7 +359,7 @@ The last column lists the targets each UCA declares, not what is loaded at runti
 
 ## Using CAGE from Python & LangGraph (`cage-client`)
 
-[`packages/cage-client`](packages/cage-client/) (`0.5.0` in-tree; `client-v0.3.0` latest tagged release) is the out-of-process verification client for applications calling CAGE over HTTP (`0.1.0` and `0.2.0` never completed a call against a live gateway and verified no signature).
+[`packages/cage-client`](packages/cage-client/) (`0.6.0`, released as `client-v0.6.0`) is the out-of-process verification client for applications calling CAGE over HTTP (`0.1.0` and `0.2.0` never completed a call against a live gateway and verified no signature).
 
 ```bash
 pip install "git+https://github.com/google/cybernetic-agent-governance-engine.git#subdirectory=packages/cage-client"
@@ -566,8 +566,8 @@ cybernetic-agent-governance-engine/
 │   ├── eval_harness/                 # Offline evaluation plane
 │   └── governed_financial_advisor/   # Reference application (a client of the gateway)
 ├── packages/
-│   ├── cage-client/                  # Client SDK (0.5.0 in-tree; client-v0.3.0 tagged)
-│   └── cage-conformance/             # Standalone verifier (0.4.1), standard library only
+│   ├── cage-client/                  # Client SDK (0.6.0)
+│   └── cage-conformance/             # Standalone verifier (0.4.2), standard library only
 ├── proof/                            # Formal model, stream invariants, TLA+ specifications
 ├── config/
 │   ├── governance_thresholds.json    #   Kernel threshold defaults
@@ -598,7 +598,7 @@ Worth being direct about the boundaries:
 
 ## Project status
 
-Active development, pre-1.0 on the external contract. The Substrate Contract is versioned and carries deprecation guarantees; everything under `src/` may move. The platform is at 4.1.0, `cage-client` at 0.5.0 in-tree (`client-v0.3.0` latest release tag) and `cage-conformance` at 0.4.1.
+Active development, pre-1.0 on the external contract. The Substrate Contract is versioned and carries deprecation guarantees; everything under `src/` may move. The platform is at 4.1.0, `cage-client` at 0.6.0 (`client-v0.6.0`) and `cage-conformance` at 0.4.2 (`conformance-v0.4.2`).
 
 - Release notes, including everything earlier READMEs carried as "What's New": [`CHANGELOG.md`](CHANGELOG.md)
 - Breaking changes: [`docs/BREAKING_CHANGES.md`](docs/BREAKING_CHANGES.md)

@@ -16,7 +16,7 @@
 """Regression tests for POAM-2026-228: separate gateway transport/verification errors from policy denials.
 
 Covers all six coupled advisor/attestation/formal surfaces:
-  1. ``GatewayClient._raise_unrouted()`` and ``_is_policy_drift()`` preserve
+  1. ``CageClient`` (via ``GatewayClient().sdk_client()``) preserves
      ``CageClient``'s ``proof_hash`` / ``audit_id`` authenticity check on HTTP 403
      and never refresh policy pins or replay trades on un-evidenced 403s.
   2. ``AgentState.safety_status`` (``compliance/schemas/agent_state_schema.json``)
@@ -128,7 +128,7 @@ def _trade_state(consecutive_denials: int = 0, **overrides: Any) -> dict[str, An
 
 
 # ---------------------------------------------------------------------------
-# Surface 1: GatewayClient._raise_unrouted & _AdvisorTransport policy-drift gate
+# Surface 1: CageClient refusal authenticity & GatewayClient().sdk_client()
 # ---------------------------------------------------------------------------
 
 
@@ -143,9 +143,16 @@ class TestGatewayClientRefusalAuthenticity:
         ],
     )
     @pytest.mark.asyncio
-    async def test_unevidenced_403_raises_http_status_error_not_permission_error(
+    async def test_unevidenced_403_raises_cage_gateway_error_and_routes_unavailable(
         self, gateway, case_id: str
     ) -> None:
+        from cage_client import (
+            GovernanceDecision as SdkDecision,
+        )
+        from cage_client import (
+            PolicyViolationException,
+        )
+
         responses = {
             "linkerd-empty-403": httpx.Response(
                 403, content=b"", headers={"content-type": "text/plain"}
@@ -168,22 +175,37 @@ class TestGatewayClientRefusalAuthenticity:
         }
         gateway(lambda _r: responses[case_id])
 
-        with pytest.raises(httpx.HTTPStatusError) as exc_info:
-            await GatewayClient().validate_action(
+        sdk = await GatewayClient().sdk_client()
+        preview = await sdk.preview(
+            action="execute_trade",
+            parameters={"symbol": "AAPL", "amount": 100.0},
+            agent_id="governed-financial-advisor",
+        )
+        assert preview.decision is SdkDecision.UNAVAILABLE
+
+        with pytest.raises(CageGatewayError) as exc_info:
+            await sdk.validate_action(
                 action="execute_trade",
-                params={"symbol": "AAPL", "amount": 100.0},
+                parameters={"symbol": "AAPL", "amount": 100.0},
+                agent_id="governed-financial-advisor",
             )
-        assert exc_info.value.response.status_code == 403
-        assert not isinstance(exc_info.value, PermissionError)
+        assert not isinstance(exc_info.value, PolicyViolationException)
 
     @pytest.mark.parametrize(
         "evidence_case",
         ["proof-hash", "receipt-proof-hash", "audit-id"],
     )
     @pytest.mark.asyncio
-    async def test_evidenced_403_raises_permission_error(
+    async def test_evidenced_403_routes_denied_and_raises_policy_violation(
         self, gateway, evidence_case: str
     ) -> None:
+        from cage_client import (
+            GovernanceDecision as SdkDecision,
+        )
+        from cage_client import (
+            PolicyViolationException,
+        )
+
         if evidence_case == "proof-hash":
             resp = httpx.Response(
                 403,
@@ -221,10 +243,19 @@ class TestGatewayClientRefusalAuthenticity:
             )
         gateway(lambda _r: resp)
 
-        with pytest.raises(PermissionError, match="Governance DENIED 'execute_trade'"):
-            await GatewayClient().validate_action(
+        sdk = await GatewayClient().sdk_client()
+        preview = await sdk.preview(
+            action="execute_trade",
+            parameters={"symbol": "AAPL", "amount": 100.0},
+            agent_id="governed-financial-advisor",
+        )
+        assert preview.decision is SdkDecision.DENIED
+
+        with pytest.raises(PolicyViolationException):
+            await sdk.validate_action(
                 action="execute_trade",
-                params={"symbol": "AAPL", "amount": 100.0},
+                parameters={"symbol": "AAPL", "amount": 100.0},
+                agent_id="governed-financial-advisor",
             )
 
     @pytest.mark.asyncio
@@ -243,20 +274,24 @@ class TestGatewayClientRefusalAuthenticity:
             base_url="http://gateway.test",
         )
         try:
+            sdk = await client.sdk_client()
             with pytest.raises(CageGatewayError):
-                await client.validate_action(
+                await sdk.validate_action(
                     action="execute_trade",
-                    params={"symbol": "AAPL", "amount": 100.0},
+                    parameters={"symbol": "AAPL", "amount": 100.0},
+                    agent_id="governed-financial-advisor",
                 )
         finally:
             await client.close()
             GatewayClient._instance = None
 
     @pytest.mark.asyncio
-    async def test_forged_unsigned_403_with_proof_hash_never_raises_permission_error(
+    async def test_forged_unsigned_403_with_proof_hash_never_raises_policy_violation(
         self,
     ) -> None:
         """An intermediary forging an unsigned JSON 403 WITH proof_hash cannot spoof a policy refusal."""
+        from cage_client import PolicyViolationException
+
         GatewayClient._instance = None
         stub = SignedGatewayStub()
         client = GatewayClient()
@@ -279,13 +314,14 @@ class TestGatewayClientRefusalAuthenticity:
             base_url="http://gateway.test",
         )
         try:
-            with pytest.raises(httpx.HTTPStatusError) as exc_info:
-                await client.validate_action(
+            sdk = await client.sdk_client()
+            with pytest.raises(CageGatewayError) as exc_info:
+                await sdk.validate_action(
                     action="execute_trade",
-                    params={"symbol": "AAPL", "amount": 100.0},
+                    parameters={"symbol": "AAPL", "amount": 100.0},
+                    agent_id="governed-financial-advisor",
                 )
-            assert exc_info.value.response.status_code == 403
-            assert not isinstance(exc_info.value, PermissionError)
+            assert not isinstance(exc_info.value, PolicyViolationException)
         finally:
             await client.close()
             GatewayClient._instance = None
@@ -311,10 +347,12 @@ class TestGatewayClientRefusalAuthenticity:
                 ),
             )
         )
+        sdk = await GatewayClient().sdk_client()
         with pytest.raises(RoutingSealVerificationError):
-            await GatewayClient().validate_action(
+            await sdk.validate_action(
                 action="execute_trade",
-                params={"symbol": "AAPL", "amount": 100.0},
+                parameters={"symbol": "AAPL", "amount": 100.0},
+                agent_id="governed-financial-advisor",
             )
 
 

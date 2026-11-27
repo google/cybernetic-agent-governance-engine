@@ -73,7 +73,7 @@ MAKEFILE_PATH = REPO_ROOT / "Makefile"
 GITLEAKS_TOML_PATH = REPO_ROOT / ".gitleaks.toml"
 STAGING_LIFECYCLE_PATH = REPO_ROOT / "scripts" / "staging_lifecycle.sh"
 
-# Complete classification of all 23 workflows in .github/workflows/
+# Complete classification of all 24 workflows in .github/workflows/
 NON_GATE_WORKFLOWS: frozenset[str] = frozenset(
     {
         "publish-client-sdk.yml",  # Tag/manual release workflow building & pushing cage-client wheel/GHCR package
@@ -90,6 +90,9 @@ GATE_WORKFLOWS: frozenset[str] = frozenset(
         "ci-integration.yml",
         "ci-partner-integration.yml",
         "ci.yml",
+        # Scheduled conformance-v* tag, GitHub Release, and GHCR freshness
+        # reconciler; planted-defect tests in tests/unit/test_reconcile_conformance_release.py.
+        "conformance-release-reconciler.yml",
         "dependency-review.yml",
         "eu-ecb-compliance.yml",
         "license_guard.yml",
@@ -168,7 +171,7 @@ def test_workflow_inventory_is_complete_and_classified() -> None:
         "Register new workflows in GATE_WORKFLOWS and add adversarial gate tests."
     )
     assert not missing, f"Classified workflow(s) missing from disk: {missing}"
-    assert len(on_disk) == 23, f"Expected 23 workflows, found {len(on_disk)}"
+    assert len(on_disk) == 24, f"Expected 24 workflows, found {len(on_disk)}"
 
     # Verify publish-client-sdk.yml is genuinely a release workflow, not a disguised test gate
     pub_data = yaml.safe_load(
@@ -2045,13 +2048,39 @@ def test_publish_client_sdk_tag_version_guard_and_per_tag_scoping(
     )
     assert ver_proc.stdout.strip() == conf_ver
 
-    build_conf_run = str(
-        by_name["Build CAGE Conformance Verifier Wheel & Sdist"]["run"]
+    # The tag-time build runs the same two-phase smoke script as the PR job, so a
+    # conformance-v* tag cannot publish a wheel or sdist the smoke did not exercise.
+    build_conf = by_name[
+        "Build CAGE Conformance Verifier Wheel & Sdist (Two-Phase Smoke)"
+    ]
+    build_conf_if = str(build_conf["if"])
+    assert "workflow_dispatch" in build_conf_if
+    assert "refs/tags/conformance-v" in build_conf_if
+    assert "refs/tags/client-v" not in build_conf_if
+    assert (
+        str(build_conf["run"]).strip() == "bash scripts/smoke_test_conformance_wheel.sh"
     )
-    assert 'dist/cage_conformance-"${CONF_VERSION}".tar.gz' in build_conf_run
-    assert 'grep -Fx "${CONF_VERSION}"' in build_conf_run
-    assert "verify" in build_conf_run
-    assert "${{" not in build_conf_run
+    assert build_conf["env"] == {"COMMIT_SHA": "${{ github.sha }}"}
+    conf_smoke_text = (
+        REPO_ROOT / "scripts" / "smoke_test_conformance_wheel.sh"
+    ).read_text(encoding="utf-8")
+    for needle in (
+        "set -euo pipefail",
+        "uv build",
+        'WHEEL_PATH="dist/cage_conformance-${CONF_VERSION}-py3-none-any.whl"',
+        'SDIST_PATH="dist/cage_conformance-${CONF_VERSION}.tar.gz"',
+        'grep -Fx "${CONF_VERSION}"',
+        "=== Phase 1a: bare wheel smoke",
+        "=== Phase 1b: sdist smoke",
+        "=== Phase 2: [attest] extra smoke",
+        "--trace src/cage_conformance/vectors/trace_v1.json",
+    ):
+        assert needle in conf_smoke_text, needle
+
+    conf_sync_run = str(by_name["Verify cage-conformance proof sync"]["run"])
+    assert "refs/tags/conformance-v*" in conf_sync_run
+    assert '--cutting-release-tag "$REF_NAME"' in conf_sync_run
+    assert "${{" not in conf_sync_run
 
     ghcr_conf = by_name["Publish CAGE Conformance Verifier to GitHub Packages (GHCR)"]
     ghcr_conf_if = str(ghcr_conf["if"])
@@ -2059,15 +2088,22 @@ def test_publish_client_sdk_tag_version_guard_and_per_tag_scoping(
     assert "refs/tags/conformance-v" in ghcr_conf_if
     assert "refs/tags/client-v" not in ghcr_conf_if
     ghcr_conf_run = str(ghcr_conf["run"])
-    assert "FROM python:3.12-slim" not in ghcr_conf_run
-    assert "cgr.dev/chainguard/wolfi-base@sha256:" in ghcr_conf_run
+    dockerfile_text = (
+        REPO_ROOT / "packages" / "cage-conformance" / "Dockerfile"
+    ).read_text(encoding="utf-8")
+    assert "FROM python:3.12-slim" not in dockerfile_text
+    assert "FROM scratch" not in dockerfile_text
+    assert "cgr.dev/chainguard/wolfi-base@sha256:" in dockerfile_text
+    assert 'ENTRYPOINT ["cage-conformance"]' in dockerfile_text
+    assert "USER 65532:65532" in dockerfile_text
+    assert 'org.opencontainers.image.revision="${COMMIT_SHA}"' in dockerfile_text
+    assert 'org.opencontainers.image.version="${CONF_VERSION}"' in dockerfile_text
+    assert "packages/cage-conformance/Dockerfile" in ghcr_conf_run
     assert "sha256sum -c -" in ghcr_conf_run
     assert "trivy image" in ghcr_conf_run
     assert "--severity CRITICAL,HIGH" in ghcr_conf_run
     assert "--exit-code 1" in ghcr_conf_run
-    assert 'ENTRYPOINT ["cage-conformance"]' in ghcr_conf_run
     assert 'grep -Fx "${CONF_VERSION}"' in ghcr_conf_run
-    assert "FROM scratch" not in ghcr_conf_run
     assert "${{" not in ghcr_conf_run
     assert (
         ghcr_conf_run.index("docker run --rm")

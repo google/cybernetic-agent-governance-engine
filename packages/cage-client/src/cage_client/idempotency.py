@@ -14,7 +14,7 @@
 
 """Deterministic step-key and UUIDv5 idempotency-key helpers for LangGraph calls.
 
-Matches the CAGE advisor's ``derive_plan_step_key`` and ``derive_transaction_id``
+Matches the CAGE advisor's ``derive_plan_step_key`` and ``derive_idempotency_key``
 contract cleanly without importing monorepo ``src`` packages so external SDK
 installs and retries keep identical idempotency keys across turns and resumes.
 """
@@ -28,6 +28,8 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 #: Default UUIDv5 namespace for deterministic tool-step idempotency keys.
+#: The URN seed suffix retains its legacy ``:transaction_id`` token intentionally
+#: (FI-01 in docs/BREAKING_CHANGES.md) so UUIDv5 keys remain continuous across upgrades.
 DEFAULT_IDEMPOTENCY_NAMESPACE = uuid.uuid5(
     uuid.NAMESPACE_URL, "urn:cage:advisor:execute_trade_action:transaction_id"
 )
@@ -35,7 +37,6 @@ DEFAULT_IDEMPOTENCY_NAMESPACE = uuid.uuid5(
 _VOLATILE_ARG_KEYS: frozenset[str] = frozenset(
     {
         "idempotency_key",
-        "transaction_id",
         "deferred_id",
         "approval_token",
     }

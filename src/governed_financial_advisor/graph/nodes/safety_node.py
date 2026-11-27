@@ -22,17 +22,17 @@ Layer 1 governance infrastructure.
 
 Key responsibilities:
   - Extract every proposed trade from ``AgentState.execution_plan_output``
-  - Submit each one to ``POST /governance/validate-action`` via the advisor's
-    standard ``GatewayClient.validate_action()``
+  - Submit each one to ``POST /governance/validate-action`` via
+    ``GatewayClient().sdk_client()`` + ``preview_trade_with_drift_revalidation()``
   - Handle the gateway verdicts for the plan as a whole:
       * ALLOW / NARROW / REQUIRE_APPROVAL for every trade step →
         safety_status "APPROVED": reset consecutive_denials and route to the
-        governed trader, whose ``gateway_tool_guard`` re-asks the gateway per
+        governed trader, whose ``governed_tool_node`` re-asks the gateway per
         tool call and parks REQUIRE_APPROVAL for a human before anything
         executes
       * DENIED for any step → increment consecutive_denials, store violation,
         route to explainer
-      * DEFER for any step (with a non-blank ``defer_token`` and no refusal) →
+      * DEFER for any step (with a non-blank ``deferred_id`` and no refusal) →
         store the gateway's deferral ticket, leave ``consecutive_denials``
         untouched, and route to ``defer_node`` for a turn-terminal hold
 
@@ -44,11 +44,11 @@ routing-seal secret, signer or governor of its own.
 
 Fail-closed: only an explicit ALLOW, NARROW or REQUIRE_APPROVAL verdict for
 every trade step routes onward (nothing is committed here; the gateway commits
-only inside ``execute_trade_action``). For any step, an evidenced DENIED verdict, an unknown / missing verdict, or a
-DEFER without a non-blank ``defer_token`` produces ``BLOCKED`` (counting one
-denial), while an HTTP error (including an un-evidenced proxy/mesh 403), an
-unverified envelope, a timeout, or an unreachable gateway produces
-``GATEWAY_ERROR`` (leaving ``consecutive_denials`` unchanged).
+only inside ``execute_trade_action``). For any step, an evidenced DENIED verdict
+produces ``BLOCKED`` (counting one denial), while ``UNAVAILABLE`` (HTTP 429/5xx,
+un-evidenced proxy/mesh 403, unverified envelope, unknown/missing verdict,
+timeout, or unreachable gateway) produces ``GATEWAY_ERROR`` (leaving
+``consecutive_denials`` unchanged).
 
 MAX_CONSECUTIVE_DENIALS = 2: Policy-probing attack mitigation. When an agent
 receives 2 consecutive DENY verdicts without an intervening ALLOW, the graph
@@ -62,11 +62,14 @@ import logging
 from collections.abc import Mapping
 from typing import Any, Literal
 
-import httpx
+from cage_client import GovernanceDecision as SdkDecision
 
 from src.gateway.governance.decisions import GovernanceDecision
+from src.governed_financial_advisor.graph.governance.tool_guard import (
+    advisor_principal_extractor,
+    preview_trade_with_drift_revalidation,
+)
 from src.governed_financial_advisor.graph.nodes.trade_contract import (
-    PROCEED_VERDICTS,
     TRADE_ACTION,
     build_routing_verdict_cache,
     extract_trade_steps,
@@ -76,6 +79,10 @@ from src.governed_financial_advisor.graph.state import AgentState
 from src.governed_financial_advisor.infrastructure.gateway_client import GatewayClient
 
 logger = logging.getLogger("SafetyNode")
+
+#: Fallback ``agent_id`` when no principal context is set; the gateway
+#: authenticates callers by mesh workload identity, never by this string.
+_ADVISOR_AGENT_ID = "governed-financial-advisor"
 
 # Policy-probing attack mitigation constant (ADR-008)
 MAX_CONSECUTIVE_DENIALS = 2
@@ -177,9 +184,9 @@ async def _route_trade(
             refusal or error evidence; ``None`` for a single-step plan.
 
     Returns:
-        ``("routed", result)`` for an ALLOW, NARROW or REQUIRE_APPROVAL
-        verdict, ``("deferred", result)`` for a DEFER with a non-blank
-        ``defer_token``, and ``("blocked", update)`` with the BLOCKED,
+        ``("routed", result)`` for an ALLOWED, NARROWED, or REQUIRE_APPROVAL
+        preview, ``("deferred", result)`` for a DEFERRED preview without
+        ``requires_approval``, and ``("blocked", update)`` with the BLOCKED,
         HARD_PAUSE_BUDGET_EXCEEDED, or GATEWAY_ERROR state update otherwise.
     """
 
@@ -201,21 +208,12 @@ async def _route_trade(
         )
 
     try:
-        result = await GatewayClient().validate_action(
-            action=TRADE_ACTION, params=params
+        sdk = await GatewayClient().sdk_client()
+        principal = advisor_principal_extractor(state) or _ADVISOR_AGENT_ID
+        preview = await preview_trade_with_drift_revalidation(
+            sdk, TRADE_ACTION, params, principal, state
         )
-    except PermissionError as exc:
-        # Evidenced gateway policy refusal.
-        logger.warning("🚫 Safety Node: Action DENIED by governance: %s", exc)
-        return blocked("GOVERNANCE_DENIED", str(exc), recoverable=True)
-    except httpx.HTTPStatusError as exc:
-        logger.error(
-            "❌ Safety Node: Gateway validation unavailable/unverified — failing closed (HTTP %d)",
-            exc.response.status_code,
-        )
-        return gateway_error(f"Gateway returned HTTP {exc.response.status_code}")
     except Exception as exc:
-        # Fail closed: CageGatewayError, RoutingSealVerificationError, timeouts, unreachable gateway.
         logger.error(
             "❌ Safety Node: Gateway validation unavailable/unverified — failing closed (%s: %s)",
             type(exc).__name__,
@@ -226,40 +224,100 @@ async def _route_trade(
             f"Failed to validate action due to {type(exc).__name__}: {exc!s}"
         )
 
-    verdict = result.get("verdict") if isinstance(result, dict) else None
-
-    if verdict in PROCEED_VERDICTS:
+    if preview.decision is SdkDecision.ALLOWED:
+        env = preview.envelope
+        if env is not None:
+            routed: dict[str, Any] = {
+                **dict(env.payload),
+                "verdict": GovernanceDecision.ALLOW,
+                "envelope_id": env.envelope_id,
+                "envelope_version": env.envelope_version,
+                "issuer": dict(env.issuer),
+                "subject": dict(env.subject),
+                "signature": dict(env.signature) if env.signature is not None else {},
+                "governance_context": (
+                    dict(env.governance_context)
+                    if env.governance_context is not None
+                    else {}
+                ),
+                "external_attestations": list(env.external_attestations or ()),
+            }
+        else:
+            routed = {
+                "verdict": GovernanceDecision.ALLOW,
+                "envelope_id": preview.audit_id or "unknown",
+                "violations": list(preview.violations),
+            }
         logger.info(
             "✅ Safety Node: gateway routed action %s (envelope_id=%s)",
-            verdict,
-            result.get("envelope_id", "unknown"),
+            GovernanceDecision.ALLOW,
+            routed.get("envelope_id", "unknown"),
         )
-        return "routed", result
+        return "routed", routed
 
-    defer_token = result.get("defer_token") if isinstance(result, dict) else None
-    if (
-        verdict == GovernanceDecision.DEFER
-        and isinstance(defer_token, str)
-        and bool(defer_token.strip())
-    ):
+    if preview.decision is SdkDecision.NARROWED:
+        routed = {
+            "verdict": GovernanceDecision.NARROW,
+            "narrowed_params": dict(preview.narrowed_params or {}),
+            "violations": list(preview.violations),
+            "audit_id": preview.audit_id,
+            "envelope_id": preview.audit_id or "unknown",
+        }
+        logger.info(
+            "✅ Safety Node: gateway routed action %s (envelope_id=%s)",
+            GovernanceDecision.NARROW,
+            routed.get("envelope_id", "unknown"),
+        )
+        return "routed", routed
+
+    if preview.decision is SdkDecision.DEFERRED:
+        ticket_id = (
+            preview.deferred_id.strip() if isinstance(preview.deferred_id, str) else ""
+        )
+        if not ticket_id:
+            logger.error(
+                "❌ Safety Node: Gateway validation unavailable/unverified — failing closed (missing deferral ticket)"
+            )
+            return gateway_error("Gateway deferred action without a deferral ticket")
+        if preview.requires_approval:
+            routed = {
+                "verdict": GovernanceDecision.REQUIRE_APPROVAL,
+                "deferred_id": ticket_id,
+                "violations": list(preview.violations),
+                "envelope_id": preview.audit_id or "unknown",
+            }
+            logger.info(
+                "✅ Safety Node: gateway routed action %s (envelope_id=%s)",
+                GovernanceDecision.REQUIRE_APPROVAL,
+                routed.get("envelope_id", "unknown"),
+            )
+            return "routed", routed
         logger.info(
             "⏸️ Safety Node: Action DEFERRED by governance (ticket_id=%s)",
-            defer_token.strip(),
+            ticket_id,
         )
-        return "deferred", result
+        return "deferred", {
+            "verdict": GovernanceDecision.DEFER,
+            "defer_token": ticket_id,
+            "defer_reason": preview.defer_reason,
+        }
 
-    logger.warning(
-        "🚫 Safety Node: Gateway returned no routable verdict (verdict=%r) — failing closed",
-        verdict,
+    if preview.decision is SdkDecision.DENIED:
+        evidence = (
+            "; ".join(str(v) for v in preview.violations)
+            if preview.violations
+            else (preview.reason_code or preview.error or "POLICY_DENIED")
+        )
+        logger.warning("🚫 Safety Node: Action DENIED by governance: %s", evidence)
+        return blocked("GOVERNANCE_DENIED", evidence, recoverable=True)
+
+    reason = preview.error or preview.reason_code or "Gateway unavailable"
+    logger.error(
+        "❌ Safety Node: Gateway validation unavailable/unverified — failing closed (%s: %s)",
+        preview.reason_code or "UNAVAILABLE",
+        reason,
     )
-    return blocked(
-        "NOT_APPROVED",
-        (
-            f"Gateway returned verdict {verdict!r}, not one of "
-            f"{sorted(v.value for v in PROCEED_VERDICTS)}"
-        ),
-        recoverable=False,
-    )
+    return gateway_error(reason)
 
 
 async def safety_check_node(state: AgentState) -> dict[str, Any]:

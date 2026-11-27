@@ -301,6 +301,33 @@ def _make_webauthn_binding(
     return payload
 
 
+def _resolve_opa_or_docker_bins() -> tuple[str | None, str | None]:
+    """Return ``(opa_bin, docker_bin)``, probing Docker only when OPA is absent."""
+    opa_bin = shutil.which("opa")
+    if (
+        sys.platform == "darwin"
+        and os.environ.get("CAGE_ALLOW_MACOS_OPA", "").strip() != "1"
+    ):
+        opa_bin = None
+    if opa_bin is not None:
+        return opa_bin, None
+
+    docker_bin = shutil.which("docker")
+    if docker_bin is not None:
+        try:
+            daemon_probe = subprocess.run(
+                [docker_bin, "info"],
+                check=False,
+                capture_output=True,
+                timeout=5,
+            )
+            if daemon_probe.returncode != 0:
+                docker_bin = None
+        except (OSError, subprocess.TimeoutExpired):
+            docker_bin = None
+    return None, docker_bin
+
+
 @asynccontextmanager
 async def _real_opa_uds_sidecar() -> AsyncIterator[str]:
     """Start a real OPA engine bound exclusively to an AF_UNIX socket loading trade_governance.rego."""
@@ -313,22 +340,7 @@ async def _real_opa_uds_sidecar() -> AsyncIterator[str]:
     proc: subprocess.Popen[bytes] | None = None
     container_name: str | None = None
 
-    opa_bin = shutil.which("opa")
-    if (
-        sys.platform == "darwin"
-        and os.environ.get("CAGE_ALLOW_MACOS_OPA", "").strip() != "1"
-    ):
-        opa_bin = None
-    docker_bin = shutil.which("docker")
-    if docker_bin is not None:
-        daemon_probe = subprocess.run(
-            [docker_bin, "info"],
-            check=False,
-            capture_output=True,
-            timeout=5,
-        )
-        if daemon_probe.returncode != 0:
-            docker_bin = None
+    opa_bin, docker_bin = _resolve_opa_or_docker_bins()
     try:
         if opa_bin:
             proc = subprocess.Popen(
@@ -371,8 +383,8 @@ async def _real_opa_uds_sidecar() -> AsyncIterator[str]:
             )
         elif sys.platform == "darwin":
             pytest.skip(
-                "Local OPA UDS sidecar requires Linux/CI, a running Docker daemon, "
-                "or CAGE_ALLOW_MACOS_OPA=1 on macOS."
+                "Neither 'opa' binary (set CAGE_ALLOW_MACOS_OPA=1) nor a running "
+                "'docker' daemon is available for the local OPA UDS sidecar on macOS."
             )
         else:
             pytest.fail(
@@ -659,8 +671,8 @@ class E2EHarness:
             payload["extra_body"] = extra_body
         return await self.gateway_http.post("/v1/chat/completions", json=payload)
 
-    async def advisor_execute_trade(self, params: Mapping[str, Any]) -> dict[str, Any]:
-        """Validate ``TradeOrder`` and invoke ``execute_trade_action`` via ``GatewayClient``."""
+    async def advisor_execute_trade(self, params: Mapping[str, Any]) -> Any:
+        """Validate ``TradeOrder`` and invoke ``execute_trade_action`` via ``CageClient.execute_tool()``."""
         deferred_id = params.get("deferred_id")
         order_params = {k: v for k, v in params.items() if k != "deferred_id"}
         order = TradeOrder(**order_params)
@@ -669,13 +681,14 @@ class E2EHarness:
             "amount": order.amount,
             "currency": order.currency,
             "confidence": order.confidence,
-            "idempotency_key": order.idempotency_key,
             "side": order.side or "buy",
         }
-        if deferred_id:
-            trade_payload["deferred_id"] = str(deferred_id)
-        return await self.gateway_client.execute_tool(
-            "execute_trade_action", trade_payload
+        sdk = await self.gateway_client.sdk_client()
+        return await sdk.execute_tool(
+            "execute_trade_action",
+            trade_payload,
+            idempotency_key=order.idempotency_key,
+            approval_token=str(deferred_id) if deferred_id else None,
         )
 
     async def validate_action(
@@ -1268,8 +1281,8 @@ async def test_advisor_proxy_e2e_all_five_invariants_and_negative_controls(
     assert allow_args["symbol"] == "AAPL"
     assert allow_args["amount"] == 1200.0
 
-    # Preview via the real GatewayClient.validate_action (the advisor's path):
-    # the client verifies and unwraps the envelope; ALLOW, no seal, no debit.
+    # Preview via the real GatewayClient().sdk_client().preview() (the advisor's path):
+    # the client verifies the signed envelope; ALLOW, no seal, no debit.
     preview_params = {
         "symbol": allow_args["symbol"],
         "amount": allow_args["amount"],
@@ -1277,11 +1290,12 @@ async def test_advisor_proxy_e2e_all_five_invariants_and_negative_controls(
         "confidence": allow_args["confidence"],
         "side": allow_args["side"],
     }
-    allow_preview = await e2e_stack.gateway_client.validate_action(
-        "execute_trade", preview_params
+    sdk = await e2e_stack.gateway_client.sdk_client()
+    allow_preview = await sdk.preview(
+        "execute_trade", preview_params, "governed-financial-advisor"
     )
-    assert allow_preview["verdict"] == "ALLOW"
-    assert "seal" not in allow_preview
+    assert allow_preview.gateway_verdict == "ALLOW"
+    assert allow_preview.envelope is not None
     # The same request on the wire returns the signed envelope, which verifies
     # against the out-of-band gateway JWKS only.
     raw_allow = await e2e_stack.validate_action("execute_trade", preview_params)
@@ -1295,12 +1309,12 @@ async def test_advisor_proxy_e2e_all_five_invariants_and_negative_controls(
         await e2e_stack.stream_redis.get(e2e_stack.cbf.redis_key)
     ) == pytest.approx(OPENING_CASH_USD)
 
-    # Committing execution through real GatewayClient.execute_tool -> gateway /tools/execute
+    # Committing execution through real CageClient.execute_tool -> gateway /tools/execute
     # mints & burns ES256 seal, actuates, and settles.
-    exec_allow_json = await e2e_stack.advisor_execute_trade(allow_args)
-    assert exec_allow_json["status"] == "SUCCESS"
-    assert exec_allow_json["outcome"]["status"] == "EXECUTED"
-    assert exec_allow_json["output"].startswith("EXECUTED: AAPL x 1200.0")
+    exec_allow_outcome = await e2e_stack.advisor_execute_trade(allow_args)
+    assert exec_allow_outcome.status.value == "EXECUTED"
+    assert exec_allow_outcome.verified is True
+    assert exec_allow_outcome.message.startswith("EXECUTED: AAPL x 1200.0")
     assert len(e2e_stack.recorded_executions) == 1
     first_clearance = e2e_stack.recorded_executions[0]
     assert first_clearance.params["symbol"] == "AAPL"
@@ -1337,7 +1351,7 @@ async def test_advisor_proxy_e2e_all_five_invariants_and_negative_controls(
             {
                 "role": "tool",
                 "tool_call_id": allow_tc["id"],
-                "content": exec_allow_json["output"],
+                "content": exec_allow_outcome.message,
             },
         ]
     )
@@ -1596,9 +1610,9 @@ async def test_advisor_proxy_e2e_all_five_invariants_and_negative_controls(
     assert redeem_args["idempotency_key"] == redeem_tx
 
     redeem_exec = await e2e_stack.advisor_execute_trade(redeem_args)
-    assert redeem_exec["status"] == "SUCCESS"
-    assert redeem_exec["outcome"]["status"] == "EXECUTED"
-    assert redeem_exec["output"].startswith("EXECUTED: MSFT x 7500.0")
+    assert redeem_exec.status.value == "EXECUTED"
+    assert redeem_exec.verified is True
+    assert redeem_exec.message.startswith("EXECUTED: MSFT x 7500.0")
     assert len(e2e_stack.recorded_executions) == 2
     assert e2e_stack.recorded_executions[1].params["symbol"] == "MSFT"
     assert float(e2e_stack.recorded_executions[1].params["amount"]) == pytest.approx(
@@ -2014,3 +2028,46 @@ async def test_advisor_proxy_e2e_all_five_invariants_and_negative_controls(
     assert unknown_kid_check.verification is ReceiptVerification.INVALID
     assert unknown_kid_check.finding is not None
     assert unknown_kid_check.finding["code"] == "RECEIPT_UNKNOWN_KID"
+
+
+def test_resolve_opa_or_docker_bins_skips_docker_probe_when_opa_present(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Do not invoke ``docker info`` when the native ``opa`` binary is available."""
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(
+        shutil,
+        "which",
+        lambda name: "/usr/bin/opa" if name == "opa" else "/usr/bin/docker",
+    )
+
+    def _unexpected_run(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("subprocess.run must not be called when opa is present")
+
+    monkeypatch.setattr(subprocess, "run", _unexpected_run)
+    assert _resolve_opa_or_docker_bins() == ("/usr/bin/opa", None)
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        subprocess.TimeoutExpired(cmd=["/usr/bin/docker", "info"], timeout=5),
+        OSError("docker socket unreachable"),
+    ],
+    ids=["timeout-expired", "os-error"],
+)
+def test_resolve_opa_or_docker_bins_degrades_on_docker_probe_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    exc: BaseException,
+) -> None:
+    """Treat TimeoutExpired or OSError from ``docker info`` as no Docker daemon."""
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(
+        shutil, "which", lambda name: "/usr/bin/docker" if name == "docker" else None
+    )
+
+    def _failing_run(*args: Any, **kwargs: Any) -> Any:
+        raise exc
+
+    monkeypatch.setattr(subprocess, "run", _failing_run)
+    assert _resolve_opa_or_docker_bins() == (None, None)

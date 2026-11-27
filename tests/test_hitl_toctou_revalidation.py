@@ -1108,26 +1108,36 @@ class TestAllReachableHitlTradePathsPopulateReferenceQuote:
             "hitl_reference_quote": plan_quotes,
         }
 
-        async def _fake_validate(action: str, params: dict):
-            if params["symbol"] == "MSFT":
-                return {
-                    "verdict": "ALLOW",
-                    "violations": [],
-                    "signature": {"value": "sig-msft"},
-                }
-            return {
-                "verdict": "REQUIRE_APPROVAL",
-                "deferred_id": "def-nvda-2",
-                "violations": [],
-                "signature": {"value": "sig-nvda"},
-            }
+        from cage_client import GovernanceDecision as SdkDecision
+        from cage_client import PreviewResult
+
+        async def _fake_preview(
+            *,
+            action: str,
+            parameters: dict,
+            agent_id: str,
+            policy_version_id: str | None = None,
+        ) -> PreviewResult:
+            if parameters["symbol"] == "MSFT":
+                return PreviewResult(
+                    decision=SdkDecision.ALLOWED,
+                    gateway_verdict="ALLOW",
+                    audit_id="env-msft",
+                )
+            return PreviewResult(
+                decision=SdkDecision.DEFERRED,
+                gateway_verdict="REQUIRE_APPROVAL",
+                deferred_id="def-nvda-2",
+                requires_approval=True,
+                audit_id="env-nvda",
+            )
 
         with patch(
             "src.governed_financial_advisor.graph.nodes.safety_node.GatewayClient"
         ) as mock_gw_cls:
-            mock_gw_cls.return_value.validate_action = AsyncMock(
-                side_effect=_fake_validate
-            )
+            mock_sdk = AsyncMock()
+            mock_sdk.preview = AsyncMock(side_effect=_fake_preview)
+            mock_gw_cls.return_value.sdk_client = AsyncMock(return_value=mock_sdk)
             safety_out = await safety_check_node(initial_state)  # type: ignore[arg-type]
 
         assert safety_out["deferred_id"] == "def-nvda-2"

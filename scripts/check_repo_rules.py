@@ -151,7 +151,9 @@ EXPECTED_STRICT_STATUS_CHECKS = True
 
 # The release-tag ruleset (§4).
 TAG_RULESET_ID = 25965917
-EXPECTED_TAG_INCLUDE = frozenset({"refs/tags/v*", "refs/tags/client-v*"})
+EXPECTED_TAG_INCLUDE = frozenset(
+    {"refs/tags/v*", "refs/tags/client-v*", "refs/tags/conformance-v*"}
+)
 EXPECTED_TAG_RULE_TYPES = frozenset({"deletion", "update", "non_fast_forward"})
 
 Fetch = Callable[[str], Any]

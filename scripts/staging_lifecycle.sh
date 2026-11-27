@@ -67,16 +67,15 @@ SKIP_PROVISION=false; SKIP_LULA=false
 SKIP_POSTURE=false
 SKIP_LIVE_SWEEP=false
 SKIP_TELEMETRY=false
-SKIP_REBUILD=false
-NO_DESTROY=false
-FRESH_PROJECT=false
+SKIP_REBUILD=false; NO_DESTROY=false; FRESH_PROJECT=false
+# Shared-legacy escape hatch ONLY (F-95 Decision 6 langfuse-events-* 2033-09-27 lock);
+# never use on clean throwaway projects or to excuse orphaned liens with no legacy bucket.
 ALLOW_LEGACY_LIEN_SURVIVOR=false
 ENABLE_E2E_ADVISOR=false; ALLOW_PARTNER_OUTAGE=false; CERTIFICATION_MODE="${CERTIFICATION_MODE:-false}"; EVIDENCE_PROJECT_ID="${EVIDENCE_PROJECT_ID:-${TF_VAR_evidence_project_id:-}}"
 ARCHIVE_DIR="${CAGE_GATE_W_ARCHIVE_DIR:-}"
 PROJECT_ID="${GOOGLE_CLOUD_PROJECT:-}"
 BILLING_ACCOUNT_ID="${BILLING_ACCOUNT_ID:-}"
-REGION="${GOOGLE_CLOUD_LOCATION:-us-central1}"
-ZONE="${GOOGLE_CLOUD_ZONE:-${REGION}-a}"
+REGION="${GOOGLE_CLOUD_LOCATION:-us-central1}"; ZONE="${GOOGLE_CLOUD_ZONE:-${REGION}-a}"
 
 usage() {
   cat <<EOF
@@ -85,23 +84,24 @@ Usage: $(basename "$0") [OPTIONS]
 Provision, validate, read back, rebuild, and destroy the ephemeral GKE staging environment.
 
 Options:
-  --fresh-project[=<id>]   Bootstrap a clean or throwaway GCP project before
-                           provisioning and verify post-destroy cleanliness
-  --billing-account=<id>   Billing account ID to link when creating a fresh project
-  --project=<id>           GCP project ID (default: \$GOOGLE_CLOUD_PROJECT)
-  --evidence-project=<id>  Dedicated persistent GCP project ID for WORM evidence custody
-  --certification          Enable Gate W certification mode (2,555-day WORM lock; requires --evidence-project=<id>)
-  --archive-dir=<path>     Output directory for Gate W archive & manifest.json (default: artifacts/w-run-<UTC>)
-  --enable-e2e-advisor     Opt-in non-production E2E advisor + deterministic inference-stub mode
-  --allow-partner-outage   Record partner_conformance_status=unreachable_waived on partner outage
-  --skip-provision         Skip Phase 0–1 provisioning (resume validation on running cluster)
-  --skip-lula              Skip Phase 3 Lula validation
-  --skip-posture           Skip Phase 4 region posture, residency, and Langfuse checks
-  --skip-live-sweep        Skip Phase 5 live_external, integration, and conformance sweeps
-  --skip-telemetry         Skip Phase 5 GMP timeSeries.list, /v1/evidence/verify, and AS-6 hook
-  --skip-rebuild           Skip Phase 6 Stages 4–5 (--import-state + clean rebuild)
-  --no-destroy             Skip Phase 6 teardown (still exits non-zero on gate failure)
-  -h, --help               Show this help message
+  --fresh-project[=<id>]       Bootstrap clean/throwaway GCP project & verify post-destroy cleanliness
+  --allow-legacy-lien-survivor F-95 Decision 6 shared-project opt-in only: accept pre-POAM-2026-159
+                               langfuse-events-* bucket (2033-09-27 lock) + lien; refused unless present
+  --billing-account=<id>       Billing account ID to link when creating a fresh project
+  --project=<id>               GCP project ID (default: \$GOOGLE_CLOUD_PROJECT)
+  --evidence-project=<id>      Dedicated persistent GCP project ID for WORM evidence custody
+  --certification              Enable Gate W certification mode (2,555-day WORM lock; requires --evidence-project=<id>)
+  --archive-dir=<path>         Output directory for Gate W archive & manifest.json (default: artifacts/w-run-<UTC>)
+  --enable-e2e-advisor         Opt-in non-production E2E advisor + deterministic inference-stub mode
+  --allow-partner-outage       Record partner_conformance_status=unreachable_waived on partner outage
+  --skip-provision             Skip Phase 0–1 provisioning (resume validation on running cluster)
+  --skip-lula                  Skip Phase 3 Lula validation
+  --skip-posture               Skip Phase 4 region posture, residency, and Langfuse checks
+  --skip-live-sweep            Skip Phase 5 live_external, integration, and conformance sweeps
+  --skip-telemetry             Skip Phase 5 GMP timeSeries.list, /v1/evidence/verify, and AS-6 hook
+  --skip-rebuild               Skip Phase 6 Stages 4–5 (--import-state + clean rebuild)
+  --no-destroy                 Skip Phase 6 teardown (still exits non-zero on gate failure)
+  -h, --help                   Show this help message
 EOF
 }
 
@@ -2159,6 +2159,7 @@ if [[ "$FRESH_PROJECT" == "true" ]]; then
 
   remaining_buckets="$(gcloud storage buckets list --project="$PROJECT_ID" --format='value(name)' 2>/dev/null | grep -Ev "^(${PROJECT_ID}-tfstate|${PROJECT_ID}_cloudbuild)$" || true)"
   has_retained_worm_buckets=false
+  has_retained_legacy_bucket=false
   if grep -Eq "^(${PROJECT_ID}-evidence-worm-staging|${PROJECT_ID}-audit-logs-worm-staging)$" <<<"$remaining_buckets"; then
     info "PF9 persistent evidence-domain WORM bucket(s) retained by design (F-66 / F-94): $(grep -E "^(${PROJECT_ID}-evidence-worm-staging|${PROJECT_ID}-audit-logs-worm-staging)$" <<<"$remaining_buckets" | tr '\n' ' ')"
     remaining_buckets="$(grep -Ev "^(${PROJECT_ID}-evidence-worm-staging|${PROJECT_ID}-audit-logs-worm-staging)$" <<<"$remaining_buckets" || true)"
@@ -2172,6 +2173,7 @@ if [[ "$FRESH_PROJECT" == "true" ]]; then
   if [[ "$ALLOW_LEGACY_LIEN_SURVIVOR" == "true" && "$remaining_buckets" == *"langfuse-events-"* ]]; then
     info "PF9 explicit known survivor (F-95 Decision 6, 2033-09-27 retention lock): $(grep -E '^langfuse-events-' <<<"$remaining_buckets" || true)"
     remaining_buckets="$(grep -Ev '^langfuse-events-' <<<"$remaining_buckets" || true)"
+    has_retained_legacy_bucket=true
   fi
   if [[ -n "$remaining_buckets" ]]; then
     error "Surviving workload GCS bucket(s) after destroy: $remaining_buckets"
@@ -2200,13 +2202,22 @@ if [[ "$FRESH_PROJECT" == "true" ]]; then
   fi
 
   # Unexcused liens require explicit `gcloud alpha resource-manager liens delete` before project deletion.
+  # Only a currently present retained WORM or F-95 Decision 6 legacy bucket excuses a storage.googleapis.com lien.
   remaining_liens="$(gcloud alpha resource-manager liens list --project="$PROJECT_ID" --format='value(name,origin,restrictions)' 2>/dev/null || true)"
-  if [[ ( "$has_retained_worm_buckets" == "true" || "$ALLOW_LEGACY_LIEN_SURVIVOR" == "true" ) && "$remaining_liens" == *"storage.googleapis.com"* ]]; then
+  if [[ ( "$has_retained_worm_buckets" == "true" || "$has_retained_legacy_bucket" == "true" ) && "$remaining_liens" == *"storage.googleapis.com"* ]]; then
     info "PF9 explicit known storage retention lien survivor (F-66 / F-95): $remaining_liens"
     remaining_liens="$(grep -Ev 'storage\.googleapis\.com' <<<"$remaining_liens" || true)"
   fi
   if [[ -n "$remaining_liens" ]]; then
     error "Surviving project deletion lien(s) after destroy: $remaining_liens"
+    while IFS=$'\t ' read -r _lien_id _lien_origin _lien_rest; do
+      [[ -z "$_lien_id" ]] && continue
+      if [[ "$_lien_origin" == "storage.googleapis.com" ]]; then
+        info "EF12 orphaned storage.googleapis.com lien '${_lien_id}' (no retained WORM bucket found; empty/post-retention locked buckets keep their project lien after 200 OK deletion). If '${PROJECT_ID}' is a throwaway project with no retained buckets to protect, remove it before \`gcloud projects delete ${PROJECT_ID}\`: gcloud alpha resource-manager liens delete ${_lien_id} --project=${PROJECT_ID}"
+      else
+        info "Remove unexcused project lien '${_lien_id}' (origin=${_lien_origin:-unknown}) before deleting '${PROJECT_ID}': gcloud alpha resource-manager liens delete ${_lien_id} --project=${PROJECT_ID}"
+      fi
+    done <<<"$remaining_liens"
     ((SURVIVORS++)) || true
   fi
 

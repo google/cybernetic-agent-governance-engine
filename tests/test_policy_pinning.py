@@ -251,11 +251,15 @@ def test_policy_version_get_endpoint(registry):
 
 @pytest.mark.asyncio
 async def test_gateway_client_recovery_loop_on_policy_drift():
-    """GatewayClient should fetch active version and retry once on 403 Substrate drift."""
+    """preview_trade_with_drift_revalidation should fetch active version and retry once on verified 403 Substrate drift."""
     import json
 
     import httpx
+    from cage_client import GovernanceDecision
 
+    from src.governed_financial_advisor.graph.governance.tool_guard import (
+        preview_trade_with_drift_revalidation,
+    )
     from src.governed_financial_advisor.infrastructure.gateway_client import (
         GatewayClient,
     )
@@ -268,7 +272,7 @@ async def test_gateway_client_recovery_loop_on_policy_drift():
         calls.append((request.method, request.url.path))
         if request.url.path == "/governance/policy-version":
             return httpx.Response(200, json={"active_hash": "fresh-hash-12345"})
-        pins.append(json.loads(request.content)["policy_version_id"])
+        pins.append(json.loads(request.content).get("policy_version_id"))
         if len(pins) == 1:
             return httpx.Response(
                 status_code=403,
@@ -293,13 +297,16 @@ async def test_gateway_client_recovery_loop_on_policy_drift():
         base_url="http://localhost:8080",
     )
     try:
-        res = await client.validate_action(
-            action="execute_trade",
-            params={"amount": 100},
-            policy_version_id="stale-hash",
+        sdk = await client.sdk_client()
+        res = await preview_trade_with_drift_revalidation(
+            sdk,
+            "execute_trade",
+            {"amount": 100},
+            "governed-financial-advisor",
+            {"policy_version_id": "stale-hash"},
         )
 
-        assert res["verdict"] == "ALLOW"
+        assert res.decision is GovernanceDecision.ALLOWED
         # Two previews around one discovery GET; the replay carries the fresh pin.
         assert calls == [
             ("POST", "/governance/validate-action"),
@@ -328,7 +335,11 @@ async def test_gateway_client_does_not_replay_unevidenced_policy_drift_403(
     import json
 
     import httpx
+    from cage_client import CageGatewayError, GovernanceDecision
 
+    from src.governed_financial_advisor.graph.governance.tool_guard import (
+        preview_trade_with_drift_revalidation,
+    )
     from src.governed_financial_advisor.infrastructure.gateway_client import (
         GatewayClient,
     )
@@ -373,7 +384,7 @@ async def test_gateway_client_does_not_replay_unevidenced_policy_drift_403(
         calls.append((request.method, request.url.path))
         if request.url.path == "/governance/policy-version":
             return httpx.Response(200, json={"active_hash": "attacker-pin"})
-        pins.append(json.loads(request.content)["policy_version_id"])
+        pins.append(json.loads(request.content).get("policy_version_id"))
         return responses[case_id]
 
     GatewayClient._instance = None
@@ -383,16 +394,24 @@ async def test_gateway_client_does_not_replay_unevidenced_policy_drift_403(
         base_url="http://localhost:8080",
     )
     try:
-        with pytest.raises(httpx.HTTPStatusError) as exc_info:
-            await client.validate_action(
-                action="execute_trade",
-                params={"amount": 100},
-                policy_version_id="stale-hash",
-            )
-        assert exc_info.value.response.status_code == 403
-        assert not isinstance(exc_info.value, PermissionError)
+        sdk = await client.sdk_client()
+        res = await preview_trade_with_drift_revalidation(
+            sdk,
+            "execute_trade",
+            {"amount": 100},
+            "governed-financial-advisor",
+            {"policy_version_id": "stale-hash"},
+        )
+        assert res.decision is GovernanceDecision.UNAVAILABLE
         assert calls == [("POST", "/governance/validate-action")]
         assert pins == ["stale-hash"]
+        with pytest.raises(CageGatewayError):
+            await sdk.validate_action(
+                "execute_trade",
+                {"amount": 100},
+                "governed-financial-advisor",
+                policy_version_id="stale-hash",
+            )
     finally:
         await client.close()
         GatewayClient._instance = None
@@ -405,12 +424,15 @@ async def test_gateway_client_does_not_replay_unevidenced_policy_drift_403(
 async def test_gateway_client_does_not_replay_unsigned_or_rogue_signed_policy_drift_403(
     attack: str,
 ):
-    """cage-client v0.4.0: Unsigned or rogue-signed 403s carrying proof_hash + drift text NEVER replay."""
+    """Unsigned or rogue-signed 403s carrying proof_hash + drift text NEVER replay."""
     import json
 
     import httpx
-    from cage_client import RoutingSealVerificationError
+    from cage_client import GovernanceDecision
 
+    from src.governed_financial_advisor.graph.governance.tool_guard import (
+        preview_trade_with_drift_revalidation,
+    )
     from src.governed_financial_advisor.infrastructure.gateway_client import (
         GatewayClient,
     )
@@ -437,7 +459,7 @@ async def test_gateway_client_does_not_replay_unsigned_or_rogue_signed_policy_dr
         if request.url.path == "/governance/policy-version":
             return httpx.Response(200, json={"active_hash": "attacker-pin"})
         sent = json.loads(request.content)
-        pins.append(sent["policy_version_id"])
+        pins.append(sent.get("policy_version_id"))
         if attack == "unsigned-with-proof-hash":
             return httpx.Response(status_code=403, json=drift_payload)
         return httpx.Response(
@@ -451,18 +473,16 @@ async def test_gateway_client_does_not_replay_unsigned_or_rogue_signed_policy_dr
         transport=httpx.MockTransport(handler),
         base_url="http://localhost:8080",
     )
-    expected_exc = (
-        httpx.HTTPStatusError
-        if attack == "unsigned-with-proof-hash"
-        else RoutingSealVerificationError
-    )
     try:
-        with pytest.raises(expected_exc):
-            await client.validate_action(
-                action="execute_trade",
-                params={"amount": 100},
-                policy_version_id="stale-hash",
-            )
+        sdk = await client.sdk_client()
+        res = await preview_trade_with_drift_revalidation(
+            sdk,
+            "execute_trade",
+            {"amount": 100},
+            "governed-financial-advisor",
+            {"policy_version_id": "stale-hash"},
+        )
+        assert res.decision is GovernanceDecision.UNAVAILABLE
         assert calls == [("POST", "/governance/validate-action")]
         assert pins == ["stale-hash"]
     finally:

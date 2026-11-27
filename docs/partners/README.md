@@ -62,7 +62,7 @@ Plan D (`#750`, `#752`–`#756` and `#758`, released as `conformance-v0.4.1`) re
 
 ### 1. `cage-conformance` `0.4.1` Live Endpoint Verification & Corrected Wire Vectors (`#752`, `16d60823`)
 
-[`packages/cage-conformance/`](../../packages/cage-conformance/) (`v0.4.1`, zero third-party runtime dependencies in [`pyproject.toml`](../../packages/cage-conformance/pyproject.toml)) extends `cage-conformance verify --endpoint <url> --profile <substrate-v1|provider-01-v0.2>` ([`runner.py`](../../packages/cage-conformance/src/cage_conformance/runner.py)):
+[`packages/cage-conformance/`](../../packages/cage-conformance/) (as of its `0.4.1` release, the version Plan D shipped; zero third-party runtime dependencies in [`pyproject.toml`](../../packages/cage-conformance/pyproject.toml)) extends `cage-conformance verify --endpoint <url> --profile <substrate-v1|provider-01-v0.2>` ([`runner.py`](../../packages/cage-conformance/src/cage_conformance/runner.py)):
 
 - **Corrected `provider-01-v0.2` Live Wire Profile ([`provider_01_v02.json`](../../packages/cage-conformance/src/cage_conformance/vectors/provider_01_v02.json))**: The earlier vector described a request shape the partner does not serve (a nested `payload` with a static `mandate_valid_until`). It now carries the live 37-field `CageAuthorityDetermineRequest` for `POST /cage/validate`:
   - **Cloud Run DRS Dual-Header Authentication**: Supports `X-Serverless-Authorization: Bearer <gcp_id_token>` (`--gcp-id-token-file` / `$CAGE_CONFORMANCE_GCP_ID_TOKEN`) alongside `Authorization: Bearer <api_key>` (`--api-key-file` / `$CAGE_CONFORMANCE_API_KEY`); secrets are read strictly from files or environment variables, never command-line arguments.

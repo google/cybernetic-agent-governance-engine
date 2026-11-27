@@ -578,14 +578,14 @@ async def test_a_denied_second_step_spends_the_denial_budget(gateway) -> None:
         (_respond(500, {"detail": "boom"}), "GATEWAY_ERROR", 0),
         (_respond(401, {"detail": "no workload identity"}), "GATEWAY_ERROR", 0),
         (_respond(403, {"detail": "Forbidden"}), "GATEWAY_ERROR", 0),
-        (_respond(200, {"verdict": "DEFER"}), "BLOCKED", 1),  # no ticket to park
+        (_respond(200, {"verdict": "DEFER"}), "GATEWAY_ERROR", 0),  # no ticket to park
         (
             _respond(200, {"verdict": "REQUIRE_APPROVAL"}),
-            "BLOCKED",
-            1,
+            "GATEWAY_ERROR",
+            0,
         ),  # no deferred_id
-        (_respond(200, {"verdict": "PAUSE"}), "BLOCKED", 1),
-        (_respond(200, {"violations": []}), "BLOCKED", 1),
+        (_respond(200, {"verdict": "PAUSE"}), "GATEWAY_ERROR", 0),
+        (_respond(200, {"violations": []}), "GATEWAY_ERROR", 0),
         (_timeout, "GATEWAY_ERROR", 0),
         (_unreachable, "GATEWAY_ERROR", 0),
     ],
@@ -693,7 +693,7 @@ async def test_a_deferred_step_defers_the_plan(gateway) -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_legacy_defer_id_without_defer_token_blocks_closed(gateway) -> None:
+async def test_a_defer_without_any_ticket_fails_closed(gateway) -> None:
     legacy = {
         "envelope_version": "3.0",
         "envelope_id": "env-legacy",
@@ -701,10 +701,20 @@ async def test_a_legacy_defer_id_without_defer_token_blocks_closed(gateway) -> N
     }
     gateway(_by_symbol({"AAA": _allow("sig-a"), "BBB": _respond(200, legacy)}))
 
-    out = await safety_check_node(_two_step_state())
+    out_legacy = await safety_check_node(_two_step_state())
+    assert out_legacy["safety_status"] == "DEFERRED"
+    assert out_legacy["deferral_ticket_id"] == "legacy-ticket"
 
-    assert out["safety_status"] == "BLOCKED"
-    assert out["consecutive_denials"] == 1
+    blank_defer = {
+        "envelope_version": "3.0",
+        "envelope_id": "env-blank",
+        "payload": {"verdict": "DEFER", "defer_token": "   "},
+    }
+    gateway(_by_symbol({"AAA": _allow("sig-a"), "BBB": _respond(200, blank_defer)}))
+
+    out = await safety_check_node(_two_step_state())
+    assert out["safety_status"] == "GATEWAY_ERROR"
+    assert out["consecutive_denials"] == 0
 
 
 @pytest.mark.asyncio

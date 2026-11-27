@@ -17,8 +17,17 @@
 - Before an evidence document ([`POAM.md`](../POAM.md), `compliance/oscal/`,
   [`.github/branch-protection-rules.md`](../../.github/branch-protection-rules.md)) states what
   a rule refuses or allows.
-- Before a new or changed ruleset is applied to a real ref. Create it against a disposable ref
-  first, observe it, then retarget it.
+- Before a new or changed ruleset is applied to a real ref:
+  - **Pre-edit dry-run for live ruleset updates:** When modifying an existing live ruleset
+    (e.g., adding/renaming required checks or toggling `strict_required_status_checks_policy`),
+    apply the proposed `rules` / `parameters` edit first to a **throwaway copy** targeting a
+    disposable `spike/probe-*` branch (`bypass_actors: []`), verify a negative `HTTP 422`
+    refusal and a positive `HTTP 200` control with **zero GitHub Actions runs**
+    (`actions/runs?branch=$P` `.total_count == 0`), delete both the throwaway ruleset and
+    disposable branch, and only then apply the verified payload to the live ruleset via
+    `PUT /repos/{owner}/{repo}/rulesets/{id}` (as with throwaway ruleset `28211373` on
+    `spike/probe-ruleset-172` before updating live ruleset `25966171` in `POAM-2026-172`).
+  - **New rulesets:** Create against a disposable ref first, observe it, then retarget it.
 - When a document marks a rule's effect as inferred, and the effect can be tested without
   touching a protected ref.
 
@@ -32,9 +41,11 @@
 3. **Start no workflows.** Give the probe commit `[skip ci]`, and give it the tree of the commit
    the positive control moves to. Moving the ref back to that commit then changes no files, so
    path-filtered push workflows have nothing to match.
-4. **Copy the rule verbatim.** Copy the `rules` of the ruleset under test with `jq` from the
-   live ruleset, not by hand. Target only the disposable ref and add no bypass actors, so an
-   admin token is held by the copy like any other.
+4. **Copy the rule verbatim (or derive the exact candidate payload).** Copy the `rules` of the
+   ruleset under test with `jq` from the live ruleset — or pipe the exact `jq` transform you
+   plan to `PUT` to the live ruleset into the throwaway copy — not by hand. Target only the
+   disposable ref and add no bypass actors, so an admin token is held by the copy like any
+   other.
 5. **Pair every negative case with a positive control.** The control must be an action that
    differs from the negative case only in the property under test. A refusal without an
    accepted control does not show what caused it.
@@ -75,7 +86,7 @@ C0=$(gh api -X POST "$R/git/commits" -f message="[skip ci] probe: $TOPIC" \
 gh api -X POST "$R/git/refs" -f ref="refs/heads/$P" -f sha="$C0"
 ```
 
-### Step 3: Copy the rule verbatim
+### Step 3: Copy the rule verbatim (or post the proposed update as a throwaway copy)
 
 ```bash
 PROBE=$(gh api "$R/rulesets/$RULESET" \
@@ -87,7 +98,10 @@ gh api "$R/rules/branches/$P" --jq '[.[] | "\(.type)@\(.ruleset_id)"]'   # expec
 ```
 
 To probe a new ruleset instead of an existing one, create it here with the probe ref as its
-only target.
+only target. To dry-run a proposed update to `$RULESET`, transform `.rules` in that `jq`
+pipeline before `POST /rulesets`, run Steps 4–7 to confirm `HTTP 422` refusal + `HTTP 200`
+acceptance with zero Actions runs and delete `$PROBE`, and then apply the verified `.rules`
+payload to `$RULESET` with `PUT /repos/{owner}/{repo}/rulesets/$RULESET`.
 
 ### Step 4: Negative case
 
@@ -136,6 +150,10 @@ but not the refused move.
 - **A live rule whose conditions already cover a disposable ref.** The 2026-10-27 probe of tag
   ruleset 25965917 worked this way: its probe tag matched `refs/tags/v*`. Such a ref keeps the
   rule after the probe, so a `deletion` rule then refuses its removal. Prefer the verbatim copy.
+- **A tag pattern that starts a workflow.** A tag matching `client-v*` or `conformance-v*` starts
+  [`publish-client-sdk.yml`](../../.github/workflows/publish-client-sdk.yml), so a probe tag
+  inside those patterns cannot be zero-Actions. Copy the rules onto a distinct pattern such as
+  `refs/tags/probe-conformance-v*` and probe a tag there, as on 2026-11-27.
 
 ## 5. What to record, and what a probe does not show
 
@@ -158,3 +176,5 @@ missing check result, but not a failed check or a pull request head.
 | 2026-10-27 | Tag ruleset 25965917 (`deletion`, `update`, `non_fast_forward`), live, on a probe tag inside its conditions | Deleting the tag: refused (`Cannot delete this tag`). Moving it by fast-forward: refused (`Cannot update this protected ref`) | Creating the tag: accepted | POAM-2026-116 |
 | 2026-11-02 | Ruleset 26377312 (`non_fast_forward`, `deletion`), created against a probe branch and then retargeted to `main` | Force push and deletion: refused | Force push before the ruleset existed: accepted. Fast-forward under it: accepted | POAM-2026-170, Remediation |
 | 2026-11-02 | Verbatim copy of 25966171's `required_status_checks` rule (ruleset 26398326, deleted afterwards) | Force push to `93d4bf67`, which has no Terraform result: refused (`Required status check "Terraform Tests (gcp-gke, mock providers)" is expected.`) | Force push to `f43efeba`, which has all eight: accepted | POAM-2026-170, Description |
+| 2026-11-27 | Copy of updated 25966171 `required_status_checks` rule (`strict_required_status_checks_policy: true`, 11 checks, ruleset 28211373 on `spike/probe-ruleset-172`, deleted afterwards) | Force push to `89e52040`, which lacks `Apache 2.0 License Headers`: refused (HTTP 422: `Required status check "Apache 2.0 License Headers" is expected.`) | Force push to `07ca2b88`, which passes all 11 checks: accepted | POAM-2026-172, POAM-2026-171 |
+| 2026-11-27 | Verbatim copy of 25965917's `deletion`, `update` and `non_fast_forward` rules (ruleset 28261959 on `refs/tags/probe-conformance-v*`, deleted afterwards), on tag `probe-conformance-v0.0.1` at a `[skip ci]` commit | Deleting the tag: refused (HTTP 422: `Cannot delete this tag`). Fast-forward move: refused (`Cannot update this protected ref.`). Forced move: refused (`Cannot update this protected ref.` and `Cannot force-push to this tag`) | Creating the tag under the rules: accepted. Deleting it after the copy was removed: accepted. Zero Actions runs and zero check runs on the probe commits | [`branch-protection-rules.md`](../../.github/branch-protection-rules.md) §4 |

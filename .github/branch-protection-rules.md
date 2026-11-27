@@ -204,13 +204,28 @@ Tag ruleset 25965917, "Protect release tags":
 
 | Setting | Value | Rationale |
 |---|---|---|
-| Target | Tags matching `refs/tags/v*` and `refs/tags/client-v*` | Every release tag, including the `client-v*` SDK releases |
+| Target | Tags matching `refs/tags/v*`, `refs/tags/client-v*` and `refs/tags/conformance-v*` | Every release tag, including the `client-v*` SDK releases and the `conformance-v*` verifier releases (`conformance-v*` added 2026-11-27) |
 | Restrict deletions | ✅ (`deletion`) | A published release tag must not disappear |
 | Restrict updates | ✅ (`update`) | A published release tag must not move, not even by fast-forward |
 | Block force pushes | ✅ (`non_fast_forward`) | |
 | Bypass list | None | Changing a release tag means editing or disabling the ruleset, which ruleset history records (POAM-2026-116) |
 
 Tag creation is not restricted by a rule.
+
+What has been observed for `conformance-v*` (added 2026-11-27):
+
+- **Coverage.** When `conformance-v0.4.2` was created, rule suite `5416775387` evaluated this
+  ruleset's `deletion`, `update` and `non_fast_forward` rules on `refs/tags/conformance-v0.4.2`
+  with enforcement `active`, so the ruleset applies to that pattern.
+- **Refusal.** Probed on 2026-11-27 with a verbatim copy of this ruleset's rules (ruleset
+  `28261959`, targeting `refs/tags/probe-conformance-v*`, deleted afterwards). On
+  `probe-conformance-v0.0.1`, deletion was refused (`Cannot delete this tag`), a fast-forward
+  move was refused (`Cannot update this protected ref.`) and a forced move was refused (the same
+  message plus `Cannot force-push to this tag`). Creating the tag was accepted, and deleting it
+  was accepted once the copy was removed
+  ([`RULESET_PROBES.md`](../docs/operations/RULESET_PROBES.md) §6).
+- **Not tried.** A deletion or move of a `conformance-v*` tag itself. The probe used a distinct
+  pattern because a `conformance-v*` tag push starts `publish-client-sdk.yml`.
 
 ---
 
@@ -257,8 +272,7 @@ After any ruleset change:
 - [ ] Open a pull request and confirm the eleven required checks in §3 are listed and must pass
 - [ ] Confirm the review requirement appears on a pull request by the maintainer
 - [ ] Confirm a direct push of a new commit to `main` is refused with `remote: error: GH013`
-- [ ] Before a document states what a rule refuses or allows, probe it on a disposable ref
-      ([`RULESET_PROBES.md`](../docs/operations/RULESET_PROBES.md))
+- [ ] Before applying a ruleset change to `main` (via throwaway dry-run copy first) and before a document states what a rule refuses or allows, probe on a disposable ref with zero Actions runs ([`RULESET_PROBES.md`](../docs/operations/RULESET_PROBES.md))
 
 ---
 
