@@ -148,7 +148,7 @@ async def _buy(inputs: ServerTradeInputs) -> CommitOutcome:
         amount=500.0,
         currency="USD",
         confidence=0.99,
-        transaction_id=str(uuid.uuid4()),
+        idempotency_key=str(uuid.uuid4()),
         governor=committing_trade_governor(
             {"execute_trade": TradeInputResolver(inputs)}
         ),
@@ -474,7 +474,7 @@ async def test_advisor_buy_payload_clears_the_stpa_stage(
             amount=500.0,
             currency="USD",
             confidence=0.99,
-            transaction_id=str(uuid.uuid4()),
+            idempotency_key=str(uuid.uuid4()),
             side="buy",
         )
     params = stpa_gateway[-1]

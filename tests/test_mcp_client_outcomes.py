@@ -150,9 +150,9 @@ async def test_failure_after_send_is_not_resent(tool: str, failure: Exception) -
     client = _ScriptedClient([failure, _result("EXECUTED: second run")])
 
     with pytest.raises(MCPToolOutcomeUnknownError) as excinfo:
-        await client.call_tool(tool, {"transaction_id": "t-1"})
+        await client.call_tool(tool, {"idempotency_key": "t-1"})
 
-    assert client.invocations == [(tool, {"transaction_id": "t-1"})]
+    assert client.invocations == [(tool, {"idempotency_key": "t-1"})]
     assert excinfo.value.tool_name == tool
     assert excinfo.value.__cause__ is failure
     # The failed session is dropped so the next call reconnects first.
@@ -215,10 +215,10 @@ async def test_connect_phase_failure_is_retried() -> None:
         [_result("EXECUTED: AAPL x 10 (Receipt ID: r-1)")], connect_failures=3
     )
 
-    result = await client.call_tool(_TRADE, {"transaction_id": "t-1"})
+    result = await client.call_tool(_TRADE, {"idempotency_key": "t-1"})
 
     assert result == "EXECUTED: AAPL x 10 (Receipt ID: r-1)"
-    assert client.invocations == [(_TRADE, {"transaction_id": "t-1"})]
+    assert client.invocations == [(_TRADE, {"idempotency_key": "t-1"})]
 
 
 @pytest.mark.asyncio
@@ -226,7 +226,7 @@ async def test_connect_phase_failing_twice_raises_without_sending() -> None:
     client = _ScriptedClient([_result("unused")], connect_failures=6)
 
     with pytest.raises(httpx.ConnectError):
-        await client.call_tool(_TRADE, {"transaction_id": "t-1"})
+        await client.call_tool(_TRADE, {"idempotency_key": "t-1"})
 
     assert client.invocations == []
 
@@ -260,11 +260,11 @@ async def test_closed_transport_is_reestablished_before_sending() -> None:
     client._write_stream = send_stream
     receive_stream.close()  # the transport's POST writer has exited
 
-    result = await client.call_tool(_TRADE, {"transaction_id": "t-1"})
+    result = await client.call_tool(_TRADE, {"idempotency_key": "t-1"})
 
     assert result == "EXECUTED: fresh session"
     assert dead.calls == []
-    assert client.invocations == [(_TRADE, {"transaction_id": "t-1"})]
+    assert client.invocations == [(_TRADE, {"idempotency_key": "t-1"})]
     send_stream.close()
 
 

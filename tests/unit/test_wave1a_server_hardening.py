@@ -917,7 +917,7 @@ class TestKC06McpSanitizerWiring:
         # 3. UnsettledDuplicate -> HTTP 200 structured ERROR, not a policy refusal (POAM-2026-232)
         async def _unsettled_dup_tool(**_kwargs: Any) -> str:
             raise UnsettledDuplicate(
-                "IN_FLIGHT: transaction_id 22222222-2222-4222-8222-222222222222 already submitted"
+                "IN_FLIGHT: idempotency_key 22222222-2222-4222-8222-222222222222 already submitted"
             )
 
         monkeypatch.setattr(

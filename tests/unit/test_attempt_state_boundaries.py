@@ -91,7 +91,7 @@ _TRADE: dict[str, Any] = {
     "amount": 10.0,
     "currency": "USD",
     "confidence": 0.99,
-    "transaction_id": _TXN,
+    "idempotency_key": _TXN,
 }
 _DOSE_KEY = "8e4d2c1b-0a9f-4e8d-9c7b-6a5f4e3d2c1b"
 _DOSE: dict[str, Any] = {

@@ -201,7 +201,7 @@ async def _run_trade(actuate_mock: AsyncMock) -> tuple[MagicMock, object]:
         try:
             outcome: object = await execute_trade_action(
                 governor=governor,
-                transaction_id=str(uuid.uuid4()),
+                idempotency_key=str(uuid.uuid4()),
                 symbol="AAPL",
                 amount=100.0,
                 currency="USD",

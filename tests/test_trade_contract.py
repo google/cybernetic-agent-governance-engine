@@ -25,7 +25,7 @@ Before the fix, ``trade_contract``:
   defaults it to ``0.0``;
 * reused a cached ``ALLOW`` verdict for an order that differed in a field the
   digest did not bind (``limit_price``, ``account_id``, ``order_type``,
-  ``venue``, ``agent_id``, ``transaction_id``, ...).
+  ``venue``, ``agent_id``, ``idempotency_key``, ...).
 
 The safety-node tests drive the real ``GatewayClient`` over an
 ``httpx.MockTransport`` whose verdicts ``SignedGatewayStub`` signs, so the
@@ -96,7 +96,7 @@ _EXTRA_FIELDS = [
     ("venue", "DARKPOOL"),
     ("agent_id", "someone-else"),
     ("trader_id", "other-trader"),
-    ("transaction_id", "other-tx"),
+    ("idempotency_key", "other-tx"),
 ]
 
 _SUBSTRING_NAMES = [
@@ -389,8 +389,8 @@ async def test_tool_guard_reuses_the_verdict_for_the_exact_order(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("field", "value"),
-    # governed_tool_node replaces model-supplied transaction_id with its derived key.
-    [(field, value) for field, value in _EXTRA_FIELDS if field != "transaction_id"],
+    # governed_tool_node replaces model-supplied idempotency_key with its derived key.
+    [(field, value) for field, value in _EXTRA_FIELDS if field != "idempotency_key"],
 )
 async def test_tool_guard_revalidates_a_call_with_an_extra_field(
     monkeypatch: pytest.MonkeyPatch, field: str, value: Any
@@ -403,22 +403,22 @@ async def test_tool_guard_revalidates_a_call_with_an_extra_field(
 
 
 @pytest.mark.asyncio
-async def test_tool_guard_replaces_the_model_transaction_id_and_still_reuses(
+async def test_tool_guard_replaces_the_model_idempotency_key_and_still_reuses(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     executed: list[dict[str, Any]] = []
     preview_calls, out = await _guarded_call(
-        monkeypatch, {**_ORDER, "transaction_id": "other-tx"}, executed
+        monkeypatch, {**_ORDER, "idempotency_key": "other-tx"}, executed
     )
 
     assert preview_calls == []  # the derived idempotency key does not block reuse
     assert out["governance_status"] == "ALLOWED"
     (args,) = executed
-    assert uuid.UUID(args["transaction_id"]).version == 5
+    assert uuid.UUID(args["idempotency_key"]).version == 5
 
 
 @pytest.mark.asyncio
-async def test_tool_guard_previews_the_order_without_its_transaction_id(
+async def test_tool_guard_previews_the_order_without_its_idempotency_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     executed: list[dict[str, Any]] = []
@@ -427,9 +427,9 @@ async def test_tool_guard_previews_the_order_without_its_transaction_id(
     )
 
     (previewed,) = preview_calls
-    assert "transaction_id" not in previewed
+    assert "idempotency_key" not in previewed
     (args,) = executed
-    assert uuid.UUID(args["transaction_id"]).version == 5
+    assert uuid.UUID(args["idempotency_key"]).version == 5
 
 
 # ---------------------------------------------------------------------------

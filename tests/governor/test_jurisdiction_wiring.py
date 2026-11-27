@@ -1015,8 +1015,8 @@ async def test_payload_names_the_verified_caller_and_the_trace() -> None:
 @pytest.mark.parametrize(
     ("params", "expected"),
     [
-        ({"thread_id": "t-1", "transaction_id": "tx-1"}, "t-1"),
-        ({"transaction_id": "tx-1"}, "tx-1"),
+        ({"thread_id": "t-1", "idempotency_key": "tx-1"}, "t-1"),
+        ({"idempotency_key": "tx-1"}, "tx-1"),
     ],
 )
 async def test_payload_thread_prefers_the_request_ids(
@@ -1025,6 +1025,17 @@ async def test_payload_thread_prefers_the_request_ids(
     provider = _FakeProvider()
     await _tier(provider).evaluate("execute_trade", {**params, **_TRADE})
     assert provider.calls[0]["thread_id"] == expected
+
+
+def test_resolve_thread_id_order_and_legacy_rejection() -> None:
+    """verdicts.resolve_thread_id prefers thread_id -> idempotency_key and ignores transaction_id."""
+    from src.gateway.governance.governor.verdicts import resolve_thread_id
+
+    assert resolve_thread_id({"thread_id": "th-1", "idempotency_key": "ik-1"}) == "th-1"
+    assert resolve_thread_id({"idempotency_key": "ik-1"}) == "ik-1"
+    assert resolve_thread_id({"idempotency_key": ""}) == "unknown"
+    assert resolve_thread_id({"transaction_id": "legacy-tx-1"}) == "unknown"
+    assert resolve_thread_id({}) == "unknown"
 
 
 @pytest.mark.asyncio

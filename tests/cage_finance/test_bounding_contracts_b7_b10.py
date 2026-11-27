@@ -51,7 +51,7 @@ class TestContractB7AuditTrailSealing:
             amount=1000.0,
             side="buy",
             venue="NYSE",
-            transaction_id="test-tx-b7-01",
+            idempotency_key="test-tx-b7-01",
         )
 
         # In normal operation, KMSGovernanceSigner class is available
@@ -69,7 +69,7 @@ class TestContractB7AuditTrailSealing:
             amount=1000.0,
             side="buy",
             venue="NYSE",
-            transaction_id="test-tx-b7-02",
+            idempotency_key="test-tx-b7-02",
         )
 
         # Mock ImportError for KMS signer module
@@ -112,7 +112,7 @@ class TestContractB10RollbackWindow:
             side="buy",
             venue="NYSE",
             rollback_window_seconds=300,  # 5 minutes
-            transaction_id="test-tx-b10-01",
+            idempotency_key="test-tx-b10-01",
         )
 
         thresholds = {
@@ -144,7 +144,7 @@ class TestContractB10RollbackWindow:
             side="buy",
             venue="LEGACY_EXCHANGE",
             rollback_window_seconds=300,
-            transaction_id="test-tx-b10-02",
+            idempotency_key="test-tx-b10-02",
         )
 
         thresholds = {
@@ -181,7 +181,7 @@ class TestContractB10RollbackWindow:
             side="buy",
             venue="NYSE",
             rollback_window_seconds=300,
-            transaction_id="test-tx-b10-03",
+            idempotency_key="test-tx-b10-03",
         )
 
         thresholds = {
@@ -220,7 +220,7 @@ class TestContractB10RollbackWindow:
             side="buy",
             venue="FAST_EXCHANGE",
             rollback_window_seconds=600,  # 10 minutes requested
-            transaction_id="test-tx-b10-04",
+            idempotency_key="test-tx-b10-04",
         )
 
         thresholds = {
@@ -261,7 +261,7 @@ class TestContractB10RollbackWindow:
             side="buy",
             venue="NYSE",
             rollback_window_seconds=30,  # Only 30 seconds
-            transaction_id="test-tx-b10-05",
+            idempotency_key="test-tx-b10-05",
         )
 
         thresholds = {
@@ -300,7 +300,7 @@ class TestContractB10RollbackWindow:
             side="buy",
             venue="NYSE",
             rollback_window_seconds=300,
-            transaction_id="test-tx-b10-06",
+            idempotency_key="test-tx-b10-06",
         )
 
         thresholds = {
@@ -334,7 +334,7 @@ class TestContractB10RollbackWindow:
             side="buy",
             venue="NYSE",
             rollback_window_seconds=300,
-            transaction_id="test-tx-b10-07",
+            idempotency_key="test-tx-b10-07",
         )
 
         thresholds = {
@@ -363,7 +363,7 @@ class TestContractB10RollbackWindow:
             side="buy",
             venue="NYSE",
             rollback_window_seconds=300,
-            transaction_id="test-tx-b10-08",
+            idempotency_key="test-tx-b10-08",
         )
 
         thresholds = {
@@ -396,7 +396,7 @@ class TestContractB10RollbackWindow:
             side="buy",
             venue="NYSE",
             rollback_window_seconds=60,  # Exactly at minimum
-            transaction_id="test-tx-b10-09",
+            idempotency_key="test-tx-b10-09",
         )
 
         thresholds = {
@@ -426,7 +426,7 @@ class TestContractB10RollbackWindow:
             side="buy",
             venue="NYSE",
             rollback_window_seconds=600,  # Exactly at max
-            transaction_id="test-tx-b10-10",
+            idempotency_key="test-tx-b10-10",
         )
 
         mock_provider.verify_rollback_window.return_value = {

@@ -370,7 +370,7 @@ async def test_dry_run_leaves_claim_none_and_fails_closed_if_dispatched(
         gov,
         action="execute_trade",
         idempotency_key=_KEY_1,
-        params={"transaction_id": _KEY_1},
+        params={"idempotency_key": _KEY_1},
         dry_run=True,
     ) as scope:
         assert scope.attempt._claim is None

@@ -226,7 +226,7 @@ _TRADE: dict[str, Any] = {
     "amount": 10.0,
     "currency": "USD",
     "confidence": 0.99,
-    "transaction_id": _TXN,
+    "idempotency_key": _TXN,
 }
 
 
@@ -396,7 +396,6 @@ async def _guarded_via_sdk(
             client=client,
             action="execute_trade",
             mode="execute",
-            idempotency_param="transaction_id",
             committing_tools={"execute_trade_action"},
             principal_extractor=lambda _s: "advisor-sa",
             message_formatter=lambda c, e, o: tool_guard.advisor_tool_message(c, e, o),

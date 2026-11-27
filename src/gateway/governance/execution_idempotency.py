@@ -822,7 +822,7 @@ class ExecutionLedger:
         """Release ``claim`` if it is still ``IN_FLIGHT`` and owned by this attempt.
 
         Used strictly when governance blocks on infrastructure unavailability
-        before actuation started, so retrying the same ``transaction_id`` after
+        before actuation started, so retrying the same ``idempotency_key`` after
         the dependency recovers does not collide with a stale ``BLOCKED`` or
         ``IN_FLIGHT`` record (F-03, POAM-2026-233).
 
@@ -1119,7 +1119,6 @@ async def execution_claim_scope(
     dry_run: bool = False,
     reclaim_blocked: bool = False,
     caller_identity: str = SHARED_CALLER,
-    key_field_name: str = "idempotency_key",
 ) -> AsyncIterator[ExecutionClaimScope]:
     """Own the Layer 1 at-most-once claim lifecycle for a committing action.
 
@@ -1138,9 +1137,7 @@ async def execution_claim_scope(
 
     with actuation_attempt_scope() as attempt:
         if idempotency_key is None or idempotency_key == "":
-            reason = (
-                f"{key_field_name} is required (a UUIDv4 or UUIDv5 idempotency key)."
-            )
+            reason = "idempotency_key is required (a UUIDv4 or UUIDv5 idempotency key)."
             proof_hash = await _gm.record_refusal(
                 action, reason, oscal_control_ref="AC-3", params=params
             )
@@ -1153,7 +1150,7 @@ async def execution_claim_scope(
 
         if not is_valid_idempotency_key(idempotency_key):
             reason = (
-                f"invalid {key_field_name} {str(idempotency_key)[:64]!r}; "
+                f"invalid idempotency_key {str(idempotency_key)[:64]!r}; "
                 "expected a UUIDv4 or UUIDv5."
             )
             proof_hash = await _gm.record_refusal(
@@ -1167,7 +1164,7 @@ async def execution_claim_scope(
             return
 
         normalized_key = idempotency_key.lower()
-        normalized_params = {**params, key_field_name: normalized_key}
+        normalized_params = {**params, "idempotency_key": normalized_key}
         claim: Claim | None = None
         ledger: ExecutionLedger | None = None
 
@@ -1229,7 +1226,7 @@ async def execution_claim_scope(
 
             if isinstance(claimed, Duplicate):
                 dup_reason = (
-                    f"duplicate submission of {key_field_name} {normalized_key} "
+                    f"duplicate submission of idempotency_key {normalized_key} "
                     f"(first attempt {claimed.status.value})"
                 )
                 if (
@@ -1257,7 +1254,7 @@ async def execution_claim_scope(
                 }.get(claimed.status, "left no recorded reply")
                 first = f" First attempt: {claimed.outcome}" if claimed.outcome else ""
                 raise UnsettledDuplicate(
-                    f"{claimed.status.value}: {key_field_name} {normalized_key} was already "
+                    f"{claimed.status.value}: idempotency_key {normalized_key} was already "
                     f"submitted and its first attempt {state}; it is not executed again.{first}"
                 )
             claim = claimed

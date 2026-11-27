@@ -1050,11 +1050,11 @@ jobs:
           thresholds_digest=$(python3 -c 'import json, re, sys; d = json.loads(sys.argv[1])["thresholds_digest"]; assert re.fullmatch(r"[0-9a-f]{64}", d), d; print(d)' "$policy_json")
 
           # 1. Admitted & settled trade (ALLOW -> seal consumed -> ACTUATION_RECEIPT -> CONFIRMED)
-          allow_resp=$($call /tools/execute '{"tool_name":"execute_trade_action","params":{"symbol":"AAPL","amount":250.0,"currency":"USD","confidence":0.99,"transaction_id":"11111111-1111-4111-8111-111111111111","side":"buy"}}')
+          allow_resp=$($call /tools/execute '{"tool_name":"execute_trade_action","params":{"symbol":"AAPL","amount":250.0,"currency":"USD","confidence":0.99,"idempotency_key":"11111111-1111-4111-8111-111111111111","side":"buy"}}')
           python3 -c 'import json, sys; r = json.loads(sys.argv[1]); assert r.get("status") == "SUCCESS" and "EXECUTED:" in r.get("output", ""), r' "$allow_resp"
 
-          # 1b. HTTP replay of the already-executed transaction_id (ExecutionLedger Redis SET NX -> duplicate refusal receipt, no second actuation)
-          dup_resp=$($call /tools/execute '{"tool_name":"execute_trade_action","params":{"symbol":"AAPL","amount":250.0,"currency":"USD","confidence":0.99,"transaction_id":"11111111-1111-4111-8111-111111111111","side":"buy"}}')
+          # 1b. HTTP replay of the already-executed idempotency_key (ExecutionLedger Redis SET NX -> duplicate refusal receipt, no second actuation)
+          dup_resp=$($call /tools/execute '{"tool_name":"execute_trade_action","params":{"symbol":"AAPL","amount":250.0,"currency":"USD","confidence":0.99,"idempotency_key":"11111111-1111-4111-8111-111111111111","side":"buy"}}')
           dup_refusal_hash=$(python3 -c 'import json, re, sys; a, d = json.loads(sys.argv[1]), json.loads(sys.argv[2]); assert d.get("status") == "SUCCESS" and d.get("output") == a.get("output"), (a, d); h = d["proof_hash"]; assert re.fullmatch(r"[0-9a-f]{64}", h), d; print(h)' "$allow_resp" "$dup_resp")
 
           # 1c. Direct routing-seal nonce replay (Theorem 5.3 / INV-2: mint EdDSA JWT -> consume #1 commits GOVERNANCE_SEAL_CONSUMED -> consume #2 on same seal refused by live Redis Lua burn)
@@ -1098,12 +1098,12 @@ jobs:
 
           # 2. Admitted by governor, interrupted at broker -> rolled back (CBF_ROLLBACK + ROLLED_BACK settlement)
           docker compose exec -T redis redis-cli -n 0 SET safety_violation smoke_interrupt >/dev/null
-          rollback_resp=$($call /tools/execute '{"tool_name":"execute_trade_action","params":{"symbol":"MSFT","amount":300.0,"currency":"USD","confidence":0.99,"transaction_id":"22222222-2222-4222-8222-222222222222","side":"buy"}}')
+          rollback_resp=$($call /tools/execute '{"tool_name":"execute_trade_action","params":{"symbol":"MSFT","amount":300.0,"currency":"USD","confidence":0.99,"idempotency_key":"22222222-2222-4222-8222-222222222222","side":"buy"}}')
           docker compose exec -T redis redis-cli -n 0 DEL safety_violation >/dev/null
           python3 -c 'import json, sys; r = json.loads(sys.argv[1]); assert r.get("status") == "ERROR" and "Actuation rejected" in r.get("error", ""), r' "$rollback_resp"
 
           # 3. Denied by governor (restricted asset BTC -> GOVERNANCE_REFUSAL + caller proof_hash)
-          deny_resp=$($call /tools/execute '{"tool_name":"execute_trade_action","params":{"symbol":"BTC","amount":100.0,"currency":"USD","confidence":0.99,"transaction_id":"33333333-3333-4333-8333-333333333333","side":"buy"}}')
+          deny_resp=$($call /tools/execute '{"tool_name":"execute_trade_action","params":{"symbol":"BTC","amount":100.0,"currency":"USD","confidence":0.99,"idempotency_key":"33333333-3333-4333-8333-333333333333","side":"buy"}}')
           refusal_hash=$(python3 -c 'import json, re, sys; r = json.loads(sys.argv[1]); assert "BLOCKED:" in r.get("output", ""), r; h = r["proof_hash"]; assert re.fullmatch(r"[0-9a-f]{64}", h), r; print(h)' "$deny_resp")
 
           # Flush group-commit window and export raw Redis Stream entries from DB 1

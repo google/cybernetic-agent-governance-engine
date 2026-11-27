@@ -239,7 +239,7 @@ async def test_finance_records_the_digest_and_hands_the_broker_the_seal(
             currency="USD",
             confidence=0.99,
             governor=trade_governor(),
-            transaction_id=str(uuid.uuid4()),
+            idempotency_key=str(uuid.uuid4()),
         )
 
     assert len(minted_seals) == 1

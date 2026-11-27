@@ -127,7 +127,7 @@ control_actions:
         type: string
         required: false
         server_bound: true
-      - name: transaction_id
+      - name: idempotency_key
         type: string
         required: false
 
@@ -223,9 +223,9 @@ unsafe_control_actions:
       execution_type: mcp_tool
       mcp_tool_name: execute_trade_action
       # The state keys sent as execute_trade_action's arguments, and nothing else.
-      mcp_arguments: [symbol, amount, currency, side, transaction_id]
+      mcp_arguments: [symbol, amount, currency, side, idempotency_key]
       parameter_mapping:
-        forward.transaction_id: compensating.target_tx_id
+        forward.idempotency_key: compensating.target_tx_id
         forward.amount: compensating.refund_amount
 
   - id: UCA-5

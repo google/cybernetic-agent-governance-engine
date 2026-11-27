@@ -162,7 +162,7 @@ async def _trade(
         currency="USD",
         confidence=0.99,
         governor=governor or _governor(inputs or _inputs()),
-        **{"transaction_id": str(uuid.uuid4()), **kwargs},
+        **{"idempotency_key": str(uuid.uuid4()), **kwargs},
     )
 
 

@@ -159,7 +159,7 @@ class NormativeProvider(Protocol):
           of the caller (``""`` when there is none), never a request value;
         * ``correlation_id``: the active trace id (``""`` outside a trace);
         * ``thread_id``: the request's ``thread_id``, else its
-          ``transaction_id``, else ``correlation_id``.
+          ``idempotency_key``, else ``correlation_id``.
         """
         ...  # pragma: no cover
 

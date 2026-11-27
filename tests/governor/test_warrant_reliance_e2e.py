@@ -241,7 +241,7 @@ class Stack:
                 params["amount"],
                 params["currency"],
                 params["confidence"],
-                params.get("transaction_id") or str(uuid.uuid4()),
+                params.get("idempotency_key") or str(uuid.uuid4()),
                 False,
                 deferred_id,
                 params["side"],
@@ -278,7 +278,7 @@ class Stack:
         self.actuate.assert_not_awaited()
         assert await self.records("GOVERNANCE_DECISION") == []  # no seal minted
         # No seal nonce burned. The execution ledger shares this Redis, so its
-        # transaction_id claim is not counted.
+        # idempotency_key claim is not counted.
         assert await self.seal_redis.keys("cage:seal:*") == []
 
 
@@ -1042,10 +1042,10 @@ async def test_post_hitl_concurrent_redemptions_after_a_deferral_commit_once(
 
 
 @pytest.mark.eu_ecb
-async def test_post_hitl_retries_under_one_transaction_id_execute_once(
+async def test_post_hitl_retries_under_one_idempotency_key_execute_once(
     build: StackFactory,
 ) -> None:
-    """#514: one transaction_id through deferral, retries and redemption.
+    """#514: one idempotency_key through deferral, retries and redemption.
 
     The approval re-claims the key its deferred attempt left BLOCKED, so the
     same trade redeems once the warrant holds again; a plain resubmission
@@ -1054,7 +1054,7 @@ async def test_post_hitl_retries_under_one_transaction_id_execute_once(
     """
     stack = await build(seed=_vec(SHARED_WARRANT))
     deferred_id = await _approved_floor_breach(stack)
-    params = trade(0.96, transaction_id=str(uuid.uuid4()))
+    params = trade(0.96, idempotency_key=str(uuid.uuid4()))
 
     stack.source.seed(_vec(VEC_002_REVOKED))
     stack.clock.advance(60.001)

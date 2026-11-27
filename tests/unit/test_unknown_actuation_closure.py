@@ -21,7 +21,7 @@ Covers:
 3. Stage 3 — Outcome taxonomy split (ActuationIndeterminateError / ActuationRejectedError
    decoupled from SymbolicGovernorViolation, CommitStatus.INDETERMINATE /
    UNSETTLED_DUPLICATE, and /tools/execute non-refusal behavior).
-4. Stage 4 — Retry-safe transaction_id derivation independent of LLM tool_call_id
+4. Stage 4 — Retry-safe idempotency_key derivation independent of LLM tool_call_id
    and terminal advisor indeterminate message / non-retry halting.
 """
 
@@ -315,7 +315,7 @@ class TestStage2FiscalReclamationAndAlerting:
         )
 
         aged = await guard.list_unverified_unknown(older_than_seconds=300.0, now=450.0)
-        assert [item.transaction_id for item in aged] == ["tx-not-executed"]
+        assert [item.idempotency_key for item in aged] == ["tx-not-executed"]
         assert aged[0].amount_usd == 400.0
         assert aged[0].symbol == "AAPL"
 
@@ -433,7 +433,7 @@ class TestStage2FiscalReclamationAndAlerting:
         assert report.still_indeterminate == ("tx-stuck-aged",)
         assert len(report.aged_unresolved) == 1
         assert len(aged_alerts) == 1
-        assert aged_alerts[0][0].transaction_id == "tx-stuck-aged"
+        assert aged_alerts[0][0].idempotency_key == "tx-stuck-aged"
         assert await guard.current_spend_usd() == pytest.approx(400.0)
 
         # Ledger entries were transitioned properly:
@@ -581,13 +581,13 @@ class TestStage3OutcomeSplitAndMcpServer:
                     symbol="AAPL",
                     amount=100.0,
                     currency="USD",
-                    transaction_id=tx_id,
+                    idempotency_key=tx_id,
                     governor=governor,
                 )
 
         unverified = await fiscal_guard.list_unverified_unknown()
         assert len(unverified) == 1
-        assert unverified[0].transaction_id == tx_id
+        assert unverified[0].idempotency_key == tx_id
         assert unverified[0].amount_usd == 100.0
 
     @pytest.mark.asyncio
@@ -717,7 +717,7 @@ class TestStage3OutcomeSplitAndMcpServer:
 class TestStage4RetrySafeIdempotencyAndAdvisorHalting:
     """Retry-safe plan/intent derivation & non-retryable terminal advisor outcome."""
 
-    def test_derive_transaction_id_ignores_volatile_tool_call_id(self) -> None:
+    def test_derive_idempotency_key_ignores_volatile_tool_call_id(self) -> None:
         from src.governed_financial_advisor.graph.governance.tool_guard import (
             canonical_trade_intent,
         )
@@ -764,7 +764,7 @@ class TestStage4RetrySafeIdempotencyAndAdvisorHalting:
 
         def _handler(request: httpx.Request) -> httpx.Response:
             sent = json.loads(request.content)
-            seen_txns.append(str(sent["params"]["transaction_id"]))
+            seen_txns.append(str(sent["params"]["idempotency_key"]))
             return httpx.Response(
                 200,
                 json={
@@ -820,7 +820,7 @@ class TestStage4RetrySafeIdempotencyAndAdvisorHalting:
             assert "Do not submit it again until it has been reconciled" in msg
             assert "Submit a new request" not in msg
 
-            # Even if caller/LLM replays with a fresh tool_call_id, transaction_id is identical.
+            # Even if caller/LLM replays with a fresh tool_call_id, idempotency_key is identical.
             replay_state = {
                 **state,
                 "messages": [
@@ -884,7 +884,7 @@ class TestEndToEndUnknownActuationLifecycle:
                 agent_id="trader-1",
                 amount_usd=float(params["amount"]),
             )
-            seal = f"seal-{params['transaction_id']}"
+            seal = f"seal-{params['idempotency_key']}"
             held_tokens[seal] = tok
             return sealed_governance(seal)(gov, action, params, **_kw)
 
@@ -994,7 +994,7 @@ class TestEndToEndUnknownActuationLifecycle:
                 signed_outcome = stub.commit_outcome(
                     body["outcome"],
                     tool_name=str(sent.get("tool_name") or ""),
-                    idempotency_key=params.get("transaction_id"),
+                    idempotency_key=params.get("idempotency_key"),
                 )
                 return httpx.Response(
                     resp.status_code,
@@ -1040,7 +1040,7 @@ class TestEndToEndUnknownActuationLifecycle:
                 first_out = dict(first_cmd.update or {})
                 mark_refused.assert_not_called()
 
-            # Stage 4: advisor halted without loop, transaction_id bound, fiscal held.
+            # Stage 4: advisor halted without loop, idempotency_key bound, fiscal held.
             assert first_out["governance_status"] == CommitStatus.INDETERMINATE.value
             assert "Do not submit it again until it has been reconciled" in (
                 first_out["messages"][0].content
@@ -1048,7 +1048,7 @@ class TestEndToEndUnknownActuationLifecycle:
             assert await fiscal_guard.current_spend_usd() == pytest.approx(250.0)
             unverified = await fiscal_guard.list_unverified_unknown()
             assert len(unverified) == 1
-            tx_id = unverified[0].transaction_id
+            tx_id = unverified[0].idempotency_key
 
             # Simulated LLM retry with fresh tool_call_id collides deterministically as UNSETTLED_DUPLICATE.
             retry_state = {

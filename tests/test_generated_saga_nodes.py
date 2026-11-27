@@ -49,7 +49,7 @@ def _make_ledger_entry(
         "action": action,
         "idempotency_key": idempotency_key,
         "status": status,
-        "context_data": context_data or {"transaction_id": "tx-001", "amount": 100},
+        "context_data": context_data or {"idempotency_key": "tx-001", "amount": 100},
     }
 
 
@@ -191,7 +191,7 @@ class TestForwardExecuteTradeNodeUCA4:
             transactions=transactions,
             currency="USD",
             side="buy",
-            transaction_id=self._TX_ID,
+            idempotency_key=self._TX_ID,
         )
 
     def _expected_arguments(self) -> dict[str, Any]:
@@ -200,7 +200,7 @@ class TestForwardExecuteTradeNodeUCA4:
             "amount": 500,
             "currency": "USD",
             "side": "buy",
-            "transaction_id": self._TX_ID,
+            "idempotency_key": self._TX_ID,
         }
 
     def _run_forward(
@@ -276,7 +276,7 @@ class TestForwardExecuteTradeNodeUCA4:
         assert len(entries) == 1
         assert entries[0]["status"] == "COMPLETED"
 
-    def test_completed_entry_key_derives_from_transaction_id(self) -> None:
+    def test_completed_entry_key_derives_from_idempotency_key(self) -> None:
         _, returned, _ = self._run_forward(self._trade_state())
 
         entry = returned["completed_transactions"][0]
@@ -337,7 +337,7 @@ class TestForwardExecuteTradeNodeUCA4:
             "completed_transactions", []
         )
         assert [e["status"] for e in ledger] == ["PENDING"]
-        assert ledger[0]["context_data"]["transaction_id"] == self._TX_ID
+        assert ledger[0]["context_data"]["idempotency_key"] == self._TX_ID
 
         routed = saga.saga_router_node(_make_state(transactions=ledger))  # type: ignore[arg-type]
         assert routed["safety_status"] == "ESCALATED"
@@ -440,12 +440,12 @@ class TestCompensateReverseTradeNodeUCA4:
             _make_ledger_entry(
                 status="COMPLETED",
                 sequence_id=0,
-                context_data={"transaction_id": "tx-old", "amount": 100},
+                context_data={"idempotency_key": "tx-old", "amount": 100},
             ),
             _make_ledger_entry(
                 status="COMPLETED",
                 sequence_id=1,
-                context_data={"transaction_id": "tx-new", "amount": 200},
+                context_data={"idempotency_key": "tx-new", "amount": 200},
             ),
         ]
         state = _make_state(transactions=txns)
@@ -453,7 +453,7 @@ class TestCompensateReverseTradeNodeUCA4:
 
         # The compensating node picks the last COMPLETED in reversed order
         entry = result["completed_transactions"][0]
-        assert entry["context_data"]["transaction_id"] == "tx-new"
+        assert entry["context_data"]["idempotency_key"] == "tx-new"
 
     def test_rolled_back_timestamp_is_updated(self) -> None:
         """The ROLLED_BACK entry timestamp must differ from the original COMPLETED one."""
@@ -570,14 +570,14 @@ class TestSagaRouterNode:
                 sequence_id=0,
                 uca_ref="UCA-4",
                 action="execute_trade",
-                context_data={"transaction_id": "tx-old", "amount": 100},
+                context_data={"idempotency_key": "tx-old", "amount": 100},
             ),
             _make_ledger_entry(
                 status="COMPLETED",
                 sequence_id=5,
                 uca_ref="UCA-4",
                 action="execute_trade",
-                context_data={"transaction_id": "tx-new", "amount": 200},
+                context_data={"idempotency_key": "tx-new", "amount": 200},
             ),
         ]
         state = _make_state(transactions=txns)
@@ -586,7 +586,7 @@ class TestSagaRouterNode:
         # The highest-sequence entry (tx-new, seq=5) is processed
         assert result["safety_status"] == "BLOCKED"
         rolled_back_entry = result["completed_transactions"][0]
-        assert rolled_back_entry["context_data"]["transaction_id"] == "tx-new"
+        assert rolled_back_entry["context_data"]["idempotency_key"] == "tx-new"
 
     def test_pending_entry_takes_priority_over_completed(self) -> None:
         """If any PENDING exists alongside COMPLETED, ghost-state path fires first."""

@@ -544,7 +544,7 @@ async def test_govern_refusal_receipt_hashes_the_evaluated_params(
     seal_mock: AsyncMock, refusals: AsyncMock
 ) -> None:
     tier = _RecordingTier(refuse=True)
-    raw = _caller_params(transaction_id=str(uuid.uuid4()))
+    raw = _caller_params(idempotency_key=str(uuid.uuid4()))
     expected = _evaluated(raw)
 
     with pytest.raises(GovernanceError) as exc_info:
@@ -559,6 +559,27 @@ async def test_govern_refusal_receipt_hashes_the_evaluated_params(
     assert receipt.attempted_params == _stripped(expected)
     assert not _carries(receipt.attempted_params, SPOOFED_ROLE)
     assert tier.seen == [expected]
+    seal_mock.assert_not_awaited()
+
+
+async def test_refusal_params_hash_invariant_across_distinct_idempotency_keys(
+    seal_mock: AsyncMock, refusals: AsyncMock
+) -> None:
+    """REFUSAL_ENVELOPE_EXCLUDED_KEYS keeps params_hash identical across distinct idempotency keys."""
+    assert "idempotency_key" in REFUSAL_ENVELOPE_EXCLUDED_KEYS
+    hashes: list[str] = []
+    for key in (None, str(uuid.uuid4()), str(uuid.uuid4())):
+        raw = _caller_params() if key is None else _caller_params(idempotency_key=key)
+        with pytest.raises(GovernanceError) as exc_info:
+            await _governor(_RoleResolver(), _RecordingTier(refuse=True)).govern(
+                ACTION, raw
+            )
+        receipt = exc_info.value.receipt
+        assert receipt is not None
+        assert "idempotency_key" not in receipt.attempted_params
+        hashes.append(receipt.params_hash)
+    assert len(set(hashes)) == 1
+    assert refusals.await_count == 3
     seal_mock.assert_not_awaited()
 
 
@@ -680,7 +701,7 @@ async def test_trade_with_drifting_telemetry_seals_verifies_and_actuates_one_par
             100.0,
             "USD",
             confidence=0.99,
-            transaction_id=str(uuid.uuid4()),
+            idempotency_key=str(uuid.uuid4()),
             governor=governor,
         )
 

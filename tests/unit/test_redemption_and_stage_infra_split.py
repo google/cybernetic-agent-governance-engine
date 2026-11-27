@@ -310,7 +310,7 @@ async def test_cause3_path_a1_defer_queue_down_during_redeemable_approval_preser
                     amount=1_000.0,
                     currency="USD",
                     confidence=0.99,
-                    transaction_id=tx_id,
+                    idempotency_key=tx_id,
                     deferred_id=deferred_id,
                     dry_run=False,
                     side="buy",
@@ -349,7 +349,7 @@ async def test_cause3_path_a1_defer_queue_down_during_redeemable_approval_preser
     assert "GOVERNANCE_REFUSAL_RECEIPT" not in sink.types()
     refusal_metric_spy.assert_not_called()
 
-    # Restore DB1: token is STILL RESOLVED and redeems cleanly on the SAME transaction_id!
+    # Restore DB1: token is STILL RESOLVED and redeems cleanly on the SAME idempotency_key!
     proxy_db1.fail_hmget = None
     stored_status = await raw_db1.hget(f"DEFER:{deferred_id}", "status")
     assert stored_status == "RESOLVED"
@@ -530,7 +530,7 @@ async def test_cause3_path_a3_execution_ledger_outage_and_release_unexecuted_plu
             amount=500.0,
             currency="USD",
             confidence=0.99,
-            transaction_id="22222222-2222-4222-8222-222222222222",
+            idempotency_key="22222222-2222-4222-8222-222222222222",
             dry_run=False,
             governor=gov,
         )
@@ -540,7 +540,7 @@ async def test_cause3_path_a3_execution_ledger_outage_and_release_unexecuted_plu
     assert "GOVERNANCE_REFUSAL_RECEIPT" not in sink.types()
 
     # Part 2: Healthy Redis ExecutionLedger claims key, then OPA outage raises GovernanceInfrastructureError;
-    # release_unexecuted deletes the IN_FLIGHT key so retry with same transaction_id succeeds!
+    # release_unexecuted deletes the IN_FLIGHT key so retry with same idempotency_key succeeds!
     healthy_redis = fakeredis.aioredis.FakeRedis(decode_responses=False)
     real_ledger = ExecutionLedger(healthy_redis)
     gov_real = make_governor(
@@ -570,7 +570,7 @@ async def test_cause3_path_a3_execution_ledger_outage_and_release_unexecuted_plu
                 amount=500.0,
                 currency="USD",
                 confidence=0.99,
-                transaction_id="33333333-3333-4333-8333-333333333333",
+                idempotency_key="33333333-3333-4333-8333-333333333333",
                 dry_run=False,
                 governor=gov_real,
             )

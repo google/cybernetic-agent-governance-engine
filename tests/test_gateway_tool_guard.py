@@ -15,7 +15,7 @@
 """Unit tests for advisor tool governance via ``cage_client.langgraph.governed_tool_node`` (POAM-2026-080 / POAM-2026-251).
 
 Exercises ``governed_trader_graph.guarded_tool_executor_node`` (``mode="execute"``,
-``idempotency_param="transaction_id"``), ``data_analyst_graph.guarded_tool_executor_node``
+default ``idempotency_key``), ``data_analyst_graph.guarded_tool_executor_node``
 (``mode="preview"``), and the advisor-specific policy hooks in ``tool_guard.py``
 against the real ``GatewayClient`` + ``SignedGatewayStub`` over ``httpx.MockTransport``.
 """
@@ -480,7 +480,7 @@ class TestGuardApprovedResume:
 
         (req,) = _execute_reqs(seen)
         params = json.loads(req.content)["params"]
-        assert {k: v for k, v in params.items() if k != "transaction_id"} == {
+        assert {k: v for k, v in params.items() if k != "idempotency_key"} == {
             **_call("t1")["args"],
             "deferred_id": "d-1",
         }
@@ -562,10 +562,10 @@ class TestSubgraphWiring:
 
 
 class TestGuardTransactionIds:
-    """Trade tool calls carry a derived, deterministic transaction_id (#514 / POAM-2026-232)."""
+    """Trade tool calls carry a derived, deterministic idempotency_key (#514 / POAM-2026-232)."""
 
     @pytest.mark.asyncio
-    async def test_overrides_the_model_supplied_transaction_id(self, gateway) -> None:
+    async def test_overrides_the_model_supplied_idempotency_key(self, gateway) -> None:
         seen = gateway(
             lambda r: (
                 _ok_execute_response()
@@ -574,13 +574,13 @@ class TestGuardTransactionIds:
             )
         )
         call = _call("call-1")
-        call["args"]["transaction_id"] = "chosen-by-the-model"
+        call["args"]["idempotency_key"] = "chosen-by-the-model"
         state = {"messages": [AIMessage(content="", tool_calls=[call], id="ai-1")]}
 
         await trader.guarded_tool_executor_node(state)
 
         exec_params = json.loads(_execute_reqs(seen)[0].content)["params"]
-        txn = exec_params["transaction_id"]
+        txn = exec_params["idempotency_key"]
         assert txn != "chosen-by-the-model"
         assert uuid.UUID(txn).version == 5
         expected_step = derive_plan_step_key(
@@ -591,7 +591,8 @@ class TestGuardTransactionIds:
         )
         # The preview authorizes the order; the call's key is not part of it.
         assert (
-            "transaction_id" not in json.loads(_preview_reqs(seen)[0].content)["params"]
+            "idempotency_key"
+            not in json.loads(_preview_reqs(seen)[0].content)["params"]
         )
 
     @pytest.mark.asyncio
@@ -624,7 +625,7 @@ class TestGuardTransactionIds:
         )
 
         txns = [
-            json.loads(r.content)["params"]["transaction_id"]
+            json.loads(r.content)["params"]["idempotency_key"]
             for r in _execute_reqs(seen)
         ]
         first, rerun, other_thread = txns
@@ -653,12 +654,12 @@ class TestGuardTransactionIds:
 
         exec_reqs = _execute_reqs(seen)
         assert len(exec_reqs) == 2
-        t0 = json.loads(exec_reqs[0].content)["params"]["transaction_id"]
-        t1 = json.loads(exec_reqs[1].content)["params"]["transaction_id"]
+        t0 = json.loads(exec_reqs[0].content)["params"]["idempotency_key"]
+        t1 = json.loads(exec_reqs[1].content)["params"]["idempotency_key"]
         assert t0 != t1
 
     @pytest.mark.asyncio
-    async def test_other_tool_calls_in_preview_mode_never_mint_transaction_id(
+    async def test_other_tool_calls_in_preview_mode_never_mint_idempotency_key(
         self, gateway
     ) -> None:
         seen = gateway(lambda _r: httpx.Response(200, json=_ALLOW))
@@ -667,7 +668,7 @@ class TestGuardTransactionIds:
         await analyst.guarded_tool_executor_node(_state(call))
 
         preview_params = json.loads(_preview_reqs(seen)[0].content)["params"]
-        assert "transaction_id" not in preview_params
+        assert "idempotency_key" not in preview_params
         assert _execute_reqs(seen) == []
 
     @pytest.mark.asyncio
@@ -693,7 +694,7 @@ class TestGuardTransactionIds:
         expected_step = derive_plan_step_key(
             _call("t1")["args"], canonical_extractor=canonical_trade_intent
         )
-        assert params["transaction_id"] == derive_idempotency_key(
+        assert params["idempotency_key"] == derive_idempotency_key(
             expected_step, thread_id=None, message_id="ai-9"
         )
 

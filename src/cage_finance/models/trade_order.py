@@ -57,9 +57,9 @@ class TradeOrder(BaseModel):
     )
 
     # System-generated fields with defaults
-    transaction_id: str = Field(
+    idempotency_key: str = Field(
         default_factory=lambda: str(uuid.uuid4()),
-        description="Unique UUID for the transaction",
+        description="Unique UUIDv4/UUIDv5 idempotency key for the trade",
     )
     # trader_id and trader_role are optional to allow unit test construction without
     # a full agent identity context. On the governed path the gateway binds both from
@@ -120,12 +120,12 @@ class TradeOrder(BaseModel):
 
         return self
 
-    @field_validator("transaction_id")
+    @field_validator("idempotency_key")
     @classmethod
     def validate_uuid(cls, v):  # type: ignore[no-untyped-def]
         if not is_valid_idempotency_key(v):
             raise ValueError(
-                "Invalid transaction_id format. Must be a valid UUID v4 or v5."
+                "Invalid idempotency_key format. Must be a valid UUID v4 or v5."
             )
         return v
 

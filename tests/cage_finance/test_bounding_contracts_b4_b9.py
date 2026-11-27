@@ -60,7 +60,7 @@ class TestContractB4CounterpartyConcentration:
             venue="NYSE",
             counterparty="GOLDMAN_SACHS",
             jurisdiction="US_FED",
-            transaction_id="test-tx-b4-01",
+            idempotency_key="test-tx-b4-01",
         )
 
         result = contract_b4_counterparty_concentration(request, enforcer)
@@ -86,7 +86,7 @@ class TestContractB4CounterpartyConcentration:
             venue="NYSE",
             counterparty="UNKNOWN_BROKER",  # Not in whitelist
             jurisdiction="US_FED",
-            transaction_id="test-tx-b4-02",
+            idempotency_key="test-tx-b4-02",
         )
 
         result = contract_b4_counterparty_concentration(request, enforcer)
@@ -115,7 +115,7 @@ class TestContractB4CounterpartyConcentration:
             venue="NYSE",
             counterparty=None,  # Exchange trade
             jurisdiction="US_FED",
-            transaction_id="test-tx-b4-03",
+            idempotency_key="test-tx-b4-03",
         )
 
         result = contract_b4_counterparty_concentration(request, enforcer)
@@ -141,7 +141,7 @@ class TestContractB4CounterpartyConcentration:
             venue="OTC_DESK",
             counterparty=None,  # Missing counterparty for OTC trade
             jurisdiction="US_FED",
-            transaction_id="test-tx-b4-04",
+            idempotency_key="test-tx-b4-04",
         )
 
         result = contract_b4_counterparty_concentration(request, enforcer)
@@ -176,7 +176,7 @@ class TestContractB4CounterpartyConcentration:
             venue="NYSE",
             counterparty="",
             jurisdiction="US_FED",
-            transaction_id="test-tx-b4-05",
+            idempotency_key="test-tx-b4-05",
         )
 
         result = contract_b4_counterparty_concentration(request, enforcer)
@@ -211,7 +211,7 @@ class TestContractB9JurisdictionFilter:
             venue="NYSE",
             counterparty="GOLDMAN_SACHS",
             jurisdiction="US_FED",
-            transaction_id="test-tx-b9-01",
+            idempotency_key="test-tx-b9-01",
         )
 
         result = contract_b9_jurisdiction_filter(request, enforcer)
@@ -237,7 +237,7 @@ class TestContractB9JurisdictionFilter:
             venue="HKEX",  # Hong Kong Exchange not in US whitelist
             counterparty="GOLDMAN_SACHS",
             jurisdiction="APAC_MAS",
-            transaction_id="test-tx-b9-02",
+            idempotency_key="test-tx-b9-02",
         )
 
         result = contract_b9_jurisdiction_filter(request, enforcer)
@@ -271,7 +271,7 @@ class TestContractB9JurisdictionFilter:
             venue="CBOE",
             counterparty="GOLDMAN_SACHS",
             jurisdiction="US_FED",
-            transaction_id="test-tx-b9-03",
+            idempotency_key="test-tx-b9-03",
         )
 
         result_us = contract_b9_jurisdiction_filter(us_request, us_enforcer)
@@ -285,7 +285,7 @@ class TestContractB9JurisdictionFilter:
             venue="EUREX",
             counterparty="GOLDMAN_SACHS",
             jurisdiction="US_FED",
-            transaction_id="test-tx-b9-04",
+            idempotency_key="test-tx-b9-04",
         )
 
         result_eu = contract_b9_jurisdiction_filter(eu_request, us_enforcer)
@@ -309,7 +309,7 @@ class TestContractB9JurisdictionFilter:
             venue="EUREX",
             counterparty="DEUTSCHE_BANK",
             jurisdiction="EU_ECB",
-            transaction_id="test-tx-b9-05",
+            idempotency_key="test-tx-b9-05",
         )
 
         result_eu = contract_b9_jurisdiction_filter(eu_request, eu_enforcer)
@@ -323,7 +323,7 @@ class TestContractB9JurisdictionFilter:
             venue="NYSE",
             counterparty="DEUTSCHE_BANK",
             jurisdiction="EU_ECB",
-            transaction_id="test-tx-b9-06",
+            idempotency_key="test-tx-b9-06",
         )
 
         result_us = contract_b9_jurisdiction_filter(us_request, eu_enforcer)
@@ -347,7 +347,7 @@ class TestContractB9JurisdictionFilter:
             venue="HKEX",
             counterparty="DBS",
             jurisdiction="APAC_MAS",
-            transaction_id="test-tx-b9-07",
+            idempotency_key="test-tx-b9-07",
         )
 
         result_apac = contract_b9_jurisdiction_filter(apac_request, apac_enforcer)
@@ -361,7 +361,7 @@ class TestContractB9JurisdictionFilter:
             venue="NASDAQ",
             counterparty="DBS",
             jurisdiction="APAC_MAS",
-            transaction_id="test-tx-b9-08",
+            idempotency_key="test-tx-b9-08",
         )
 
         result_us = contract_b9_jurisdiction_filter(us_request, apac_enforcer)
@@ -389,7 +389,7 @@ class TestContractB9JurisdictionFilter:
             venue="NYSE",  # Any venue should be allowed
             counterparty="GOLDMAN_SACHS",
             jurisdiction="US_FED",
-            transaction_id="test-tx-b9-09",
+            idempotency_key="test-tx-b9-09",
         )
 
         result = contract_b9_jurisdiction_filter(request, enforcer)

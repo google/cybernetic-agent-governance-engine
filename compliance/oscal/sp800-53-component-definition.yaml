@@ -527,10 +527,10 @@ component-definition:
             - uuid: "bcb59824-06a7-5be1-b456-29504bf608fa"
               control-id: si-10
               description: |
-                Governed trades execute at most once per transaction_id while the ledger
+                Governed trades execute at most once per idempotency_key while the ledger
                 remembers the key. execute_trade_action
                 (src/cage_finance/tools/tool_provider.py) refuses a trade without a UUIDv4 or
-                UUIDv5 transaction_id and, before governance runs, claims the key in the kernel
+                UUIDv5 idempotency_key and, before governance runs, claims the key in the kernel
                 ExecutionLedger (src/gateway/governance/execution_idempotency.py;
                 governor.components.execution_ledger, built by assemble_governor on the
                 gateway's shared Redis client, the governance Memorystore instance in
@@ -546,7 +546,7 @@ component-definition:
                 re-claim a key whose attempt was BLOCKED; the gateway verifies and spends the
                 approval before anything runs. Without Redis an enforcing posture refuses the
                 trade; only DEV, TEST and CI fall back to a process-local registry. The broker
-                order carries the transaction_id as client_order_id
+                order carries the idempotency_key as client_order_id
                 (src/cage_finance/tools/trade_executor.py). GatewayMCPClient
                 (src/gateway/infrastructure/mcp_client.py) resends a tool call only when nothing
                 was sent or the gateway annotates the tool readOnlyHint or idempotentHint, and

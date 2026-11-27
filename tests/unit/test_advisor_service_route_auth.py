@@ -660,7 +660,7 @@ def test_advisor_exposes_no_tool_dispatch_endpoint_or_module(
                     "currency": "USD",
                     "confidence": 0.99,
                     "side": "buy",
-                    "transaction_id": str(uuid.uuid4()),
+                    "idempotency_key": str(uuid.uuid4()),
                     "deferred_id": _BOB_DEFERRED_ID,
                 },
             },

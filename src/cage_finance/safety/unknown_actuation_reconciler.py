@@ -21,7 +21,7 @@ over-spent. Without reconciliation, a broker non-fill holds capacity for the
 remainder of the UTC day without a resolution path or alarm (POAM-2026-232
 Stage 2).
 
-This module queries the broker by ``transaction_id`` (``client_order_id``):
+This module queries the broker by ``idempotency_key`` (``client_order_id``):
 
 * ``FILLED``        -> finalizes the spend (leaves daily counter intact, clears unverified entry, updates ledger ``EXECUTED``)
 * ``NOT_EXECUTED``  -> reclaims the confirmed fiscal capacity cleanly and updates ledger ``BLOCKED``
@@ -94,11 +94,11 @@ async def reconcile_unknown_actuations(
 
     for entry in pending:
         try:
-            lookup = await lookup_fn(entry.transaction_id)
+            lookup = await lookup_fn(entry.idempotency_key)
         except Exception as exc:
             logger.error(
                 "[unknown_reconciler] Broker lookup error for %s (%s): %s",
-                entry.transaction_id,
+                entry.idempotency_key,
                 type(exc).__name__,
                 exc,
             )
@@ -108,43 +108,43 @@ async def reconcile_unknown_actuations(
             )
 
         if lookup.status is BrokerOrderStatus.FILLED:
-            await fiscal_guard.settle_unknown(entry.transaction_id, executed=True)
+            await fiscal_guard.settle_unknown(entry.idempotency_key, executed=True)
             if execution_ledger is not None:
                 await execution_ledger.resolve_unknown(
                     action,
                     caller_identity,
-                    entry.transaction_id,
+                    entry.idempotency_key,
                     status=ExecutionStatus.EXECUTED,
                     outcome=(
                         f"EXECUTED (reconciled): {entry.symbol} x {entry.amount_usd:.2f} "
                         f"({lookup.detail})"
                     ),
                 )
-            settled_executed.append(entry.transaction_id)
+            settled_executed.append(entry.idempotency_key)
             if governor_metrics is not None and hasattr(
                 governor_metrics, "unknown_actuation_event"
             ):
                 governor_metrics.unknown_actuation_event("settled_executed")
         elif lookup.status is BrokerOrderStatus.NOT_EXECUTED:
-            await fiscal_guard.settle_unknown(entry.transaction_id, executed=False)
+            await fiscal_guard.settle_unknown(entry.idempotency_key, executed=False)
             if execution_ledger is not None:
                 await execution_ledger.resolve_unknown(
                     action,
                     caller_identity,
-                    entry.transaction_id,
+                    entry.idempotency_key,
                     status=ExecutionStatus.BLOCKED,
                     outcome=(
                         f"BLOCKED (reclaimed): {entry.symbol} x {entry.amount_usd:.2f} "
                         f"({lookup.detail})"
                     ),
                 )
-            settled_reclaimed.append(entry.transaction_id)
+            settled_reclaimed.append(entry.idempotency_key)
             if governor_metrics is not None and hasattr(
                 governor_metrics, "unknown_actuation_event"
             ):
                 governor_metrics.unknown_actuation_event("settled_reclaimed")
         else:
-            still_indeterminate.append(entry.transaction_id)
+            still_indeterminate.append(entry.idempotency_key)
             if governor_metrics is not None and hasattr(
                 governor_metrics, "unknown_actuation_event"
             ):
@@ -154,7 +154,7 @@ async def reconcile_unknown_actuations(
                 aged_unresolved.append(entry)
                 logger.error(
                     "[unknown_reconciler] Aged unresolved UNKNOWN actuation tx=%s symbol=%s amount=%.2f age=%.1fs",
-                    entry.transaction_id,
+                    entry.idempotency_key,
                     entry.symbol,
                     entry.amount_usd,
                     age_s,

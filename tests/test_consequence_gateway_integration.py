@@ -78,7 +78,7 @@ async def test_consequence_gateway_blocks_invalid_token(consequence_store, mock_
         "params": {
             "symbol": "AAPL",
             "amount": 100.0,
-            "transaction_id": "test-123",
+            "idempotency_key": "test-123",
         },
     }
 
@@ -105,7 +105,7 @@ async def test_consequence_gateway_blocks_consumed_token(
         "params": {
             "symbol": "AAPL",
             "amount": 100.0,
-            "transaction_id": "test-123",
+            "idempotency_key": "test-123",
         },
     }
 
@@ -147,7 +147,7 @@ async def test_consequence_gateway_blocks_action_binding_mismatch(
         "params": {
             "symbol": "AAPL",
             "amount": 100.0,
-            "transaction_id": "test-123",
+            "idempotency_key": "test-123",
         },
     }
 
@@ -170,7 +170,7 @@ async def test_consequence_gateway_blocks_action_binding_mismatch(
         "params": {
             "symbol": "AAPL",
             "amount": 500.0,  # Modified amount
-            "transaction_id": "test-123",
+            "idempotency_key": "test-123",
         },
     }
 
@@ -192,7 +192,7 @@ async def test_consequence_gateway_blocks_expired_token(consequence_store, mock_
         "params": {
             "symbol": "AAPL",
             "amount": 100.0,
-            "transaction_id": "test-123",
+            "idempotency_key": "test-123",
         },
     }
 
@@ -231,7 +231,7 @@ async def test_consequence_gateway_success_path(consequence_store, mock_signer):
         "params": {
             "symbol": "AAPL",
             "amount": 100.0,
-            "transaction_id": "test-123",
+            "idempotency_key": "test-123",
         },
     }
 

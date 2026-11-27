@@ -198,7 +198,7 @@ telemetry staleness limit is `TELEMETRY_MAX_STALENESS_SECONDS` (300 s).
    - `UPHOLD` (`DeferQueue.reject`) — confirms the block; decision is logged
    - `DEFER` — escalates to senior reviewer; re-queued with extended SLA
 6. **Single-commit execution (`POST /tools/execute` → `execute_trade_action(..., deferred_id=...)` → `enforce_approved_governance` → `revalidate_post_hitl`):**
-   On human approval, [`cage_client.langgraph.governed_tool_node`](../../packages/cage-client/src/cage_client/langgraph.py) attaches the checkpointed `deferred_id` / `deferred_step_ids` via `approval_token` to [`CageClient.execute_tool()`](../../packages/cage-client/src/cage_client/core.py) (`idempotency_param="transaction_id"`, stripping any model-supplied `deferred_id`), invoking `execute_trade_action(..., deferred_id=deferred_id)` over `POST /tools/execute`.
+   On human approval, [`cage_client.langgraph.governed_tool_node`](../../packages/cage-client/src/cage_client/langgraph.py) attaches the checkpointed `deferred_id` / `deferred_step_ids` via `approval_token` to [`CageClient.execute_tool()`](../../packages/cage-client/src/cage_client/core.py) (with canonical `idempotency_key`, stripping any model-supplied `deferred_id`), invoking `execute_trade_action(..., deferred_id=deferred_id)` over `POST /tools/execute`.
    Inside [`src/gateway/server/governance_middleware.py`](../../src/gateway/server/governance_middleware.py),
    `enforce_approved_governance()` checks the state of the quorum-approved `HITL_REQUIRED` token
    without spending it (`DeferQueue.check_redemption`: approved, unspent, parked for this

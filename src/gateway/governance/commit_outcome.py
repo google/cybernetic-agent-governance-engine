@@ -443,10 +443,9 @@ def extract_request_idempotency_key(
 ) -> str | None:
     """Return the caller's request idempotency key from tool args or active attempt."""
     if isinstance(params, Mapping):
-        for field in ("idempotency_key", "transaction_id"):
-            val = params.get(field)
-            if isinstance(val, str) and val:
-                return val
+        val = params.get("idempotency_key")
+        if isinstance(val, str) and val:
+            return val
     if attempt is not None:
         claimed = getattr(attempt, "_claimed_idempotency_key", None)
         if isinstance(claimed, str) and claimed:

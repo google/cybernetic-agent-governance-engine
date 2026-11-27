@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""``execute_trade_action`` executes a ``transaction_id`` at most once (#514).
+"""``execute_trade_action`` executes a ``idempotency_key`` at most once (#514).
 
 The governor, seal check and broker are stand-ins; the execution ledger is
 real, over fakeredis, so these tests observe what reaches the broker.
@@ -114,7 +114,7 @@ async def _trade(governor: Any, **overrides: Any) -> CommitOutcome:
         "amount": 10.0,
         "currency": "USD",
         "confidence": 0.99,
-        "transaction_id": _TXN,
+        "idempotency_key": _TXN,
         "governor": governor,
     }
     kwargs.update(overrides)
@@ -300,21 +300,21 @@ async def test_an_approval_reclaims_a_blocked_key_and_executes_once(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("transaction_id", "expected"),
+    ("idempotency_key", "expected"),
     [
-        (None, "BLOCKED: transaction_id is required"),
-        ("", "BLOCKED: transaction_id is required"),
-        (str(uuid.uuid1()), "BLOCKED: invalid transaction_id"),
-        ("not-a-uuid", "BLOCKED: invalid transaction_id"),
+        (None, "BLOCKED: idempotency_key is required"),
+        ("", "BLOCKED: idempotency_key is required"),
+        (str(uuid.uuid1()), "BLOCKED: invalid idempotency_key"),
+        ("not-a-uuid", "BLOCKED: invalid idempotency_key"),
     ],
     ids=["missing", "empty", "uuid1", "garbage"],
 )
-async def test_missing_or_invalid_transaction_id_is_refused(
-    governor: MagicMock, transaction_id: str | None, expected: str
+async def test_missing_or_invalid_idempotency_key_is_refused(
+    governor: MagicMock, idempotency_key: str | None, expected: str
 ) -> None:
     actuate = AsyncMock(return_value=_accepted())
     with _pipeline(actuate) as (governance, _):
-        result = await _trade(governor, transaction_id=transaction_id)
+        result = await _trade(governor, idempotency_key=idempotency_key)
 
     assert result.status is CommitStatus.REFUSED
     assert result.message.startswith(expected)
@@ -323,13 +323,13 @@ async def test_missing_or_invalid_transaction_id_is_refused(
 
 
 @pytest.mark.asyncio
-async def test_transaction_id_case_does_not_create_a_second_key(
+async def test_idempotency_key_case_does_not_create_a_second_key(
     governor: MagicMock,
 ) -> None:
     actuate = AsyncMock(return_value=_accepted())
     with _pipeline(actuate):
-        first = await _trade(governor, transaction_id=_TXN.upper())
-        second = await _trade(governor, transaction_id=_TXN)
+        first = await _trade(governor, idempotency_key=_TXN.upper())
+        second = await _trade(governor, idempotency_key=_TXN)
 
     assert second == first
     assert actuate.await_count == 1
@@ -401,7 +401,7 @@ async def test_infrastructure_error_after_accepted_dispatch_keeps_the_claim(
         with patch("src.cage_finance.tools.tool_provider._settle", settle):
             with pytest.raises(_first_attempt_errors()):
                 await _trade(governor)
-        replay = await _trade(governor)  # same transaction_id, healthy settle
+        replay = await _trade(governor)  # same idempotency_key, healthy settle
 
     assert replay.status is CommitStatus.EXECUTED
     assert actuate.await_count == 1

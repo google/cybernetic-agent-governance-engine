@@ -409,7 +409,7 @@ def _unwrap(resp: httpx.Response) -> dict[str, Any]:
 
 async def _execute_trade(client: httpx.AsyncClient, params: dict[str, Any], deferred_id: str | None = None) -> str:
     body: dict[str, Any] = {
-        "transaction_id": str(uuid.uuid4()),
+        "idempotency_key": str(uuid.uuid4()),
         **params,
     }
     if deferred_id:
@@ -495,7 +495,7 @@ async def _exercise_advisor_sdk_in_mesh(gateway_url: str) -> dict[str, Any]:
 
         exec_res = await gw_client.execute_tool(
             "execute_trade_action",
-            {"transaction_id": str(uuid.uuid4()), **_trade(500.0)},
+            {"idempotency_key": str(uuid.uuid4()), **_trade(500.0)},
         )
         assert exec_res.get("status") == "SUCCESS" and str(
             exec_res.get("output", "")

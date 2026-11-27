@@ -241,7 +241,7 @@ ADVISOR_TOOLS: list[dict[str, Any]] = [
                     "amount": {"type": "number"},
                     "currency": {"type": "string"},
                     "confidence": {"type": "number"},
-                    "transaction_id": {"type": "string"},
+                    "idempotency_key": {"type": "string"},
                     "side": {"type": "string"},
                     "deferred_id": {"type": "string"},
                 },
@@ -669,7 +669,7 @@ class E2EHarness:
             "amount": order.amount,
             "currency": order.currency,
             "confidence": order.confidence,
-            "transaction_id": order.transaction_id,
+            "idempotency_key": order.idempotency_key,
             "side": order.side or "buy",
         }
         if deferred_id:
@@ -1417,7 +1417,7 @@ async def test_advisor_proxy_e2e_all_five_invariants_and_negative_controls(
     # Attempting direct /tools/execute without HITL approval fails closed (real OPA MANUAL_REVIEW).
     unapproved_direct = await e2e_stack.execute_tool(
         "execute_trade_action",
-        {**defer_args, "transaction_id": str(uuid.uuid4())},
+        {**defer_args, "idempotency_key": str(uuid.uuid4())},
     )
     assert unapproved_direct.status_code == 200
     assert unapproved_direct.json()["status"] == "ERROR"
@@ -1547,7 +1547,7 @@ async def test_advisor_proxy_e2e_all_five_invariants_and_negative_controls(
     premature_tx = str(uuid.uuid4())
     premature_exec = await e2e_stack.execute_tool(
         "execute_trade_action",
-        {**defer_args, "transaction_id": premature_tx, "deferred_id": defer_id},
+        {**defer_args, "idempotency_key": premature_tx, "deferred_id": defer_id},
     )
     assert premature_exec.json()["status"] == "ERROR"
     premature_outcome = premature_exec.json()["outcome"]
@@ -1593,7 +1593,7 @@ async def test_advisor_proxy_e2e_all_five_invariants_and_negative_controls(
         ]
     )
     assert redeem_args["deferred_id"] == defer_id
-    assert redeem_args["transaction_id"] == redeem_tx
+    assert redeem_args["idempotency_key"] == redeem_tx
 
     redeem_exec = await e2e_stack.advisor_execute_trade(redeem_args)
     assert redeem_exec["status"] == "SUCCESS"
@@ -1611,7 +1611,7 @@ async def test_advisor_proxy_e2e_all_five_invariants_and_negative_controls(
     # --- Negative Control #2b: sequential & concurrent replay of approved deferred_id ---
     replay_exec = await e2e_stack.execute_tool(
         "execute_trade_action",
-        {**redeem_args, "transaction_id": str(uuid.uuid4())},
+        {**redeem_args, "idempotency_key": str(uuid.uuid4())},
     )
     assert replay_exec.json()["status"] == "ERROR"
     replay_outcome = replay_exec.json()["outcome"]
@@ -1649,7 +1649,7 @@ async def test_advisor_proxy_e2e_all_five_invariants_and_negative_controls(
             "execute_trade_action",
             {
                 **race_init_args,
-                "transaction_id": str(uuid.uuid4()),
+                "idempotency_key": str(uuid.uuid4()),
                 "deferred_id": race_defer_id,
             },
         ),
@@ -1657,7 +1657,7 @@ async def test_advisor_proxy_e2e_all_five_invariants_and_negative_controls(
             "execute_trade_action",
             {
                 **race_init_args,
-                "transaction_id": str(uuid.uuid4()),
+                "idempotency_key": str(uuid.uuid4()),
                 "deferred_id": race_defer_id,
             },
         ),

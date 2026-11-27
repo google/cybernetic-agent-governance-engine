@@ -215,7 +215,7 @@ class SignedGatewayStub:
                 ):
                     sent = json.loads(request.content)
                     params = sent.get("params") or {}
-                    idem = params.get("idempotency_key") or params.get("transaction_id")
+                    idem = params.get("idempotency_key")
                     signed_body = {
                         **body,
                         "outcome": self.commit_outcome(
