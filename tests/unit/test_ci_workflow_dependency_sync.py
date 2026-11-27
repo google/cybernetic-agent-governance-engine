@@ -54,6 +54,7 @@ STDLIB_ONLY_WORKFLOW_SCRIPTS = frozenset(
         "check_locked_yanks.py",
         "check_repo_rules.py",
         "partner_harness.py",
+        "reconcile_conformance_release.py",
         # Runs in jobs that can mint a signing or GCP WIF identity, which
         # therefore install nothing (POAM-2026-115 / POAM-2026-171 / POAM-2026-230).
         "reconcile_main_check_results.py",

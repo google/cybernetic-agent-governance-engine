@@ -1,0 +1,101 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Scheduled `cage-conformance` release & GHCR artifact staleness reconciler.
+#
+# Compares the latest `conformance-v*` tag against commits touching `proof/` or
+# `packages/cage-conformance/` on `main`, verifies the GitHub Release wheel +
+# sdist assets, and verifies GHCR `cage-conformance:latest` / `:<version>`
+# digest and OCI revision parity. Updates a durable GitHub issue on drift.
+
+name: conformance-release-reconciler
+
+on:
+  schedule:
+    - cron: "23 7 * * *"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref to compare against the latest conformance-v* tag"
+        required: false
+        type: string
+        default: "origin/main"
+      grace_hours:
+        description: "Minimum age (hours) of oldest unreleased proof/ or package commit before failing"
+        required: false
+        type: string
+        default: "72"
+      skip_ghcr:
+        description: "Skip GHCR manifest and OCI revision verification"
+        required: false
+        type: boolean
+        default: false
+      sync_github_issue:
+        description: "Open/update/close the durable conformance-release-drift GitHub issue"
+        required: false
+        type: boolean
+        default: true
+
+permissions: {}
+
+concurrency:
+  group: conformance-release-reconciler
+  cancel-in-progress: false
+
+jobs:
+  reconcile-conformance-release:
+    name: "Reconcile conformance-v* release and GHCR artifact freshness"
+    if: github.repository == 'google/cybernetic-agent-governance-engine' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: read
+      issues: write
+
+    steps:
+      - name: Checkout repository with tags
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version-file: "pyproject.toml"
+
+      - name: Check conformance release and GHCR freshness
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REPO_SLUG: ${{ github.repository }}
+          INPUT_REF: ${{ inputs.ref || 'origin/main' }}
+          INPUT_GRACE_HOURS: ${{ inputs.grace_hours || '72' }}
+          INPUT_SKIP_GHCR: ${{ inputs.skip_ghcr || false }}
+          INPUT_SYNC_ISSUE: ${{ inputs.sync_github_issue != false }}
+        run: |
+          set -euo pipefail
+          extra_args=()
+          if [[ "${INPUT_SKIP_GHCR}" == "true" ]]; then
+            extra_args+=(--skip-ghcr)
+          fi
+          if [[ "${INPUT_SYNC_ISSUE}" == "true" ]]; then
+            extra_args+=(--sync-github-issue)
+          fi
+          python3 scripts/reconcile_conformance_release.py \
+            --repo "${REPO_SLUG}" \
+            --ref "${INPUT_REF}" \
+            --grace-hours "${INPUT_GRACE_HOURS}" \
+            "${extra_args[@]}"
