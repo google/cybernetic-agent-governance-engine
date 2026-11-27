@@ -25,7 +25,9 @@ artifacts (GitHub Release wheels/sdists and GHCR container manifests):
    ``conformance-v<X.Y.Z>`` tag and checks whether any commits on ``--ref``
    (default ``main``) after that tag touch ``proof/`` or
    ``packages/cage-conformance/``. Fails once the oldest unreleased commit
-   exceeds ``--grace-hours`` (default ``72``).
+   exceeds ``--grace-hours`` (default ``72``), unless the watched trees are
+   unchanged apart from ``[tool.cage.release].status`` in the package's
+   ``pyproject.toml`` (the post-tag flip to ``"published"``).
 2. **GitHub Release asset parity:** Verifies the GitHub Release for the latest
    ``conformance-v*`` tag carries both the wheel and sdist artifacts.
 3. **GHCR digest & OCI revision parity:** Compares ``cage-conformance:latest``
@@ -62,6 +64,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import tomllib
+
 DEFAULT_REPO = "google/cybernetic-agent-governance-engine"
 DEFAULT_REF = "main"
 DEFAULT_GRACE_HOURS = 72.0
@@ -72,6 +76,7 @@ DEFAULT_ISSUE_LABEL_DESCRIPTION = (
 )
 CONFORMANCE_TAG_PREFIX = "conformance-v"
 CONFORMANCE_WATCH_PATHS: tuple[str, ...] = ("proof/", "packages/cage-conformance/")
+CONFORMANCE_PYPROJECT_PATH = "packages/cage-conformance/pyproject.toml"
 OCI_REVISION_ENFORCED_MIN_SEMVER: tuple[int, int, int] = (0, 4, 2)
 
 GITHUB_API_HOST = "api.github.com"
@@ -271,6 +276,46 @@ def list_watch_commits_since_tag(
             ) from exc
         commits.append(WatchCommit(sha=sha, committed_at=committed_at, subject=subject))
     return commits
+
+
+def _pyproject_without_release_status(raw: str) -> dict[str, Any]:
+    """Parse a ``pyproject.toml`` and drop ``[tool.cage.release].status``."""
+    data = tomllib.loads(raw)
+    release = data.get("tool", {}).get("cage", {}).get("release")
+    if isinstance(release, dict):
+        release.pop("status", None)
+    return data
+
+
+def list_material_changed_paths(
+    git_run: GitRunner,
+    *,
+    tag: str,
+    ref: str,
+    watch_paths: Sequence[str] = CONFORMANCE_WATCH_PATHS,
+) -> list[str]:
+    """Return watched paths whose content differs between ``tag`` and ``ref``.
+
+    The package ``pyproject.toml`` is left out when the only difference is
+    ``[tool.cage.release].status``: flipping it to ``"published"`` after the
+    tag is cut changes nothing that ships. If either side cannot be read or
+    parsed, the file counts as changed.
+    """
+    raw = git_run(["diff", "--name-only", "-z", tag, ref, "--", *watch_paths])
+    paths = sorted(path for path in raw.split("\0") if path)
+    if CONFORMANCE_PYPROJECT_PATH in paths:
+        try:
+            before = _pyproject_without_release_status(
+                git_run(["show", f"{tag}:{CONFORMANCE_PYPROJECT_PATH}"])
+            )
+            after = _pyproject_without_release_status(
+                git_run(["show", f"{ref}:{CONFORMANCE_PYPROJECT_PATH}"])
+            )
+        except (ReconcilerOperationalError, tomllib.TOMLDecodeError):
+            return paths
+        if before == after:
+            paths.remove(CONFORMANCE_PYPROJECT_PATH)
+    return paths
 
 
 def _github_headers(token: str | None) -> dict[str, str]:
@@ -763,8 +808,19 @@ def reconcile_conformance_release(
         effective_git, tag=latest_tag, ref=ref, watch_paths=CONFORMANCE_WATCH_PATHS
     )
 
+    material_paths = (
+        list_material_changed_paths(
+            effective_git,
+            tag=latest_tag,
+            ref=ref,
+            watch_paths=CONFORMANCE_WATCH_PATHS,
+        )
+        if unreleased
+        else []
+    )
+
     findings: list[DriftFinding] = []
-    if unreleased:
+    if unreleased and material_paths:
         oldest = min(unreleased, key=lambda c: c.committed_at)
         oldest_age_hours = max(0.0, (effective_now - oldest.committed_at) / 3600.0)
         if oldest_age_hours >= grace_hours:
@@ -811,6 +867,7 @@ def reconcile_conformance_release(
         "latest_tag": latest_tag,
         "latest_tag_sha": tag_sha,
         "behind_commit_count": len(unreleased),
+        "material_changed_paths": material_paths,
         "unreleased_commits": [
             {
                 "sha": c.sha,

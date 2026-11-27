@@ -117,35 +117,25 @@ jobs:
           fi
 
       - name: Verify cage-conformance proof sync
-        run: python3 scripts/check_conformance_sync.py
+        env:
+          GIT_REF: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [[ "$GIT_REF" == refs/tags/conformance-v* ]]; then
+            python3 scripts/check_conformance_sync.py --cutting-release-tag "$REF_NAME"
+          else
+            python3 scripts/check_conformance_sync.py
+          fi
 
       - name: Build CAGE Client SDK Wheel & Sdist (Two-Phase Smoke)
         if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/client-v')
         run: bash scripts/smoke_test_client_wheel.sh
 
-      - name: Build CAGE Conformance Verifier Wheel & Sdist
+      - name: Build CAGE Conformance Verifier Wheel & Sdist (Two-Phase Smoke)
         if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/conformance-v')
         env:
           COMMIT_SHA: ${{ github.sha }}
-        run: |
-          cd packages/cage-conformance
-          rm -rf dist
-          uv build
-          CONF_VERSION=$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
-          SDIST_VENV="$(mktemp -d)/sdist-venv"
-          uv venv "$SDIST_VENV"
-          uv pip install --python "$SDIST_VENV/bin/python" --no-deps dist/cage_conformance-"${CONF_VERSION}".tar.gz
-          "$SDIST_VENV/bin/cage-conformance" --version | grep -Fx "${CONF_VERSION}"
-          "$SDIST_VENV/bin/cage-conformance" verify \
-            --trace src/cage_conformance/vectors/trace_v1.json \
-            --provider-id cage-conformance-sdist-smoke \
-            --adapter-author-org "Google LLC" \
-            --counterparty-org "Google LLC" \
-            --adapter-version "$CONF_VERSION" \
-            --adapter-commit "${COMMIT_SHA::12}" \
-            --runner-org "Google LLC" \
-            --runner-identity "publish-client-sdk@github-actions"
-          rm -rf "$(dirname "$SDIST_VENV")"
+        run: bash scripts/smoke_test_conformance_wheel.sh
 
       - name: Log in to GitHub Container Registry (GHCR)
         if: >-

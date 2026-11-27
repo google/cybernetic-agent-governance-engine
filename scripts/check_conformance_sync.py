@@ -21,22 +21,32 @@ so it never forks the formal model or the checkers
 1. a module in ``SYNC_PAIRS`` differs, byte for byte, from its ``proof/``
    original;
 2. any package module imports ``src`` or ``proof`` (absolute ``proof`` imports
-   would only resolve inside a CAGE checkout).
+   would only resolve inside a CAGE checkout);
+3. ``[tool.cage.release].status`` in the package's ``pyproject.toml`` disagrees
+   with the ``conformance-v*`` git tags: ``"published"`` needs tag
+   ``conformance-v<version>`` and a package tree byte-identical to that tag;
+   ``"unreleased"`` needs no such tag yet and a version strictly newer than
+   the latest ``conformance-v*`` tag.
 
 Fix a sync failure by copying from ``proof/`` into the package, never the other
 way round.
 
 Usage:
     uv run python scripts/check_conformance_sync.py
+    uv run python scripts/check_conformance_sync.py --cutting-release-tag conformance-v<version>
 """
 
 from __future__ import annotations
 
+import argparse
 import ast
 import hashlib
 import json
 import re
+import shutil
+import subprocess
 import sys
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import tomllib
@@ -55,6 +65,13 @@ FORBIDDEN_ROOTS = frozenset({"src", "proof"})
 _RULE_NAME_RE = re.compile(r"^[a-z][a-z0-9_]+$")
 MIN_TRACE_RULES = 7
 MIN_STREAM_RULES = 20
+
+#: The tree a published ``conformance-v<version>`` tag must match byte for byte.
+PACKAGE_REL = Path("packages/cage-conformance/src/cage_conformance")
+VALID_RELEASE_STATUSES: frozenset[str] = frozenset({"published", "unreleased"})
+CONFORMANCE_TAG_PREFIX = "conformance-v"
+_SEMVER_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
+_GIT_TIMEOUT_SECONDS = 15
 
 
 def _sha256(path: Path) -> str:
@@ -368,12 +385,239 @@ def internal_contract_violations(repo_root: Path = REPO_ROOT) -> list[str]:
     return errors
 
 
-def main() -> int:
+def _parse_semver(version: str) -> tuple[int, int, int] | None:
+    match = _SEMVER_RE.fullmatch(version.strip())
+    if not match:
+        return None
+    return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
+
+
+def _git_bytes(repo_root: Path, *args: str) -> tuple[bool, bytes]:
+    git = shutil.which("git")
+    if git is None:
+        return False, b"git is not installed"
+    try:
+        result = subprocess.run(
+            [git, *args],
+            cwd=repo_root,
+            capture_output=True,
+            timeout=_GIT_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as err:
+        return False, str(err).encode("utf-8")
+    return result.returncode == 0, result.stdout
+
+
+def _list_conformance_release_tags(repo_root: Path) -> tuple[bool, list[str]]:
+    """Return ``(git_available, conformance_v_tags)`` from local git refs."""
+    ok, raw = _git_bytes(repo_root, "tag", "-l", f"{CONFORMANCE_TAG_PREFIX}*")
+    if not ok:
+        return False, []
+    tags = [
+        line.strip()
+        for line in raw.decode("utf-8", errors="replace").splitlines()
+        if line.strip()
+    ]
+    return True, sorted(tags)
+
+
+def collect_package_files(root: Path) -> dict[Path, Path]:
+    """Return ``{relative_path: full_path}`` for every file under ``root`` except ``__pycache__``."""
+    collected: dict[Path, Path] = {}
+    for candidate in sorted(root.rglob("*")):
+        if "__pycache__" in candidate.parts or not candidate.is_file():
+            continue
+        collected[candidate.relative_to(root)] = candidate
+    return collected
+
+
+def _read_tagged_package_files(
+    repo_root: Path, tag: str
+) -> tuple[bool, dict[Path, bytes]]:
+    """Read ``{relative_path: content_bytes}`` for ``PACKAGE_REL`` at ``tag``."""
+    ok, raw = _git_bytes(
+        repo_root,
+        "ls-tree",
+        "-r",
+        "-z",
+        "--name-only",
+        tag,
+        "--",
+        PACKAGE_REL.as_posix(),
+    )
+    if not ok:
+        return False, {}
+    files: dict[Path, bytes] = {}
+    for entry in raw.split(b"\x00"):
+        if not entry:
+            continue
+        try:
+            rel_repo = entry.decode("utf-8")
+        except UnicodeDecodeError:
+            return False, {}
+        rel_path = Path(rel_repo).relative_to(PACKAGE_REL)
+        if "__pycache__" in rel_path.parts:
+            continue
+        show_ok, blob = _git_bytes(repo_root, "show", f"{tag}:{rel_repo}")
+        if not show_ok:
+            return False, {}
+        files[rel_path] = blob
+    return True, files
+
+
+def release_state_violations(
+    repo_root: Path = REPO_ROOT,
+    *,
+    cutting_release_tag: str | None = None,
+    git_tags: Sequence[str] | None = None,
+    tagged_tree_files: Mapping[Path, bytes] | None = None,
+) -> list[str]:
+    """Verify ``packages/cage-conformance/pyproject.toml`` ``[tool.cage.release]`` honesty.
+
+    A declared version is either ``"published"`` (tag ``conformance-v<version>``
+    exists and the package tree still matches it byte for byte) or
+    ``"unreleased"`` (no such tag yet, and the version is strictly newer than
+    every ``conformance-v*`` tag). Editing the package after a release therefore
+    requires a version bump and ``status = "unreleased"``.
+    """
+    pyproject_rel = "packages/cage-conformance/pyproject.toml"
+    pkg_pyproject = repo_root / pyproject_rel
+    if not pkg_pyproject.is_file():
+        return [f"{pyproject_rel} does not exist"]
+
+    pkg_data = tomllib.loads(pkg_pyproject.read_text(encoding="utf-8"))
+    pkg_version = str(pkg_data.get("project", {}).get("version", "")).strip()
+    pkg_semver = _parse_semver(pkg_version)
+    if pkg_semver is None:
+        return [
+            f"{pyproject_rel} project.version {pkg_version!r} "
+            "must be a strict MAJOR.MINOR.PATCH semantic version"
+        ]
+
+    release_cfg = pkg_data.get("tool", {}).get("cage", {}).get("release", {})
+    status = (
+        str(release_cfg.get("status", "")).strip()
+        if isinstance(release_cfg, dict)
+        else ""
+    )
+    if status not in VALID_RELEASE_STATUSES:
+        return [
+            f"{pyproject_rel} [tool.cage.release].status must be "
+            f"one of {sorted(VALID_RELEASE_STATUSES)!r} (got {status!r})"
+        ]
+
+    expected_tag = f"{CONFORMANCE_TAG_PREFIX}{pkg_version}"
+    if git_tags is not None:
+        tags = list(git_tags)
+    else:
+        git_ok, tags = _list_conformance_release_tags(repo_root)
+        if not git_ok:
+            return [
+                "Unable to query git conformance-v* tags to verify "
+                f"[tool.cage.release].status ({status!r} for version {pkg_version!r})"
+            ]
+
+    tag_semvers: list[tuple[tuple[int, int, int], str]] = []
+    for tag in tags:
+        if tag.startswith(CONFORMANCE_TAG_PREFIX):
+            parsed = _parse_semver(tag.removeprefix(CONFORMANCE_TAG_PREFIX))
+            if parsed is not None:
+                tag_semvers.append((parsed, tag))
+
+    if cutting_release_tag is not None:
+        if cutting_release_tag != expected_tag:
+            return [
+                f"--cutting-release-tag {cutting_release_tag!r} does not match "
+                f"expected tag {expected_tag!r} from {pyproject_rel}"
+            ]
+        other_semvers = [sv for sv, t in tag_semvers if t != expected_tag]
+        if status == "unreleased":
+            if other_semvers and pkg_semver <= max(other_semvers):
+                highest_ver = ".".join(str(p) for p in max(other_semvers))
+                return [
+                    f"Cannot cut unreleased cage-conformance {pkg_version!r}: version "
+                    f"must be strictly greater than existing release {highest_ver!r}"
+                ]
+            return []
+        # status == "published" on an existing tag falls through to the tag+tree check
+
+    errors: list[str] = []
+    if status == "published":
+        if expected_tag not in tags:
+            return [
+                f"{pyproject_rel} declares version {pkg_version!r} as "
+                f"status='published', but git tag {expected_tag!r} does not exist "
+                "(set status='unreleased' until the release tag is cut)"
+            ]
+
+        if tagged_tree_files is not None:
+            tag_files = dict(tagged_tree_files)
+        else:
+            ok_tree, tag_files = _read_tagged_package_files(repo_root, expected_tag)
+            if not ok_tree:
+                return [
+                    f"Failed to read {PACKAGE_REL} tree from git tag {expected_tag!r}"
+                ]
+
+        src_files = collect_package_files(repo_root / PACKAGE_REL)
+        remedy = "(bump version and set [tool.cage.release].status = 'unreleased')"
+        for rel_path in sorted(set(src_files) | set(tag_files)):
+            if rel_path not in tag_files:
+                errors.append(
+                    f"{PACKAGE_REL / rel_path}: added since published tag "
+                    f"{expected_tag!r} {remedy}"
+                )
+                continue
+            if rel_path not in src_files:
+                errors.append(
+                    f"{PACKAGE_REL / rel_path}: removed since published tag "
+                    f"{expected_tag!r} {remedy}"
+                )
+                continue
+            src_sha = _sha256(src_files[rel_path])
+            tag_sha = hashlib.sha256(tag_files[rel_path]).hexdigest()
+            if src_sha != tag_sha:
+                errors.append(
+                    f"{PACKAGE_REL / rel_path}: SHA-256 {src_sha[:12]} diverges from "
+                    f"published tag {expected_tag!r} ({tag_sha[:12]}) {remedy}"
+                )
+        return errors
+
+    # status == "unreleased"
+    if expected_tag in tags:
+        errors.append(
+            f"{pyproject_rel} still marks version {pkg_version!r} as "
+            f"status='unreleased', but git tag {expected_tag!r} already exists "
+            "(update [tool.cage.release].status = 'published')"
+        )
+    if tag_semvers:
+        highest_semver, highest_tag = max(tag_semvers)
+        if pkg_semver <= highest_semver:
+            errors.append(
+                f"Unreleased cage-conformance version {pkg_version!r} must be strictly "
+                f"greater than latest published tag {highest_tag!r}"
+            )
+    return errors
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "--cutting-release-tag",
+        default=None,
+        help=(
+            "The conformance-v<version> tag being published right now; lets an "
+            "'unreleased' version pass while its own tag already exists."
+        ),
+    )
+    args = parser.parse_args(argv)
     errors = (
         sync_violations()
         + import_violations()
         + rule_coverage_violations()
         + internal_contract_violations()
+        + release_state_violations(cutting_release_tag=args.cutting_release_tag)
     )
     for error in errors:
         print(f"❌ {error}", file=sys.stderr)
@@ -381,7 +625,8 @@ def main() -> int:
         return 1
     print(
         f"✅ cage-conformance: {len(SYNC_PAIRS)} proof modules byte-identical, "
-        "no src/ or proof/ imports, rule coverage and package contracts aligned"
+        "no src/ or proof/ imports, rule coverage, package contracts and "
+        "release state aligned"
     )
     return 0
 
