@@ -76,7 +76,7 @@ CAGE_DEPLOYMENT_REGION=US_FED           # US_FED | EU_ECB | APAC_MAS
 
 ### 3. Bootstrap the GCP project & enable required APIs
 
-Run [`scripts/bootstrap_gcp_project.sh`](../scripts/bootstrap_gcp_project.sh) once on a new or recycled GCP project (or let `deploy_all.sh` run it automatically before building images). It enables all 21 required GCP APIs (`PF1`), creates the versioned Terraform state bucket `gs://<YOUR_GCP_PROJECT_ID>-tfstate` (`PF2`), creates the `gcr.io` Artifact Registry repository and Cloud Build staging bucket (`PF4`), pre-creates the dedicated Cloud Build service account (`cage-cloudbuild-<env>`), `cage-signing-<env>` KMS keyring, `binauthz-attestor` key, and Binary Authorization attestor so Cloud Build can attest images before the first `terraform apply` (`PF3`), and optionally grants `roles/cloudkms.publicKeyViewer` to a deployer service account (`PF10`):
+Run [`scripts/bootstrap_gcp_project.sh`](../scripts/bootstrap_gcp_project.sh) once on a new or recycled GCP project (or let `deploy_all.sh` run it automatically before building images). It enables the required GCP APIs in batches of ≤ 20 (`EF1` / `PF1`), creates the versioned Terraform state bucket `gs://<YOUR_GCP_PROJECT_ID>-tfstate` (`PF2`), creates the `gcr.io` Artifact Registry repository and Cloud Build staging bucket (`PF4`), pre-creates the dedicated Cloud Build service account (`cage-cloudbuild-<env>`), `cage-signing-<env>` KMS keyring, `binauthz-attestor` key, and Binary Authorization attestor so Cloud Build can attest images before the first `terraform apply` (`PF3`), materializes Google-managed P4SA service agents (`EF8a`), and optionally grants `roles/cloudkms.publicKeyViewer` to a deployer service account (`PF10`):
 
 ```bash
 bash scripts/bootstrap_gcp_project.sh \
@@ -87,9 +87,16 @@ bash scripts/bootstrap_gcp_project.sh \
 
 ### 4. Deploy
 
+For `staging` and `prod` profiles, supply your deployer egress CIDR via `TF_VAR_authorized_networks` (the committed `staging.tfvars` and `prod*.tfvars` profiles omit operator IPs so nothing overrides yours, and `control_plane_access_guard` refuses an empty or `0.0.0.0/0` allowlist):
+
 ```bash
 # Dev (fast iteration — reduced security posture)
 ./deploy_all.sh --target gcp-gke --env dev --auto-approve
+
+# US_FED staging (matches Step 3; full compliance posture, 1-replica scale)
+export TF_VAR_authorized_networks='[{cidr="<YOUR_PUBLIC_IP>/32",display_name="deployer egress"}]'
+CAGE_DEPLOYMENT_REGION=US_FED ./deploy_all.sh --target gcp-gke --env staging \
+  --var-file=infra/targets/gcp-gke/staging.tfvars
 
 # US_FED production (ISO 42001 + NIST SP 800-53)
 CAGE_DEPLOYMENT_REGION=US_FED ./deploy_all.sh --target gcp-gke --env prod \
@@ -104,14 +111,14 @@ CAGE_DEPLOYMENT_REGION=APAC_MAS ./deploy_all.sh --target gcp-gke --env prod \
   --var-file=infra/targets/gcp-gke/apac-prod.tfvars
 ```
 
-**What this provisions:**
-1. GKE cluster with CPU and GPU node pools (Spot VMs for GPU by default)
-2. `governance-stack` Kubernetes namespace with PSA `restricted` labels
-3. `vllm-inference` namespace with PSA `baseline` labels (GPU workloads)
-4. MinIO storage on GCP persistent disks
-5. GCS bucket for Langfuse event storage
+**What this provisions (using `staging.tfvars` defaults):**
+1. GKE cluster with primary CPU nodes, optional Spot CPU pool (`general_spot_nodes` in staging), ClickHouse pool, and on-demand L4 GPU pool (`gpu_node_pool_spot = false`, scaled 0–2)
+2. `governance-stack` Kubernetes namespace with PSA `restricted` labels (all CAGE workloads, and `deployment/vllm-inference` when `inference_backend = "vllm"` is enabled)
+3. `inference_backend = "none"` governance core by default (no vLLM, advisor, or NeMo server deployed until switched to `"vllm"`)
+4. Cloud SQL for PostgreSQL and Memorystore for Valkey (with CMEK & AOF/TLS in staging/prod)
+5. GCS buckets for tamper-evident WORM evidence custody, audit logs, Langfuse events, and model weights
 6. Cloud Router & NAT (when `enable_private_nodes=true`)
-7. All CAGE application workloads via Terraform `kubernetes_*` resources
+7. All CAGE Kubernetes workloads, NetworkPolicies, and Linkerd service mesh via Terraform
 
 **Estimated time:** 8–12 minutes (GKE cluster provisioning dominates)
 
@@ -126,9 +133,8 @@ gcloud container clusters get-credentials <YOUR_GKE_CLUSTER_NAME> \
 # Check nodes
 kubectl get nodes
 
-# Check namespaces and pods
+# Check namespace pods
 kubectl get pods -n governance-stack
-kubectl get pods -n vllm-inference
 
 # Port-forward all dev services (auto-reconnect)
 bash scripts/port_forward_dev.sh
@@ -136,7 +142,7 @@ bash scripts/port_forward_dev.sh
 # Test gateway health
 curl http://localhost:8080/health
 
-# Test backend health
+# Test backend health (when inference_backend != "none")
 curl http://localhost:18080/health
 ```
 
@@ -239,13 +245,13 @@ terraform destroy -var-file=dev.tfvars -var-file=image_digests.<short_sha>.tfvar
 | `cluster_name` | GKE cluster name | `cage-dev` | `cage-governance` |
 | `environment` | Deployment tier | `dev` | `prod` |
 | `cage_deployment_region` | Compliance posture | `US_FED` | `US_FED` |
-| `enable_nist_compliance` | NIST SP 800-53 hardening (US_FED only) | `false` | `true` |
+| `enforce_in_dev` | Enforce full compliance posture in `dev` (`staging`/`prod` always enforce) | `false` | — (`prod` enforces) |
 | `enable_binary_authorization` | Signed images only | `false` | `true` |
 | `enable_audit_logging` | Comprehensive logging | `false` | `true` |
 | `enable_cmek` | Customer-managed KMS keys | `false` | `true` |
 | `enable_gpu_node_pool` | GPU node pool | `true` | `true` |
 | `gpu_type` | GPU type | `nvidia-l4` | `nvidia-l4` |
-| `gpu_node_pool_spot` | Use Spot VMs for GPU nodes | `true` | `true` |
+| `gpu_node_pool_spot` | Preemptible GPU pool (must be `false`) | `false` | `false` |
 | `primary_node_pool_machine_type` | CPU node machine type | `e2-standard-4` | `e2-standard-8` |
 
 ---
