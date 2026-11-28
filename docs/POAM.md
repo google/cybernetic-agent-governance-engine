@@ -5914,7 +5914,7 @@ Dynamic argument-assembly detection is a **distinct defect class** from path-vs-
 
 ---
 
-### POAM-2026-258: Fail-Open Leak Bypass Across Long-Form `gh` File Flags Whose Short Form (or `api` Counterpart) Is Covered
+### POAM-2026-258: Fail-Open Leak Bypass Across Unmodeled `gh` File Value Shapes and Long-Form File Flags
 
 **Control:** NIST CM-3 (Configuration Change Control), SA-11 (Developer Testing and Evaluation), SI-10 (Information Input Validation)
 **Risk Level:** Critical (fail-open outbound disclosure — sends referenced local file contents to GitHub unscanned, strictly higher severity than `POAM-2026-214`'s `High` false-positive path blocks)
@@ -5924,20 +5924,18 @@ Dynamic argument-assembly detection is a **distinct defect class** from path-vs-
 **Target Closure:** 2026-11-30
 
 **Description:**
-During line-by-line review of the external pre-execution `gh` command guard against [`check_command_payload_hygiene.py`](../scripts/check_command_payload_hygiene.py) and live `gh --help` docs, a **systematic flag-pair omission class** was identified alongside a mirror literal-string bug:
-1. **Critical fail-open bypass — long-form `gh` file/`@file` flags whose short form (or `api` counterpart) is covered (external guard):** The write-detection rule matches long-form writes such as `gh api --field ...` and non-`api` `gh` write commands, whereas the external file-reader loop inspects only `token == "-F"` (with `@<path>` expansion gated exclusively on `group == "api"`). Because the short/long `gh` file-reading pairs were never systematically enumerated across subcommands, every covered short `-F` or `api` pattern has an uncovered long-form or non-`api` sibling that dispatches local file contents unscanned:
-   - `gh api -F key=@<path>` is read, while `gh api --field key=@<path>` is not.
-   - `gh release create/edit -F <path>` is read as a plain filename, while `gh release create/edit --notes-file <path>` is not.
-   - `gh agent-task create -F <path>` is read as a plain filename, while `gh agent-task create --from-file <path>` is not.
-   - `gh workflow run -F key=@<path>` and `gh workflow run --field key=@<path>` use `@<path>` syntax outside `group == "api"`, so neither `@file` reference is opened.
-   - `gh secret set --env-file <path>`, `gh variable set --env-file <path>` (short `-f`), and `gh pr create --template <path>` (short `-T`) read local files in write subcommands not covered by `-F`.
-2. **Immediate mirror fix — `-f` / `--raw-field` sends literal strings, not files ([`check_command_payload_hygiene.py`](../scripts/check_command_payload_hygiene.py)):** Separately from the guard's fail-open omission above, [`SUPPORTED_FILE_PAYLOAD_OPTIONS`](../scripts/check_command_payload_hygiene.py) previously carried `"--raw-field @"`, excising `--raw-field key=@token` args even though `gh` sends `-f` / `--raw-field` values verbatim as static strings and never opens files. That excision bug bypassed inline command scanning in the mirror and is removed immediately ([`test_poam_2026_258_raw_field_at_syntax_stays_scanned_inline`](../tests/test_ci_gate_effectiveness.py)).
+During line-by-line review of the external pre-execution `gh` command guard against [`check_command_payload_hygiene.py`](../scripts/check_command_payload_hygiene.py) and live `gh --help` docs, a **systematic flag-and-shape omission class** was identified alongside a mirror literal-string bug:
+1. **Critical fail-open bypass — `gh` file flags and `@file` value shapes the external reader does not model:** The write-detection rule matches long-form writes (`gh api --field ...`) and non-`api` `gh` write commands, whereas the external file-reader loop inspects only `token == "-F"` with `@<path>` expansion gated exclusively on `group == "api"`, and silently swallows failed opens with `except OSError: pass`. Because the reader models neither long-form flag pairs nor subcommand-dependent `@file` shapes systematically, three fail-open shapes escape inspection:
+   - **Uncovered long-form pairs of covered `-F` / `api` flags:** `gh api --field key=@<path>` (vs. `-F`), `gh release create/edit --notes-file <path>` (vs. `-F <path>` plain filename), and `gh agent-task create --from-file <path>` (vs. `-F <path>` plain filename).
+   - **Silent `OSError` swallow on `@<path>` outside `group == "api"` (`gh workflow run -F key=@<path>` and `--field key=@<path>`):** Because `@` parsing runs only for `group == "api"`, `gh workflow run -F key=@<path>` resolves the target path to the literal string `key=@<path>`, `open()` raises `OSError`, and `except OSError: pass` drops the file scan silently with no warning or failure.
+   - **Write-subcommand file flags not modeled by `-F`:** `gh secret set --env-file <path>` / `gh variable set --env-file <path>` (and short `-f <path>`) and `gh pr create --template <path>` (and short `-T <path>`).
+2. **Immediate mirror fix — `-f` / `--raw-field` on `api` / `workflow run` sends literal strings, not files ([`check_command_payload_hygiene.py`](../scripts/check_command_payload_hygiene.py)):** Separately from the guard's fail-open omission above, [`SUPPORTED_FILE_PAYLOAD_OPTIONS`](../scripts/check_command_payload_hygiene.py) previously carried `"--raw-field @"`, excising `--raw-field key=@token` args even though `gh` sends `-f` / `--raw-field` values verbatim as static strings and never opens files. That excision bug bypassed inline command scanning in the mirror and is removed immediately ([`test_poam_2026_258_raw_field_at_syntax_stays_scanned_inline`](../tests/test_ci_gate_effectiveness.py)).
 
 **Mirror Direction (`origin/main` `#947` `310dbeb1` -> Today):**
 - **Matched in both (`--body-file`, `--input`, `-F @` on `api`):** Identical between [`SUPPORTED_FILE_PAYLOAD_OPTIONS`](../scripts/check_command_payload_hygiene.py) and the external reader.
 - **Mirror intentionally leads external guard (`--field @`):** Already landed in `SUPPORTED_FILE_PAYLOAD_OPTIONS` in `#947` (`310dbeb1`) before this audit surfaced the external gap. Keep `--field @` in the mirror rather than "syncing" backward; external Patch 3 catches up to it.
 - **Removed immediately (`--raw-field @`):** Literal-string flag, not a file reader.
-- **Held until Patch 3 (`--notes-file`, `--from-file`, `--env-file`, `--template`, `workflow run -F @`):** Held out of the mirror today so the remaining uncovered long-form/non-`api` file flags move into guard and mirror in one lockstep commit rather than widening mirror lead ahead of the guard.
+- **Held until Patch 3 (`--notes-file`, `--from-file`, `--env-file`, `--template`, `workflow run -F @`, plus non-`api` `-F <path>` plain-filename parity):** Held out of the mirror today so the remaining uncovered long-form/short-form file readers and subcommand-dependent `-F` semantics (`@<path>` on `api`/`workflow`, plain `<path>` on `release`/`agent-task`/`pr`/`issue`) move into guard and mirror in one lockstep commit rather than widening mirror divergence ahead of the guard.
 
 **Verified CLI Evidence (`gh --help` systematic subcommand audit, `2026-11-28`):**
 ```text
@@ -5973,10 +5971,10 @@ During line-by-line review of the external pre-execution `gh` command guard agai
 
 **Remediation Plan:**
 1. **Fixed immediately in mirror (`2026-11-28`):** Remove `"--raw-field @"` from [`SUPPORTED_FILE_PAYLOAD_OPTIONS`](../scripts/check_command_payload_hygiene.py), clarify `--field @` lead direction in module/test docstrings, and assert via [`test_poam_2026_258_raw_field_at_syntax_stays_scanned_inline`](../tests/test_ci_gate_effectiveness.py) that `-f` / `--raw-field key=@token` remains scanned inline.
-2. **Patch 3 (external `gh` guard + lockstep mirror sync):** Systematically enumerate and read every documented short/long `gh` file and `@file` flag pair listed above (`api --field`, `workflow run -F`/`--field`, `release create/edit -F`/`--notes-file`, `agent-task create -F`/`--from-file`, `secret`/`variable set -f`/`--env-file`, `pr create -T`/`--template`), keep `-f`/`--raw-field` on `api` and `workflow run` scanned as static strings, add matching external unit and mutation tests, and update [`SUPPORTED_FILE_PAYLOAD_OPTIONS`](../scripts/check_command_payload_hygiene.py) and [`test_ci_gate_effectiveness.py`](../tests/test_ci_gate_effectiveness.py) in the same lockstep commit.
+2. **Patch 3 (external `gh` guard + lockstep mirror sync):** Systematically model and read every documented short/long `gh` file flag and subcommand `@file` shape (`api`/`workflow` `@<path>` via `-F`/`--field`, `release create/edit -F`/`--notes-file`, `agent-task create -F`/`--from-file`, `secret`/`variable set -f`/`--env-file`, `pr create -T`/`--template`), keep `-f`/`--raw-field` on `api` and `workflow run` scanned as static strings, add matching external unit and mutation tests, and update [`SUPPORTED_FILE_PAYLOAD_OPTIONS`](../scripts/check_command_payload_hygiene.py) (including group-aware `-F` plain-filename vs. `@file` parity) and [`test_ci_gate_effectiveness.py`](../tests/test_ci_gate_effectiveness.py) in the same lockstep commit.
 
 **Closure Criteria:**
-1. External Patch 3 covers every short/long `gh` file and `@file` flag pair across write subcommands while keeping `-f`/`--raw-field` literal payloads scanned inline, verified by recorded external unit tests and killed fail-open mutants.
+1. External Patch 3 covers every short/long `gh` file flag and subcommand `@file` shape across write subcommands while keeping `-f`/`--raw-field` literal payloads scanned inline, verified by recorded external unit tests and killed fail-open mutants.
 2. Mainline commit syncing [`SUPPORTED_FILE_PAYLOAD_OPTIONS`](../scripts/check_command_payload_hygiene.py) and property tests in [`tests/test_ci_gate_effectiveness.py`](../tests/test_ci_gate_effectiveness.py) in lockstep with Patch 3.
 
 ---
