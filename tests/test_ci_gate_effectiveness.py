@@ -2347,17 +2347,23 @@ def test_poam_2026_214_resolved_payload_hygiene_and_zero_commit_push_guard(
     """POAM-2026-214: a clean payload at a path matching a denylist token must not be refused,
     while leaks inside referenced payloads/heredocs/inline args and 0-commit pushes fail closed.
 
-    Contract direction (``POAM-2026-258``): ``--body-file``, ``--input``, and ``-F @``
-    match the external reader, while ``--field @`` leads the external guard
-    (keep it in the mirror; external Patch 3 catches up). ``-f`` / ``--raw-field``
-    send static literal strings and were removed from excision, while ``--notes-file``
-    and sibling long-form flags stay held until Patch 3 lands in lockstep.
+    Contract direction (``POAM-2026-258``, lockstep with external Patches 1-3):
+    ``SUPPORTED_FILE_PAYLOAD_OPTIONS`` mirrors the external reader's full set
+    of public file options, subcommand-gated ``@file`` / plain-path ``-F`` and
+    ``--field`` forms, ``pr`` ``-T``/``--template``, and ``secret``/``variable``
+    ``-f``/``--env-file`` (routed to ``ask_findings`` in ``audit_command_payloads_outcome``).
     """
     assert set(check_command_payload_hygiene.SUPPORTED_FILE_PAYLOAD_OPTIONS) == {
         "--body-file",
         "--input",
-        "-F @",
+        "--notes-file",
+        "--from-file",
+        "--template (pr)",
+        "--env-file (secret/variable)",
+        "-F",
         "--field @",
+        "-f (secret/variable)",
+        "-T (pr)",
     }
 
     token = "example-denied-token"
@@ -2419,9 +2425,8 @@ def test_poam_2026_214_resolved_payload_hygiene_and_zero_commit_push_guard(
 def test_poam_2026_258_raw_field_at_syntax_stays_scanned_inline(
     tmp_path: Path,
 ) -> None:
-    """POAM-2026-258: in ``gh api`` / ``gh workflow run``, ``-f`` / ``--raw-field`` sends
-    a literal string and never opens ``@<path>``, so ``key=@token`` must remain in
-    scanned command text rather than being excised as a file path."""
+    """POAM-2026-258: literal/format flags never read files, so denylist tokens stay
+    scanned in inline command arguments rather than being excised as file paths."""
     token = "example-denied-token"
     clean_file = tmp_path / token
     clean_file.write_text("clean content on disk\n", encoding="utf-8")
@@ -2430,9 +2435,108 @@ def test_poam_2026_258_raw_field_at_syntax_stays_scanned_inline(
         f"gh api repos/o/r -f body=@{token}",
         f"gh api repos/o/r --raw-field body=@{token}",
         f"gh api repos/o/r --raw-field=body=@{token}",
+        f"gh api repos/o/r --template {{{{{token}}}}}",
+        f"gh api repos/o/r -t {{{{{token}}}}}",
+        f"gh workflow run deploy.yml -f env=@{token}",
+        f"gh pr create --title test -f {token}",
+        f"gh release create v1.0 --field body=@{token}",
     ):
         violations = check_command_payload_hygiene.audit_command_payloads(
             cmd, cwd=tmp_path, prohibited_identifiers=[token]
         )
         assert any("command arguments/data" in v for v in violations), (cmd, violations)
         assert not any("referenced payload" in v for v in violations), (cmd, violations)
+
+
+@pytest.mark.parametrize(
+    ("cmd_template", "expect_ask_only"),
+    [
+        ("gh release create v1.0 --notes-file {p}", False),
+        ("gh release edit v1.0 --notes-file={p}", False),
+        ("gh release create v1.0 -F {p}", False),
+        ("gh agent-task create --from-file {p}", False),
+        ("gh agent-task create --from-file={p}", False),
+        ("gh agent-task create -F {p}", False),
+        ("gh workflow run deploy.yml -F payload=@{p}", False),
+        ("gh workflow run deploy.yml --field payload=@{p}", False),
+        ("gh workflow run deploy.yml --field=payload=@{p}", False),
+        ("gh workflow run deploy.yml -F@{p}", False),
+        ("gh api repos/o/r --field body=@{p}", False),
+        ("gh api repos/o/r -Fbody=@{p}", False),
+        ("gh pr create --title t --template {p}", False),
+        ("gh pr create --title t -T {p}", False),
+        ("gh secret set MY_SECRET --env-file {p}", True),
+        ("gh variable set MY_VAR --env-file={p}", True),
+        ("gh secret set MY_SECRET -f {p}", True),
+        ("gh variable set MY_VAR -f={p}", True),
+    ],
+)
+def test_poam_2026_258_group_aware_file_shapes_and_ask_routing(
+    tmp_path: Path,
+    cmd_template: str,
+    expect_ask_only: bool,
+) -> None:
+    """POAM-2026-258: all seven gh file flags, subcommand-gated shapes, and upload-intended ask routing."""
+    token = "example-denied-token"
+    clean_dir = tmp_path / token
+    clean_dir.mkdir(parents=True, exist_ok=True)
+    clean_file = clean_dir / "payload.txt"
+    clean_file.write_text("clean content\n", encoding="utf-8")
+
+    # Clean file at a token-bearing path excises cleanly with zero deny/ask findings.
+    clean_outcome = check_command_payload_hygiene.audit_command_payloads_outcome(
+        cmd_template.format(p=clean_file),
+        prohibited_identifiers=[token],
+    )
+    assert clean_outcome.gh_is_write is True
+    assert clean_outcome.deny_violations == ()
+    assert clean_outcome.ask_findings == ()
+
+    # Dirty file routes to ask_findings for --env-file / secret|variable -f and denies otherwise.
+    dirty_file = tmp_path / "dirty.txt"
+    dirty_file.write_text(f"secret={token}\n", encoding="utf-8")
+    dirty_outcome = check_command_payload_hygiene.audit_command_payloads_outcome(
+        cmd_template.format(p=dirty_file),
+        prohibited_identifiers=[token],
+    )
+    assert dirty_outcome.gh_is_write is True
+    if expect_ask_only:
+        assert dirty_outcome.deny_violations == ()
+        assert any("upload-intended file" in f for f in dirty_outcome.ask_findings)
+    else:
+        assert any("referenced payload" in v for v in dirty_outcome.deny_violations)
+
+
+def test_poam_2026_258_group_aware_write_classification() -> None:
+    """POAM-2026-258: gh workflow run is a write; gh run view / workflow view are read-only."""
+    for write_cmd in (
+        "gh workflow run deploy.yml",
+        "gh secret set MY_SEC",
+        "gh variable set MY_VAR",
+        "gh release create v1.0",
+        "gh release upload v1.0 ./dist.tgz",
+        "gh agent-task create",
+        "gh pr create --title test",
+        "gh api repos/o/r -f body=ok",
+    ):
+        assert (
+            check_command_payload_hygiene.audit_command_payloads_outcome(
+                write_cmd, prohibited_identifiers=[]
+            ).gh_is_write
+            is True
+        ), write_cmd
+
+    for read_cmd in (
+        "gh run view 12345",
+        "gh workflow view deploy.yml",
+        "gh workflow list",
+        "gh pr view 42",
+        "gh release view v1.0",
+        "gh api repos/o/r",
+    ):
+        assert (
+            check_command_payload_hygiene.audit_command_payloads_outcome(
+                read_cmd, prohibited_identifiers=[]
+            ).gh_is_write
+            is False
+        ), read_cmd
