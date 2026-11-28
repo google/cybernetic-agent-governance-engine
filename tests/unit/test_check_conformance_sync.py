@@ -240,3 +240,55 @@ def test_release_state_rejects_missing_status_and_non_semver_version(
     )
     errs = sync.release_state_violations(bad_version, git_tags=[])
     assert any("strict MAJOR.MINOR.PATCH" in err for err in errs)
+
+
+def test_release_state_scopes_tags_to_head_ancestry_on_historical_rerun(
+    tmp_path: Path,
+) -> None:
+    """Issue #927: future conformance-v* tags must not break historical CI reruns."""
+    import subprocess
+
+    repo = _make_release_repo(tmp_path, version="0.4.2", status="unreleased")
+    pkg_pyproject = repo / "packages" / "cage-conformance" / "pyproject.toml"
+
+    def _git(*args: str) -> str:
+        proc = subprocess.run(
+            ["git", *args], cwd=repo, capture_output=True, text=True, check=True
+        )
+        return proc.stdout.strip()
+
+    _git("init", "-q")
+    _git("config", "user.email", "test@example.com")
+    _git("config", "user.name", "Test")
+    _git("add", ".")
+    _git("commit", "-q", "-m", "v0.4.2 unreleased")
+    _git("tag", "conformance-v0.4.1")
+    historical_sha = _git("rev-parse", "HEAD")
+
+    pkg_pyproject.write_text(
+        '[project]\nname = "cage-conformance"\nversion = "0.5.0"\n'
+        '[tool.cage.release]\nstatus = "published"\n',
+        encoding="utf-8",
+    )
+    _git("add", ".")
+    _git("commit", "-q", "-m", "release v0.5.0")
+    _git("tag", "conformance-v0.5.0")
+
+    _git("checkout", "-q", historical_sha)
+    assert sync.release_state_violations(repo) == []
+
+    cut_errs = sync.release_state_violations(
+        repo, cutting_release_tag="conformance-v0.4.2"
+    )
+    assert any(
+        "strictly greater than existing release '0.5.0'" in err for err in cut_errs
+    )
+
+    _git("checkout", "-q", "-")
+    pkg_pyproject.write_text(
+        '[project]\nname = "cage-conformance"\nversion = "0.5.0"\n'
+        '[tool.cage.release]\nstatus = "unreleased"\n',
+        encoding="utf-8",
+    )
+    unrel_errs = sync.release_state_violations(repo)
+    assert any("already exists" in err for err in unrel_errs)
