@@ -584,3 +584,35 @@ async def test_cbf_commit_does_not_resend_wait_after_connection_drop(
     # The commit's WAIT never reached valkey on a reconnected socket; only the
     # strict-mode rollback's [EVAL, WAIT] ran on its own pinned connection.
     assert valkey.connections_running("WAIT") == valkey.connections_running("EVAL")
+
+
+@pytest.mark.covers(
+    "src.gateway.governance.safety.cbf_engine:ControlBarrierFunction._sync_to_replicas#type(target_client) is AsyncRedis",
+)
+async def test_cbf_sync_to_replicas_with_async_redis_and_no_socket_fails_closed(
+    valkey, client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #909: when _sync_to_replicas() receives AsyncRedis with socket=None,
+    the ``type(target_client) is AsyncRedis`` branch must route to
+    ``acknowledged_replicas()`` and fail closed without sending ``WAIT``.
+    """
+    from redis.asyncio import Redis as AsyncRedis
+
+    import src.gateway.governance.safety.cbf_engine as cbf_module
+    from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
+    from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
+
+    assert type(client) is AsyncRedis
+    cbf = ControlBarrierFunction(
+        invariant=CashBarrier(gamma=0.5),
+        cost_resolver=finance_cost_resolver,
+        skip_epoch_seed=True,
+    )
+    cbf.tracer = None
+    monkeypatch.setattr(cbf_module, "_WAIT_REPLICAS", 1)
+    monkeypatch.setattr(cbf_module, "_WAIT_TIMEOUT_MS", 100)
+
+    ok = await cbf._sync_to_replicas(client=client, socket=None)
+
+    assert ok is False
+    assert valkey.connections_running("WAIT") == []
