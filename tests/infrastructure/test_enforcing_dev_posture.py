@@ -505,6 +505,7 @@ def test_tftest_suites_cover_data_class_split_and_certification_guard() -> None:
     )
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_staging_lifecycle_certification_flag_fails_fast_without_separate_evidence_project(
     tmp_path: Path,
 ) -> None:

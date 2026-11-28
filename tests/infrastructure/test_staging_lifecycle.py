@@ -624,6 +624,7 @@ exit 0
     return repo, bin_dir, log_file
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_staging_lifecycle_happy_path_passes_and_destroys_with_rendered_digests(
     tmp_path: Path,
 ) -> None:
@@ -689,6 +690,7 @@ def test_staging_lifecycle_happy_path_passes_and_destroys_with_rendered_digests(
     assert "image_digests.abc1234.tfvars.json" in calls
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_staging_lifecycle_fails_closed_on_phase1_post_apply_drift_and_still_tears_down(
     tmp_path: Path,
 ) -> None:
@@ -708,6 +710,7 @@ def test_staging_lifecycle_fails_closed_on_phase1_post_apply_drift_and_still_tea
     assert "--import-state" not in calls
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_staging_lifecycle_fails_closed_on_phase1_plan_error_and_still_tears_down(
     tmp_path: Path,
 ) -> None:
@@ -726,6 +729,7 @@ def test_staging_lifecycle_fails_closed_on_phase1_plan_error_and_still_tears_dow
     assert "destroy -var-file=staging.tfvars" in calls
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_staging_lifecycle_fails_closed_when_workload_unready_after_teardown(
     tmp_path: Path,
 ) -> None:
@@ -745,6 +749,7 @@ def test_staging_lifecycle_fails_closed_when_workload_unready_after_teardown(
     assert "destroy -var-file=staging.tfvars" in calls
 
 
+@pytest.mark.allow_hermetic_gcloud
 @pytest.mark.parametrize("missing_core", ["gateway", "compliance-bridge"])
 def test_staging_lifecycle_fails_closed_when_core_workload_missing(
     tmp_path: Path, missing_core: str
@@ -765,6 +770,7 @@ def test_staging_lifecycle_fails_closed_when_core_workload_missing(
     assert "destroy -var-file=staging.tfvars" in log_file.read_text(encoding="utf-8")
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_staging_lifecycle_fails_closed_when_cronjob_lula_audit_suspended_or_missing(
     tmp_path: Path,
 ) -> None:
@@ -781,6 +787,7 @@ def test_staging_lifecycle_fails_closed_when_cronjob_lula_audit_suspended_or_mis
     assert "CronJob/lula-audit has .spec.suspend=true" in proc.stderr
 
 
+@pytest.mark.allow_hermetic_gcloud
 @pytest.mark.parametrize(
     ("pod_restarts", "init_restarts"),
     [(2, 0), (0, 1)],
@@ -805,6 +812,7 @@ def test_staging_lifecycle_fails_closed_when_any_container_restarted(
     assert "Pod restart check failed" in proc.stderr
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_staging_lifecycle_fails_closed_when_lula_or_posture_fails(
     tmp_path: Path,
 ) -> None:
@@ -823,6 +831,7 @@ def test_staging_lifecycle_fails_closed_when_lula_or_posture_fails(
     assert "destroy -var-file=staging.tfvars" in calls
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_staging_lifecycle_fresh_project_bootstraps_and_verifies_zero_survivors(
     tmp_path: Path,
 ) -> None:
@@ -856,6 +865,7 @@ def test_staging_lifecycle_fresh_project_bootstraps_and_verifies_zero_survivors(
     assert "gcloud storage buckets list --project=ephemeral-proj-99" in calls
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_staging_lifecycle_fresh_project_fails_on_surviving_workload_bucket(
     tmp_path: Path,
 ) -> None:
@@ -884,6 +894,7 @@ def test_staging_lifecycle_fresh_project_fails_on_surviving_workload_bucket(
     assert "Surviving workload GCS bucket(s) after destroy" in proc.stderr
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_staging_lifecycle_fresh_project_retains_locked_langfuse_event_upload_bucket(
     tmp_path: Path,
 ) -> None:
@@ -912,6 +923,7 @@ def test_staging_lifecycle_fresh_project_retains_locked_langfuse_event_upload_bu
     assert "POAM-2026-159" in proc.stdout
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_staging_lifecycle_fails_closed_when_lula_exits_zero_with_not_satisfied(
     tmp_path: Path,
 ) -> None:
@@ -932,6 +944,7 @@ def test_staging_lifecycle_fails_closed_when_lula_exits_zero_with_not_satisfied(
     assert "destroy -var-file=staging.tfvars" in calls
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_staging_lifecycle_skips_api_and_planned_lula_specs_on_host_and_prints_planned_list(
     tmp_path: Path,
 ) -> None:
@@ -964,6 +977,7 @@ def test_staging_lifecycle_skips_api_and_planned_lula_specs_on_host_and_prints_p
     assert "lula-validation-ra5.yaml" not in calls
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_archive_manifest_splits_evaluated_lula_specs_by_readme_rating(
     tmp_path: Path,
 ) -> None:
@@ -1027,6 +1041,7 @@ def test_archive_manifest_splits_evaluated_lula_specs_by_readme_rating(
     ]
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_staging_lifecycle_fails_closed_when_lula_rating_breakdown_cannot_be_written(
     tmp_path: Path,
 ) -> None:
@@ -1055,6 +1070,7 @@ def test_staging_lifecycle_fails_closed_when_lula_rating_breakdown_cannot_be_wri
     assert not (archive / "lula" / "rating-breakdown.json").exists()
 
 
+@pytest.mark.allow_hermetic_gcloud
 @pytest.mark.parametrize(
     ("job_exit_code", "job_logs", "expected_err"),
     [
@@ -1103,6 +1119,7 @@ def test_staging_lifecycle_fails_closed_on_incluster_lula_job_defects(
     assert expected_err in proc.stderr
 
 
+@pytest.mark.allow_hermetic_gcloud
 @pytest.mark.parametrize(
     "vacuous_summary",
     [
@@ -1138,6 +1155,7 @@ def test_staging_lifecycle_fails_closed_on_vacuous_zero_passed_pytest_run(
     assert "vacuous pytest run (0 passed tests detected" in proc.stderr
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_staging_lifecycle_fails_closed_when_live_langfuse_posture_fails(
     tmp_path: Path,
 ) -> None:
@@ -1164,6 +1182,7 @@ def test_staging_lifecycle_fails_closed_when_live_langfuse_posture_fails(
     )
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_staging_lifecycle_fails_closed_when_gmp_timeseries_empty(
     tmp_path: Path,
 ) -> None:
@@ -1193,6 +1212,7 @@ def test_staging_lifecycle_fails_closed_when_gmp_timeseries_empty(
     )
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_staging_lifecycle_fails_closed_when_bridge_gmp_timeseries_empty(
     tmp_path: Path,
 ) -> None:
@@ -1222,6 +1242,7 @@ def test_staging_lifecycle_fails_closed_when_bridge_gmp_timeseries_empty(
     )
 
 
+@pytest.mark.allow_hermetic_gcloud
 @pytest.mark.parametrize(
     ("bad_payload", "expected_fragment"),
     [
@@ -1314,6 +1335,7 @@ def test_staging_lifecycle_fails_closed_on_worm_evidence_verify_violations(
     assert expected_fragment in proc.stderr
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_staging_lifecycle_executes_pluggable_as6_corroboration_hook_and_fails_closed(
     tmp_path: Path,
 ) -> None:
@@ -1341,6 +1363,7 @@ def test_staging_lifecycle_executes_pluggable_as6_corroboration_hook_and_fails_c
     )
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_staging_lifecycle_fails_closed_when_audit_corroboration_script_missing(
     tmp_path: Path,
 ) -> None:
@@ -1366,6 +1389,7 @@ def test_staging_lifecycle_fails_closed_when_audit_corroboration_script_missing(
     assert "Required AS-6 Cloud Audit Log corroboration script missing" in proc.stderr
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_staging_lifecycle_stage5_rebuild_drift_fails_closed_after_final_destroy(
     tmp_path: Path,
 ) -> None:
@@ -1392,6 +1416,7 @@ def test_staging_lifecycle_stage5_rebuild_drift_fails_closed_after_final_destroy
     assert calls.count("destroy -var-file=staging.tfvars") == 2
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_staging_lifecycle_fresh_project_retains_evidence_domain_worm_buckets_and_lien(
     tmp_path: Path,
 ) -> None:
@@ -1426,6 +1451,7 @@ def test_staging_lifecycle_fresh_project_retains_evidence_domain_worm_buckets_an
     assert "state rm module.worm_bucket" in calls
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_staging_lifecycle_allow_legacy_lien_survivor_accepts_known_langfuse_events_bucket(
     tmp_path: Path,
 ) -> None:
@@ -1455,6 +1481,7 @@ def test_staging_lifecycle_allow_legacy_lien_survivor_accepts_known_langfuse_eve
     assert "PF9 explicit known survivor" in proc.stdout
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_staging_lifecycle_orphaned_storage_lien_fails_closed_with_exact_delete_hint(
     tmp_path: Path,
 ) -> None:
@@ -1490,6 +1517,7 @@ def test_staging_lifecycle_orphaned_storage_lien_fails_closed_with_exact_delete_
     )
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_staging_lifecycle_allow_legacy_lien_survivor_requires_legacy_bucket(
     tmp_path: Path,
 ) -> None:
@@ -1523,6 +1551,7 @@ def test_staging_lifecycle_allow_legacy_lien_survivor_requires_legacy_bucket(
     )
 
 
+@pytest.mark.allow_hermetic_gcloud
 @pytest.mark.parametrize(
     ("post_rebuild_payload", "expected_fragment"),
     [
@@ -1604,6 +1633,7 @@ def test_staging_lifecycle_stage5b_fails_closed_when_post_rebuild_worm_lacks_bou
     assert calls.count("destroy -var-file=staging.tfvars") == 2
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_staging_lifecycle_stage5b_fails_closed_when_post_rebuild_audit_corroboration_fails(
     tmp_path: Path,
 ) -> None:
@@ -1633,6 +1663,7 @@ def test_staging_lifecycle_stage5b_fails_closed_when_post_rebuild_audit_corrobor
     assert calls.count("destroy -var-file=staging.tfvars") == 2
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_staging_lifecycle_archive_manifest_stamps_existing_vs_fresh_target_mode_and_suite_counts(
     tmp_path: Path,
 ) -> None:
@@ -1710,6 +1741,7 @@ def test_staging_lifecycle_archive_manifest_stamps_existing_vs_fresh_target_mode
     assert manifest_fresh["lula"]["rating_breakdown"] is None
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_staging_lifecycle_fails_closed_when_startup_grace_active_true(
     tmp_path: Path,
 ) -> None:
@@ -1737,6 +1769,7 @@ def test_staging_lifecycle_fails_closed_when_startup_grace_active_true(
     assert manifest["phase_failures"]["lula"] >= 1
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_staging_lifecycle_enable_e2e_advisor_and_allow_partner_outage_manifest_recording(
     tmp_path: Path,
 ) -> None:
@@ -1793,6 +1826,7 @@ def test_staging_lifecycle_enable_e2e_advisor_and_allow_partner_outage_manifest_
     assert manifest_unwaived["overall_status"] == "FAIL"
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_staging_lifecycle_clean_room_dotenv_isolation_wrapper_and_e2e_suite_wiring(
     tmp_path: Path,
 ) -> None:
@@ -1893,6 +1927,7 @@ exit 0
     )
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_staging_lifecycle_records_phase0_kms_residue_when_project_pre_exists(
     tmp_path: Path,
 ) -> None:
@@ -1966,6 +2001,7 @@ def test_destroy_sigpipe_safe_and_gke_neg_ignore_annotations() -> None:
     assert "^cloud\\\\.google\\\\.com/neg(-status)?$" in providers_tf
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_pf9_manifest_distinguishes_preexisting_vs_retained_by_design_buckets_and_skip_provision(
     tmp_path: Path,
 ) -> None:
@@ -2063,6 +2099,7 @@ def test_pf9_manifest_distinguishes_preexisting_vs_retained_by_design_buckets_an
     assert manifest_skip["full_unskipped_gate_w"] is False
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_staging_lifecycle_stage5b_seeds_post_rebuild_custody_before_worm_verification(
     tmp_path: Path,
 ) -> None:
@@ -2159,6 +2196,7 @@ def test_no_piped_grep_quiet_under_pipefail_across_repo_scripts_and_workflows() 
     assert offenders == [], f"Found SIGPIPE-prone `| grep -q` pipeline(s): {offenders}"
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_pf9_accepts_live_gcloud_wire_names_for_cloudbuild_sa_and_attestors_and_rejects_workload_sa(
     tmp_path: Path,
 ) -> None:
@@ -2246,6 +2284,7 @@ exit 0
     assert "Surviving workload service account(s) after destroy" in proc_bad.stderr
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_staging_lifecycle_cold_node_sidecar_timeouts_and_drift_read_back_scope(
     tmp_path: Path,
 ) -> None:
@@ -2293,6 +2332,7 @@ def test_staging_lifecycle_cold_node_sidecar_timeouts_and_drift_read_back_scope(
     )
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_staging_lifecycle_archives_kubelet_pull_durations_and_worm_objects(
     tmp_path: Path,
 ) -> None:
@@ -2381,6 +2421,7 @@ def test_staging_lifecycle_archives_kubelet_pull_durations_and_worm_objects(
     )
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_staging_lifecycle_enforces_binauthz_negative_probe_and_records_disclosures(
     tmp_path: Path,
 ) -> None:
@@ -2504,6 +2545,7 @@ exit 0
     assert manifest_bad["phase_failures"]["posture"] >= 1
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_staging_lifecycle_phase3_rejects_startup_grace_remarks_on_host_and_job_lula_gate_w(
     tmp_path: Path,
 ) -> None:
@@ -2714,6 +2756,7 @@ exit 0
     _write_executable(uv_path, uv_body)
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_staging_lifecycle_closes_port_forward_and_unsets_gateway_url_for_phase4_hermetic_suites(
     tmp_path: Path,
 ) -> None:
@@ -2782,6 +2825,7 @@ def test_staging_lifecycle_closes_port_forward_and_unsets_gateway_url_for_phase4
         assert "[pf=open " in live_line, live_line
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_staging_lifecycle_port_forward_isolation_across_skip_lula_and_skip_posture(
     tmp_path: Path,
 ) -> None:
@@ -2864,6 +2908,7 @@ exit 0
     )
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_staging_lifecycle_enforces_worm_posture_status_on_fresh_vs_existing_project(
     tmp_path: Path,
 ) -> None:

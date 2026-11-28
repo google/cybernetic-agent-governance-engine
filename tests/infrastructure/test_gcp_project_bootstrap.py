@@ -170,6 +170,7 @@ exit 0
     return bin_dir, log_file
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_bootstrap_rejects_missing_project(tmp_path: Path) -> None:
     bin_dir, _ = _make_stub_bins(tmp_path)
     env = {
@@ -189,6 +190,7 @@ def test_bootstrap_rejects_missing_project(tmp_path: Path) -> None:
     assert "--project or PROJECT_ID is required" in proc.stderr
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_bootstrap_rejects_invalid_env(tmp_path: Path) -> None:
     bin_dir, _ = _make_stub_bins(tmp_path)
     env = {
@@ -206,6 +208,7 @@ def test_bootstrap_rejects_invalid_env(tmp_path: Path) -> None:
     assert "--env must be one of: dev, staging, prod" in proc.stderr
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_bootstrap_enables_all_21_required_apis_and_creates_foundational_resources(
     tmp_path: Path,
 ) -> None:
@@ -302,6 +305,7 @@ def test_bootstrap_enables_all_21_required_apis_and_creates_foundational_resourc
     assert "gcloud logging settings describe --project=clean-proj-01" in calls
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_bootstrap_import_state_imports_missing_and_skips_existing(
     tmp_path: Path,
 ) -> None:
@@ -372,6 +376,7 @@ def test_bootstrap_import_state_imports_missing_and_skips_existing(
     assert "signing_key_manifest" not in calls
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_bootstrap_retries_transient_iam_sa_propagation_failure(
     tmp_path: Path,
 ) -> None:
@@ -414,6 +419,7 @@ exit 0
     assert calls.count("--role=roles/logging.logWriter") == 2
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_bootstrap_import_state_undeletes_tombstoned_wif_pool_and_provider(
     tmp_path: Path,
 ) -> None:
@@ -494,6 +500,7 @@ def test_gen_tfvars_succeeds_without_kms_governance_key_and_omits_undeclared_var
     assert "kms_governance_key" not in rendered
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_bootstrap_retries_transient_artifact_registry_api_propagation(
     tmp_path: Path,
 ) -> None:
@@ -604,6 +611,7 @@ def _run_and_assert_default_compute_sa_deprivileged(
         )
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_bootstrap_deprivileges_default_compute_sa_dangerous_roles(
     tmp_path: Path,
 ) -> None:
@@ -611,6 +619,7 @@ def test_bootstrap_deprivileges_default_compute_sa_dangerous_roles(
     _run_and_assert_default_compute_sa_deprivileged(BOOTSTRAP_SCRIPT, tmp_path)
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_bootstrap_revokes_only_present_editor_and_storage_admin_bindings(
     tmp_path: Path,
 ) -> None:
@@ -662,6 +671,7 @@ def test_bootstrap_revokes_only_present_editor_and_storage_admin_bindings(
     )
 
 
+@pytest.mark.allow_hermetic_gcloud
 @pytest.mark.parametrize(
     "benign_roles",
     [
@@ -706,6 +716,7 @@ def test_bootstrap_succeeds_cleanly_when_default_compute_sa_holds_no_dangerous_r
     assert "remove-iam-policy-binding" not in calls
 
 
+@pytest.mark.allow_hermetic_gcloud
 @pytest.mark.parametrize(
     ("mutant_id", "target", "replacement"),
     [

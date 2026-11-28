@@ -809,7 +809,7 @@ class TestCliAndLiveRunner:
         )
         assert rc2 == 1
 
-    def test_verify_audit_corroboration_script_live_mode_corroborates_and_fails_on_empty(
+    def test_verify_audit_corroboration_script_mocked_remote_corroborates_and_fails_on_empty(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         in_window_iso = (
@@ -865,6 +865,7 @@ class TestCliAndLiveRunner:
         ]
 
         monkeypatch.setenv("CAGE_GCP_ACCESS_TOKEN", "test-bearer-token")
+        monkeypatch.setenv("CAGE_CALLER_PRINCIPAL", "operator@example.com")
         with (
             patch.object(
                 live_corroborator, "fetch_audit_log_entries", return_value=mock_logs
