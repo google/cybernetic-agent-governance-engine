@@ -1266,8 +1266,9 @@ def compare_to_baseline(
     state: BaselineState,
     *,
     detector_sha256: str,
+    allow_slack: bool = False,
 ) -> list[str]:
-    """Return ratchet failures (empty when the live scan is within the baseline)."""
+    """Return ratchet failures (empty when live scan matches the baseline)."""
     if state.detector_sha256 != detector_sha256:
         return [
             f"detector fingerprint drifted from {state.detector_sha256[:12]} to "
@@ -1290,6 +1291,18 @@ def compare_to_baseline(
         for cls in VIOLATION_CLASSES
         if counts[cls] > state.class_counts[cls]
     )
+    if not failures and not allow_slack:
+        lowered = [
+            f"{cls}: {state.class_counts[cls]} -> {counts[cls]}"
+            for cls in VIOLATION_CLASSES
+            if counts[cls] < state.class_counts[cls]
+        ]
+        if lowered:
+            live_total = sum(counts.values())
+            failures.append(
+                f"ratchet slack: observed debt dropped below baseline "
+                f"({state.baseline} -> {live_total}; {', '.join(lowered)})"
+            )
     return failures
 
 
@@ -1410,16 +1423,28 @@ def main(argv: list[str] | None = None) -> int:
     if state is None:
         print(f"❌ {err}", file=sys.stderr)
         return 1
-    failures = compare_to_baseline(result, state, detector_sha256=detector)
+    failures = compare_to_baseline(
+        result,
+        state,
+        detector_sha256=detector,
+        allow_slack=args.update_baseline,
+    )
     if failures:
         print("❌ POA&M SHA-citation ratchet failed:", file=sys.stderr)
         for f in failures:
             print(f"  - {f}", file=sys.stderr)
-        print(
-            "  Fix the citation; the grammar is in "
-            "scripts/check_poam_sha_citations.py.",
-            file=sys.stderr,
-        )
+        if all(f.startswith("ratchet slack:") for f in failures):
+            print(
+                "  Run `python scripts/check_poam_sha_citations.py "
+                "--update-baseline` and commit tests/.poam-sha-citation-baseline.",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                "  Fix the citation; the grammar is in "
+                "scripts/check_poam_sha_citations.py.",
+                file=sys.stderr,
+            )
         return 1
     live_total = len(result.violations)
     if args.update_baseline:
@@ -1436,14 +1461,9 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(f"✅ Baseline lowered from {state.baseline} to {new.baseline}")
         return 0
-    if live_total < state.baseline:
-        print(
-            f"NOTE: {state.baseline - live_total} violation(s) fixed; run "
-            "--update-baseline to lower the ratchet."
-        )
     print(
         f"✅ POA&M SHA-citation gate passed: {live_total} standing violation(s) "
-        f"within baseline {state.baseline}."
+        f"matches baseline {state.baseline}."
     )
     return 0
 

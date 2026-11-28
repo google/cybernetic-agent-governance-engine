@@ -1602,14 +1602,18 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     fixed = state.total - sum(current.values())
+    if fixed > 0:
+        print(
+            f"FAIL: standards-citation ratchet slack ({state.total} -> "
+            f"{sum(current.values())}, {fixed} cleared); run "
+            "--update-baseline to tighten tests/.standard-citation-baseline.",
+            file=sys.stderr,
+        )
+        return 1
     print(
         f"OK: {sum(current.values())} standing standards-citation violations "
         f"(baseline {state.total}); no new violations."
     )
-    if fixed > 0:
-        print(
-            f"  {fixed} baselined violation(s) cleared; run --update-baseline to lower the ceiling."
-        )
     return 0
 
 

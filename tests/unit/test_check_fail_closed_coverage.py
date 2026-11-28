@@ -1299,6 +1299,20 @@ def test_normalize_val_err_fails_closed():
     assert True
 """,
     )
+    # Covering the pair drops uncovered to 0: normal mode rejects slack until --update-baseline runs.
+    rc_slack = gate.main(
+        [
+            "--repo-root",
+            str(tmp_path),
+            "--scope",
+            "readback-and-503",
+        ]
+    )
+    assert rc_slack == 1
+    err_slack = capsys.readouterr().err
+    assert "SHADOW_EXCEPT_BASELINE_SLACK" in err_slack
+    assert "--update-baseline" in err_slack
+
     rc_drop = gate.main(
         [
             "--repo-root",

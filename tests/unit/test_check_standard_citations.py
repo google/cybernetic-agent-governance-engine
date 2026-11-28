@@ -485,11 +485,17 @@ def test_ratchet_counts_duplicates_per_identity(tmp_path: Path) -> None:
     assert _run(root, TABLES_DIR) == 1
 
 
-def test_update_baseline_only_lowers(tmp_path: Path) -> None:
+def test_update_baseline_only_lowers(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     root = _mini_repo(tmp_path, BAD_A + BAD_B)
     assert _run(root, TABLES_DIR, "--init-baseline", "--reason", REASON) == 0
     (root / "docs" / "a.md").write_text(BAD_A, encoding="utf-8")
+    capsys.readouterr()
+    assert _run(root, TABLES_DIR) == 1
+    assert "--update-baseline" in capsys.readouterr().err
     assert _run(root, TABLES_DIR, "--update-baseline") == 0
+    assert _run(root, TABLES_DIR) == 0
     state, err = gate.read_baseline(root / "baseline.json")
     assert err is None and state is not None and state.total == 1
     (root / "docs" / "a.md").write_text(BAD_A + BAD_B, encoding="utf-8")
