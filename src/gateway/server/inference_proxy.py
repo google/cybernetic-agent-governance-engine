@@ -1068,6 +1068,19 @@ def _extract_scannable_request_schema_text(body: dict[str, Any]) -> str:
     return " ".join(fragments)
 
 
+def _quota_response_headers(quota_result: Any) -> dict[str, str]:
+    """Build passive, read-only quota telemetry headers for 200 OK responses."""
+    remaining = getattr(quota_result, "tokens_remaining", None)
+    if type(remaining) is not int:
+        max_tokens = getattr(quota_result, "token_quota_max", None)
+        acc_tokens = getattr(quota_result, "accumulated_tokens", None)
+        if type(max_tokens) is int and type(acc_tokens) is int:
+            remaining = max(0, max_tokens - acc_tokens)
+        else:
+            return {}
+    return {"X-Cage-Tokens-Remaining": str(max(0, remaining))}
+
+
 def _resolve_proxy_trace_id(request: Request, body: Any, span: Any) -> str:
     """Guarantee a non-empty trace_id for cage-audit/3.0 DDL compliance."""
     try:
@@ -1545,6 +1558,7 @@ async def chat_completions(
                 status_code=429,
             )
         stamp_iso_control(span, ingress_stage=2, control="A.4", outcome="PASS")
+        quota_headers = _quota_response_headers(quota_result)
 
         # 4. NeMo input verification — runs for ALL requests while semantic
         # rails are on. Evaluates all_messages_text across the full conversation
@@ -1822,6 +1836,7 @@ async def chat_completions(
                 headers={
                     "Cache-Control": "no-cache",
                     "X-Accel-Buffering": "no",
+                    **quota_headers,
                 },
             )
 
@@ -1911,4 +1926,4 @@ async def chat_completions(
             completion.get("usage"),
             workload_id=agent_id,
         )
-        return JSONResponse(content=completion)
+        return JSONResponse(content=completion, headers=quota_headers)
