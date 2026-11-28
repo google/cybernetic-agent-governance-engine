@@ -17,10 +17,11 @@
 
 Pure-stdlib property mirror for the external pre-execution command guard's
 path-vs-payload separation, group-aware ``gh`` write classification and flag
-parsing, upload-intended ``ask`` vs. public ``deny`` routing, and 0-commit
-``git push`` fail-closed invariant.
+parsing, upload-intended ``ask`` vs. public ``deny`` routing, 0-commit
+``git push`` fail-closed invariant, and chained ``git commit && git push``
+deny scoped per repository root.
 
-Shared Option-Set & Shape Contract (Lockstep with External Patches 1-3)
+Shared Option-Set & Shape Contract (Lockstep with External Guard)
 -----------------------------------------------------------------------
 * **Always-file long flags:** ``--body-file``, ``--input``, ``--notes-file``,
   and ``--from-file`` (space-separated and ``=`` forms).
@@ -181,20 +182,39 @@ def _is_gh_write_invocation(
     return verb in GH_GROUP_WRITE_VERBS.get(group, ())
 
 
-def _is_git_push_segment(tokens: Sequence[str]) -> bool:
+def _git_repo_key(directory: Path) -> Path:
+    resolved = directory.resolve()
+    for candidate in (resolved, *resolved.parents):
+        if (candidate / ".git").exists():
+            return candidate
+    return resolved
+
+
+def _parse_git_segment(tokens: Sequence[str], cwd: Path) -> tuple[str | None, Path]:
     if not tokens or Path(tokens[0]).name != "git":
-        return False
+        return (None, cwd)
+    git_dir = cwd
     idx = 1
     while idx < len(tokens):
         tok = tokens[idx]
-        if tok in {"-C", "-c", "--git-dir", "--work-tree", "--namespace"}:
+        if tok == "-C" and idx + 1 < len(tokens):
+            git_dir = git_dir / Path(tokens[idx + 1]).expanduser()
+            idx += 2
+            continue
+        if tok.startswith("-C") and len(tok) > 2:
+            git_dir = git_dir / Path(tok[2:]).expanduser()
+            idx += 1
+            continue
+        if tok in {"-c", "--git-dir", "--work-tree", "--namespace"} and idx + 1 < len(
+            tokens
+        ):
             idx += 2
             continue
         if tok.startswith("-"):
             idx += 1
             continue
-        return tok == "push"
-    return False
+        return (tok, git_dir)
+    return (None, git_dir)
 
 
 def _consume_gh_file_option(
@@ -281,14 +301,23 @@ def _inspect_segment(
     cwd: Path,
     prohibited_identifiers: Sequence[str],
     unpushed_commit_count: int | None,
+    pending_commits: set[Path] | None = None,
 ) -> tuple[list[str], list[str], bool | None]:
     """Scan tokens after excising subcommand-aware file paths, returning (deny, ask, gh_is_write)."""
     deny_violations: list[str] = []
     ask_findings: list[str] = []
-    if unpushed_commit_count == 0 and _is_git_push_segment(tokens):
-        deny_violations.append(
-            "git push guard refused vacuous 0-commit scan (split commit and push)"
-        )
+    git_sub, git_dir = _parse_git_segment(tokens, cwd)
+    if git_sub == "commit" and pending_commits is not None:
+        pending_commits.add(_git_repo_key(git_dir))
+    elif git_sub == "push":
+        if pending_commits is not None and _git_repo_key(git_dir) in pending_commits:
+            deny_violations.append(
+                "git push guard refused chained git commit && git push (split commit and push)"
+            )
+        elif unpushed_commit_count == 0:
+            deny_violations.append(
+                "git push guard refused vacuous 0-commit scan (split commit and push)"
+            )
 
     scrubbed_tokens: list[str] = []
     referenced_files: list[tuple[str, bool]] = []
@@ -349,10 +378,11 @@ def audit_command_payloads_outcome(
     unpushed_commit_count: int | None = None,
 ) -> CommandAuditOutcome:
     """Audit a shell command line returning separate deny violations and upload-intended asks."""
-    base_dir = cwd if cwd is not None else Path(".")
+    current_dir = cwd if cwd is not None else Path(".")
     deny_violations: list[str] = []
     ask_findings: list[str] = []
     seen_gh_write: bool | None = None
+    pending_commits: set[Path] = set()
     try:
         segments = _split_shell_segments(cmdline)
     except ValueError as exc:
@@ -369,11 +399,16 @@ def audit_command_payloads_outcome(
         )
 
     for segment in segments:
+        if segment and Path(segment[0]).name in {"cd", "pushd"}:
+            target = segment[1] if len(segment) > 1 else str(Path.home())
+            current_dir = current_dir / Path(target).expanduser()
+            continue
         seg_deny, seg_ask, seg_gh_write = _inspect_segment(
             segment,
-            cwd=base_dir,
+            cwd=current_dir,
             prohibited_identifiers=prohibited_identifiers,
             unpushed_commit_count=unpushed_commit_count,
+            pending_commits=pending_commits,
         )
         deny_violations.extend(seg_deny)
         ask_findings.extend(seg_ask)

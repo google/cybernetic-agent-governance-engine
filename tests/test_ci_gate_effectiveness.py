@@ -2406,16 +2406,75 @@ def test_poam_2026_214_resolved_payload_hygiene_and_zero_commit_push_guard(
         prohibited_identifiers=[token],
     )
 
-    # Property 5: chained git commit && git push with 0 unpushed commits fails closed.
+    # Property 5: chained git commit && git push with 0 or >=1 prior commits fails closed;
+    # standalone clean git push passes.
     assert check_command_payload_hygiene.audit_command_payloads(
         "git add README.md && git commit -m 'docs: update' && git push origin feat/x",
         prohibited_identifiers=[token],
         unpushed_commit_count=0,
     )
+    assert check_command_payload_hygiene.audit_command_payloads(
+        "git add README.md && git commit -m 'docs: update' && git push origin feat/x",
+        prohibited_identifiers=[token],
+        unpushed_commit_count=1,
+    )
     assert (
         check_command_payload_hygiene.audit_command_payloads(
             "git push origin feat/x",
             prohibited_identifiers=[token],
+            unpushed_commit_count=1,
+        )
+        == []
+    )
+
+
+def test_poam_2026_214_chained_commit_then_push_lockstep_scoping(
+    tmp_path: Path,
+) -> None:
+    """POAM-2026-214 Criterion 2 lockstep: chained commit && push refuses per repo root,
+    while standalone push, quoted '&&' in commit messages, and cross-repo -C chains pass."""
+    repo_a = tmp_path / "repo_a"
+    repo_b = tmp_path / "repo_b"
+    (repo_a / ".git").mkdir(parents=True)
+    (repo_b / ".git").mkdir(parents=True)
+    (repo_a / "sub").mkdir()
+
+    # Same repo via subdirectory still maps to repo_a and fails closed.
+    assert any(
+        "chained git commit && git push" in v
+        for v in check_command_payload_hygiene.audit_command_payloads(
+            "git -C repo_a commit -m 'msg' && git -C repo_a/sub push origin main",
+            cwd=tmp_path,
+            prohibited_identifiers=[],
+            unpushed_commit_count=2,
+        )
+    )
+    # Quoted && inside commit message is not treated as a shell separator.
+    assert (
+        check_command_payload_hygiene.audit_command_payloads(
+            'git -C repo_a commit -m "fix: a && b"',
+            cwd=tmp_path,
+            prohibited_identifiers=[],
+            unpushed_commit_count=1,
+        )
+        == []
+    )
+    # Commit in repo_a does not taint a push in repo_b.
+    assert (
+        check_command_payload_hygiene.audit_command_payloads(
+            "git -C repo_a commit -m 'msg' && git -C repo_b push origin main",
+            cwd=tmp_path,
+            prohibited_identifiers=[],
+            unpushed_commit_count=1,
+        )
+        == []
+    )
+    # Standalone push in repo_a remains unaffected across invocations.
+    assert (
+        check_command_payload_hygiene.audit_command_payloads(
+            "git -C repo_a push origin main",
+            cwd=tmp_path,
+            prohibited_identifiers=[],
             unpushed_commit_count=1,
         )
         == []
