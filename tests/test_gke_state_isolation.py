@@ -206,6 +206,7 @@ def _init_args(calls: list[str]) -> str:
     return inits[0]
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_dev_gets_its_own_state_and_a_bucket(deploy) -> None:
     _, run = deploy
     result, calls = run("--env", "dev")
@@ -216,6 +217,7 @@ def test_dev_gets_its_own_state_and_a_bucket(deploy) -> None:
     assert "-backend-config=prefix=cage/gcp-gke/cage-dev" in init
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_environments_never_share_a_prefix(deploy) -> None:
     _, run = deploy
     prefixes = set()
@@ -230,6 +232,7 @@ def test_environments_never_share_a_prefix(deploy) -> None:
     }
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_regional_overlay_and_cli_override_select_their_own_state(deploy) -> None:
     root, run = deploy
     result, calls = run(
@@ -247,6 +250,7 @@ def test_regional_overlay_and_cli_override_select_their_own_state(deploy) -> Non
     assert "prefix=cage/gcp-gke/cage-x" in _init_args(calls)
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_legacy_shared_state_blocks_before_init(deploy) -> None:
     _, run = deploy
     result, calls = run("--env", "dev", legacy_state=True)
@@ -255,6 +259,7 @@ def test_legacy_shared_state_blocks_before_init(deploy) -> None:
     assert not [c for c in calls if c.startswith("terraform ")]
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_unknown_environment_fails_closed(deploy) -> None:
     _, run = deploy
     result, calls = run("--env", "nonexistent")
@@ -269,6 +274,7 @@ def _plan_args(calls: list[str]) -> str:
     return plans[0]
 
 
+@pytest.mark.allow_hermetic_gcloud
 @pytest.mark.parametrize(
     ("args", "banner", "region_log"),
     [
@@ -324,6 +330,7 @@ def test_posture_comes_from_the_profile(
     assert f"-var-file={profile}" in plan
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_region_variable_cannot_override_the_profile(deploy) -> None:
     _, run = deploy
     result, calls = run(
@@ -335,6 +342,7 @@ def test_region_variable_cannot_override_the_profile(deploy) -> None:
     assert "enable_nist_compliance" not in _plan_args(calls)
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_region_variable_is_the_fallback_without_a_profile_region(deploy) -> None:
     """dev.tfvars sets no jurisdiction, so CAGE_DEPLOYMENT_REGION still decides."""
     _, run = deploy
@@ -355,6 +363,7 @@ def test_region_variable_is_the_fallback_without_a_profile_region(deploy) -> Non
 # ── POAM-2026-131: images are rendered per deployment, before the plan ───────
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_plan_reads_the_digests_rendered_before_it(deploy) -> None:
     root, run = deploy
     result, calls = run("--env", "staging")
@@ -387,6 +396,7 @@ def test_plan_reads_the_digests_rendered_before_it(deploy) -> None:
     )
 
 
+@pytest.mark.allow_hermetic_gcloud
 @pytest.mark.parametrize(
     "env_name",
     ["staging", "prod", "eu-prod", "apac-prod", "us-dev", "eu-dev", "apac-dev"],
@@ -401,6 +411,7 @@ def test_every_profile_takes_its_project_from_the_environment(
     assert "-backend-config=bucket=proj-x-tfstate" in _init_args(calls)
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_skip_build_outside_a_git_checkout_names_the_fix(deploy) -> None:
     _, run = deploy
     result, calls = run("--env", "staging", build_args=("--skip-build",))
@@ -409,6 +420,7 @@ def test_skip_build_outside_a_git_checkout_names_the_fix(deploy) -> None:
     assert not [c for c in calls if c.startswith("terraform ")]
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_fresh_state_without_gke_runs_stage1_foundation_then_full_plan(deploy) -> None:
     _, run = deploy
     result, calls = run("--env", "staging", extra_env={"CLUSTER_IN_STATE": "0"})
@@ -431,6 +443,7 @@ def test_fresh_state_without_gke_runs_stage1_foundation_then_full_plan(deploy) -
     assert "-parallelism=1" not in applies[1]
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_cloudsql_lro_poll_drop_imports_runnable_instance_and_retries_apply(
     deploy,
 ) -> None:
@@ -459,6 +472,7 @@ def test_cloudsql_lro_poll_drop_imports_runnable_instance_and_retries_apply(
     assert len(applies) == 2
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_large_state_list_does_not_trigger_sigpipe_false_import_or_stage1(
     deploy,
 ) -> None:

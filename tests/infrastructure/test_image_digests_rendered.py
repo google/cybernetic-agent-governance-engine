@@ -227,6 +227,7 @@ def _render(env: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]
     )
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_render_writes_only_the_images_built_for_the_sha(tmp_path: Path) -> None:
     registry = f"gcr.io/{_PROJECT}"
     env = _stub_gcloud(
@@ -249,6 +250,7 @@ def test_render_writes_only_the_images_built_for_the_sha(tmp_path: Path) -> None
     assert "list-tags" not in (tmp_path / "gcloud.log").read_text(encoding="utf-8")
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_render_refuses_a_sha_with_no_first_party_build(tmp_path: Path) -> None:
     # Third-party tags resolve whatever the SHA; they must not mask a missing build.
     env = _stub_gcloud(tmp_path, {f"gcr.io/{_PROJECT}/opa:1.2.0-static"})
@@ -257,6 +259,7 @@ def test_render_refuses_a_sha_with_no_first_party_build(tmp_path: Path) -> None:
     assert "no first-party image is tagged abc1234" in result.stderr
 
 
+@pytest.mark.allow_hermetic_gcloud
 @pytest.mark.parametrize("project", ['x"; rm -rf /', "Bad_Project", ""])
 def test_render_refuses_a_malformed_project_id(tmp_path: Path, project: str) -> None:
     env = _stub_gcloud(tmp_path, set())
@@ -264,6 +267,7 @@ def test_render_refuses_a_malformed_project_id(tmp_path: Path, project: str) -> 
     assert _render(env, "--output", "-", "abc1234").returncode == 1
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_render_refuses_a_ref_that_is_not_a_commit_sha(tmp_path: Path) -> None:
     env = _stub_gcloud(tmp_path, set())
     assert _render(env, "--output", "-", "HEAD~1").returncode == 1

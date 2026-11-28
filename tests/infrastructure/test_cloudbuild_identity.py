@@ -186,6 +186,7 @@ def test_build_images_refuses_outside_git_checkout(tmp_path: Path) -> None:
     assert "refusing to build outside a git checkout" in res.stderr
 
 
+@pytest.mark.allow_hermetic_gcloud
 def test_attest_image_fails_closed_when_attestation_list_is_empty(
     tmp_path: Path,
 ) -> None:

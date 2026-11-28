@@ -89,6 +89,16 @@ from tests.fixtures.gateway_url_guard import (
 from tests.fixtures.gateway_url_guard import (
     refusal as gateway_url_refusal,
 )
+from tests.fixtures.gcloud_guard import (
+    ALLOW_HERMETIC_GCLOUD_MARKER,
+    HermeticGcloudError,
+    direct_refusal_message,
+    discover_host_gcloud_dirs,
+    ensure_gcloud_blocker_dir,
+    guard_subprocess_env,
+    is_gcloud_command,
+    targets_host_gcloud_dir,
+)
 from tests.fixtures.selection_flags import applied_marker_names
 
 os.environ.setdefault("LANGCHAIN_TRACING_V2", "false")
@@ -321,6 +331,77 @@ def assert_hermetic_gateway_url_unset(request: pytest.FixtureRequest):
             f"Hermetic test {request.node.nodeid} leaked "
             f"{GATEWAY_URL_ENV_VAR}={leaked!r} into os.environ; "
             "use monkeypatch.setenv so it is undone at teardown."
+        )
+
+
+@pytest.fixture(scope="session")
+def _hermetic_gcloud_blocker(tmp_path_factory: pytest.TempPathFactory):
+    """Session blocker shim directory and sentinel log for hermetic ``gcloud`` gating."""
+    root = tmp_path_factory.mktemp("hermetic_gcloud_guard")
+    sentinel_log = root / "blocked.log"
+    blocker_dir = ensure_gcloud_blocker_dir(root / "bin", sentinel_log)
+    host_dirs = discover_host_gcloud_dirs()
+    return blocker_dir, sentinel_log, host_dirs
+
+
+@pytest.fixture(autouse=True)
+def guard_hermetic_gcloud(
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+    _hermetic_gcloud_blocker,
+):
+    """Fail closed if a hermetic test invokes host ``gcloud`` without opt-in."""
+    if is_live_session(request.config):
+        yield
+        return
+
+    import inspect
+    import subprocess
+
+    blocker_dir, sentinel_log, host_dirs = _hermetic_gcloud_blocker
+    sentinel_log.write_text("", encoding="utf-8")
+    opted_in = request.node.get_closest_marker(ALLOW_HERMETIC_GCLOUD_MARKER) is not None
+
+    orig_init = subprocess.Popen.__init__
+    sig = inspect.signature(orig_init)
+
+    def _guarded_popen_init(self, *pargs, **kwargs):
+        bound = sig.bind_partial(self, *pargs, **kwargs)
+        args_val = bound.arguments.get("args")
+        executable_val = bound.arguments.get("executable")
+        shell_val = bool(bound.arguments.get("shell", False))
+        if not opted_in:
+            if is_gcloud_command(args_val, executable_val, shell=shell_val):
+                raise HermeticGcloudError(
+                    direct_refusal_message(request.node.nodeid, args_val)
+                )
+        elif targets_host_gcloud_dir(
+            args_val, executable_val, host_dirs, shell=shell_val
+        ):
+            raise HermeticGcloudError(
+                direct_refusal_message(request.node.nodeid, args_val)
+            )
+        bound.arguments["env"] = guard_subprocess_env(
+            bound.arguments.get("env"),
+            blocker_dir=blocker_dir,
+            opted_in=opted_in,
+            host_gcloud_dirs=host_dirs,
+        )
+        return orig_init(*bound.args, **bound.kwargs)
+
+    monkeypatch.setattr(subprocess.Popen, "__init__", _guarded_popen_init)
+    yield
+    recorded = (
+        sentinel_log.read_text(encoding="utf-8").strip()
+        if sentinel_log.exists()
+        else ""
+    )
+    if recorded:
+        sentinel_log.write_text("", encoding="utf-8")
+        pytest.fail(
+            f"Hermetic test {request.node.nodeid} invoked blocked gcloud:\n{recorded}\n"
+            f"Mock _gcloud/subprocess or add @pytest.mark.{ALLOW_HERMETIC_GCLOUD_MARKER} "
+            "for an explicit test-local stub."
         )
 
 
