@@ -13,26 +13,30 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""check_command_payload_hygiene.py — Reproducible Command/Payload Contract Mirror (POAM-2026-214)
+"""check_command_payload_hygiene.py — Reproducible Command/Payload Contract Mirror (POAM-2026-214 / POAM-2026-258)
 
 Pure-stdlib property mirror for the external pre-execution command guard's
 path-vs-payload separation and 0-commit ``git push`` fail-closed invariant.
 
 Shared Option-Set Contract
 --------------------------
-The external pre-execution guard's referenced-payload reader (``leak_guard.py:672-687``)
-opens files named by:
+In ``origin/main`` (``#947`` ``310dbeb1``), the mirror listed five options. After
+``POAM-2026-258`` review against live ``gh --help`` and the external reader:
 
-* ``--body-file <path>`` and ``--body-file=<path>``
-* ``--input <path>`` and ``--input=<path>``
-* ``-F <key>=@<path>``, ``-F@<path>``, ``-F<key>=@<path>``, ``--field <key>=@<path>``,
-  ``--field=<key>=@<path>``, ``--raw-field <key>=@<path>``, and ``--raw-field=<key>=@<path>``
+* Covered identically by both: ``--body-file``, ``--input``, ``-F @`` (on ``gh api``)
+* Mirror leads the external guard (``POAM-2026-258``): ``--field @`` (already
+  in ``SUPPORTED_FILE_PAYLOAD_OPTIONS``; external reader does not yet open
+  ``--field``, so do not "sync" by removing ``--field @`` from the mirror)
+* Removed immediately (``POAM-2026-258``): ``--raw-field @`` (``-f`` /
+  ``--raw-field`` sends static literal strings and never opens files)
+* Held for Patch 3 lockstep sync (``POAM-2026-258``): remaining long-form/non-``api``
+  file readers (``--notes-file``, ``--from-file``, ``--env-file``, ``workflow run -F``)
 
-This module excises **only** those exact file-naming option values from the
-command-line scan and reads their referenced files using the same extractor so
-the excision set and reader set cannot silently drift apart. Inline flags
-(``--body``, ``--title``), heredoc bodies, and ``-F`` values without ``@``
-remain in the scanned command text.
+This module excises **only** the entries in ``SUPPORTED_FILE_PAYLOAD_OPTIONS``
+from the command-line scan and reads their referenced files using the same
+extractor so excision and reading cannot drift. Inline flags (``--body``,
+``--title``, ``-f`` / ``--raw-field``), heredoc bodies, and non-``@`` ``-F``
+values remain in the scanned command text.
 """
 
 from __future__ import annotations
@@ -45,19 +49,19 @@ from scripts.check_project_id_hygiene import PROHIBITED_IDENTIFIERS
 
 _SHELL_SEPARATORS = frozenset({";", "&&", "||", "|"})
 
-#: Exact option set mirrored from the external referenced-payload reader
-#: (``leak_guard.py:672-687``). Any divergence between this set and the external
-#: reader either reopens a path false positive or opens a payload bypass.
+#: File-payload option set enforced by this mirror: matches the external reader
+#: on ``--body-file``, ``--input``, and ``-F @``, and intentionally leads the
+#: external guard on ``--field @`` (tracked in POAM-2026-258). ``--notes-file``
+#: and sibling long-form flags stay held here until Patch 3 lands in lockstep.
 SUPPORTED_FILE_PAYLOAD_OPTIONS: tuple[str, ...] = (
     "--body-file",
     "--input",
     "-F @",
     "--field @",
-    "--raw-field @",
 )
 
 _PATH_FLAGS = frozenset({"--body-file", "--input"})
-_AT_VALUE_FLAGS = frozenset({"-F", "--field", "--raw-field"})
+_AT_VALUE_FLAGS = frozenset({"-F", "--field"})
 
 
 def _split_shell_segments(cmdline: str) -> list[list[str]]:
@@ -150,11 +154,7 @@ def _inspect_segment(
                 scrubbed_tokens.append(tokens[idx + 1])
             idx += 2
             continue
-        if is_gh and (
-            tok.startswith("-F")
-            or tok.startswith("--field=")
-            or tok.startswith("--raw-field=")
-        ):
+        if is_gh and (tok.startswith("-F") or tok.startswith("--field=")):
             prefix, sep, rhs = tok.partition("=")
             if not sep and tok.startswith("-F@"):
                 scrubbed_tokens.append("-F@")
