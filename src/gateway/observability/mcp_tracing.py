@@ -94,7 +94,7 @@ async def sanitize_mcp_tool_response(
     *,
     post_exec_protected: bool = False,
 ) -> str | None:
-    """Sanitize an MCP tool response for indirect injection (AI 600-1 §2.3, AI600-003).
+    """Sanitize an MCP tool response for indirect injection (AI 600-1 §2.9, AI600-003).
 
     Checks the tool response against ``detect_indirect_injection()`` using
     lightweight kernel imports (avoiding cold-importing FastAPI/middleware on
@@ -199,7 +199,7 @@ def patch_mcp_tools(mcp_server) -> None:  # type: ignore[no-untyped-def]
                 )
 
                 # 4. Sanitize tool response against indirect prompt injection
-                # (AI 600-1 §2.3 / A.9.2 / POAM-2026-253: never refuse after execution)
+                # (AI 600-1 §2.9 / A.9.2 / POAM-2026-253: never refuse after execution)
                 san_outcome = await evaluate_post_execution_output(
                     name,
                     result,

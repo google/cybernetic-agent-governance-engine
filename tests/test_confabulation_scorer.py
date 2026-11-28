@@ -13,7 +13,7 @@
 # limitations under the License.
 import pytest
 
-"""Tests for confabulation scorer — AI 600-1 §2.1 (CTRL_AGT_001).
+"""Tests for confabulation scorer — AI 600-1 §2.2 (CTRL_AGT_001).
 
 POAM: AI600-001
 Phase: 1 (quick wins)

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Confabulation scorer — AI 600-1 §2.1 control.
+"""Confabulation scorer — AI 600-1 §2.2 control.
 
 Records low-confidence events to Telemetry for audit purposes.
 Implements CTRL_AGT_001: confidence ≥ CONFIDENCE_MIN_SCORE threshold.

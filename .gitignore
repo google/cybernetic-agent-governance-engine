@@ -286,7 +286,7 @@ litellm_config.yaml
 .roo*
 !.roomodes
 
-# AI 600-1 §2.8 — generated SBOM artifact (not committed)
+# AI 600-1 §2.12 — generated SBOM artifact (not committed)
 sbom.json
 coverage.json
 

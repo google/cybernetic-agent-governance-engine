@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for agentic scope statement — AI 600-1 §2.5.1, §2.5.4.
+"""Tests for agentic scope statement — AI 600-1 §2.7.
 
 POAM: AI600-004
 Phase: 0 (foundation)
@@ -140,12 +140,12 @@ class TestCausalGatekeeperAuthorizedActionSpace:
         assert result is False
 
     def test_agentic_scope_statement_file_exists(self):
-        """docs/AGENTIC_SCOPE_STATEMENT.md must exist (AI 600-1 §2.5.1 prerequisite)."""
+        """docs/AGENTIC_SCOPE_STATEMENT.md must exist (AI 600-1 §2.7 prerequisite)."""
         import pathlib
 
         scope_doc = pathlib.Path("docs/AGENTIC_SCOPE_STATEMENT.md")
         assert scope_doc.exists(), (
-            "docs/AGENTIC_SCOPE_STATEMENT.md is missing — required for AI 600-1 §2.5.1 "
+            "docs/AGENTIC_SCOPE_STATEMENT.md is missing — required for AI 600-1 §2.7 "
             "and SR 26-2 §3.1 ATO package."
         )
 
@@ -154,7 +154,7 @@ class TestCausalGatekeeperAuthorizedActionSpace:
         control-mapping entry with required regulatory metadata fields.
 
         AGENTIC_SCOPE_STATEMENT was promoted from a plain document-path pointer to a
-        full GovernanceControl entry (SR 26-2 §3.1, AI 600-1 §2.5) so that it can be
+        full GovernanceControl entry (SR 26-2 §3.1, AI 600-1 §2.7) so that it can be
         resolved by ControlRegistry.get_mapping() and appear in SIEM audit trails.
         The document path is captured in the 'description' field.
         """
@@ -166,7 +166,7 @@ class TestCausalGatekeeperAuthorizedActionSpace:
         )
         assert "agentic_scope_statement" in baseline, (
             "US_FED_BASELINE.json must contain 'agentic_scope_statement' field "
-            "(AI 600-1 §2.5.1 prerequisite)."
+            "(AI 600-1 §2.7 prerequisite)."
         )
         entry = baseline["agentic_scope_statement"]
         assert isinstance(entry, dict), (

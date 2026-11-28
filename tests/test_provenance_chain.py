@@ -13,7 +13,7 @@
 # limitations under the License.
 # Closure regression guard for: POAM-2026-065
 
-"""Tests for provenance chain — AI 600-1 §2.7 (Information Integrity).
+"""Tests for provenance chain — AI 600-1 §2.8 (Information Integrity).
 
 POAM: AI600-005
 Phase: 2 (core hardening)

@@ -3,13 +3,13 @@
     "internal_id": "DOC-SCOPE-001",
     "primary_framework": "SR 26-2 §3.1",
     "co_frameworks": [
-      "AI 600-1 §2.5",
+      "AI 600-1 §2.7",
       "NIST AI RMF GOVERN-1.1",
       "ISO 42001 §A.2.2"
     ],
     "legacy_citation": "SR 26-2 §III.A",
     "scope": "agentic",
-    "description": "Reference to the agentic scope statement document (docs/AGENTIC_SCOPE_STATEMENT.md) that declares the authorized action space, HITL boundaries, and inter-agent trust model. Required under SR 26-2 §3.1 and AI 600-1 §2.5 before any agentic system may be deployed in a regulated environment."
+    "description": "Reference to the agentic scope statement document (docs/AGENTIC_SCOPE_STATEMENT.md) that declares the authorized action space, HITL boundaries, and inter-agent trust model. Required under SR 26-2 §3.1 and AI 600-1 §2.7 before any agentic system may be deployed in a regulated environment."
   },
   "_baseline_type": "additive_regional_layer",
   "_global_baseline": "ISO_42001",

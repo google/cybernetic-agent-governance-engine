@@ -1,6 +1,6 @@
 # CAGE Agentic Scope Statement
 
-**Authority**: NIST AI 600-1 §2.5.1, §2.5.4 | SR 26-2 §3.1 | EO 14110 §4.2
+**Authority**: NIST AI 600-1 §2.7 | SR 26-2 §3.1 | EO 14110 §4.2
 **Version**: 2.1.1
 **Date**: 2026-08-05
 
@@ -153,7 +153,7 @@ and are logged to the UCA WORM ledger.
 ### 3.5 No Peer-to-Peer Agent Calls
 
 CAGE does not implement peer-to-peer agent communication. All inter-component
-calls are mediated by the gateway. This eliminates the NIST AI 600-1 §2.5.3 risk
+calls are mediated by the gateway. This eliminates the NIST AI 600-1 §2.7 risk
 of unverified inter-agent trust propagation.
 
 ---
@@ -162,17 +162,17 @@ of unverified inter-agent trust propagation.
 
 | Mechanism | File | NIST AI 600-1 Control |
 |---|---|---|
-| OPA policy evaluation | `src/gateway/governance/langgraph_harness/opa_node_factory.py` | §2.5.1 |
-| Trade governance policy | `src/cage_finance/opa/trade_governance.rego` | §2.5.1 |
-| Routing seal verification | `src/gateway/governance/routing_seal.py` | §2.5.4 |
+| OPA policy evaluation | `src/gateway/governance/langgraph_harness/opa_node_factory.py` | §2.7 |
+| Trade governance policy | `src/cage_finance/opa/trade_governance.rego` | §2.7 |
+| Routing seal verification | `src/gateway/governance/routing_seal.py` | §2.7 |
 | CausalGatekeeper | `src/gateway/governance/causal/gatekeeper.py` | §2.3 |
-| ConsensusEngine & finance consensus tier | `src/gateway/governance/consensus/engine.py`, `src/cage_finance/tiers/consensus_tier.py` | §2.5.2 |
-| DeferQueue dual-control approval & deferral | `src/gateway/governance/defer_queue.py`, `src/gateway/governance/governor/stages/confidence.py` | §2.5.2 |
-| Control Barrier Function | `src/gateway/governance/safety/cbf_engine.py` | §2.5.4 |
+| ConsensusEngine & finance consensus tier | `src/gateway/governance/consensus/engine.py`, `src/cage_finance/tiers/consensus_tier.py` | §2.7 |
+| DeferQueue dual-control approval & deferral | `src/gateway/governance/defer_queue.py`, `src/gateway/governance/governor/stages/confidence.py` | §2.7 |
+| Control Barrier Function | `src/gateway/governance/safety/cbf_engine.py` | §2.7 |
 | Confabulation scorer | `src/gateway/governance/confabulation_scorer.py` | §2.1 |
 | Prompt injection detector | `src/gateway/governance/prompt_injection_detector.py` | §2.3 |
 | NeMo CBRN rails | `src/integrations/nemo/colang/cbrn_rails.co` | §2.6 |
-| FTRA Reachability Gate | `src/gateway/governance/ftra/node_factory.py` | §2.5.4 |
+| FTRA Reachability Gate | `src/gateway/governance/ftra/node_factory.py` | §2.7 |
 
 ---
 
@@ -271,10 +271,10 @@ SR 26-2 §3.2 (4-hour SLA) has no legal force outside `US_FED` deployments.
 
 | SR 26-2 Requirement | CAGE Implementation | Evidence |
 |---|---|---|
-| §2.5.1 Authorized action space | OPA policy + routing seal | `opa_node_factory.py`, `routing_seal.py` |
-| §2.5.2 Human oversight | ConsensusEngine + ConsensusTierPlugin + DeferQueue | `src/gateway/governance/consensus/engine.py`, `src/cage_finance/tiers/consensus_tier.py`, `src/gateway/governance/defer_queue.py` |
-| §2.5.3 Inter-agent trust | Gateway-only orchestration + Linkerd mesh policy | `hybrid_server.py`, `workload_identity.py` |
-| §2.5.4 Scope limitation | CausalGatekeeper + OPA + FTRA gate | `src/gateway/governance/causal/gatekeeper.py`, `src/gateway/governance/ftra/node_factory.py` |
+| §2.7 Authorized action space | OPA policy + routing seal | `opa_node_factory.py`, `routing_seal.py` |
+| §2.7 Human oversight | ConsensusEngine + ConsensusTierPlugin + DeferQueue | `src/gateway/governance/consensus/engine.py`, `src/cage_finance/tiers/consensus_tier.py`, `src/gateway/governance/defer_queue.py` |
+| §2.7 Inter-agent trust | Gateway-only orchestration + Linkerd mesh policy | `hybrid_server.py`, `workload_identity.py` |
+| §2.7 Scope limitation | CausalGatekeeper + OPA + FTRA gate | `src/gateway/governance/causal/gatekeeper.py`, `src/gateway/governance/ftra/node_factory.py` |
 | §3.1 Scope statement | This document | `docs/governance/AGENTIC_SCOPE_STATEMENT.md` |
 | §3.2 HITL SLA (4 hours) | DeferQueue TTL + regional SLA tables | `src/gateway/governance/defer_queue.py`, `src/gateway/governance/constants.py` |
 | §4.1 Agent identity | Linkerd mTLS workload identity (`l5d-client-id`) | `workload_identity.py` |
@@ -282,5 +282,5 @@ SR 26-2 §3.2 (4-hour SLA) has no legal force outside `US_FED` deployments.
 ---
 
 *Document end — CAGE Agentic Scope Statement v2.1.0*
-*Authority: NIST AI 600-1 §2.5, SR 26-2 §3.1, EO 14110 §4.2*
+*Authority: NIST AI 600-1 §2.7, SR 26-2 §3.1, EO 14110 §4.2*
 *Next review: 2026-11-05 (quarterly) or upon any SR 26-2 amendment*

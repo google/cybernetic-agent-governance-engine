@@ -94,7 +94,7 @@ PRESIDIO_SCORE_THRESHOLD: float = float(
 # TELEMETRY_PII_SCRUBBING_ENABLED: When set to "true", the pii_audit_log()
 # function applies the PIISanitizer to Langfuse span input/output fields
 # before emitting them.  This prevents PII from appearing in compliance
-# audit traces, satisfying AI 600-1 §2.2 and GDPR Art. 25 data minimisation.
+# audit traces, satisfying AI 600-1 §2.4 and GDPR Art. 25 data minimisation.
 # See docs/PII_SCRUBBING_POLICY.md for the full scrubbing field policy.
 _TELEMETRY_PII_SCRUBBING_ENABLED: bool = (
     os.environ.get("TELEMETRY_PII_SCRUBBING_ENABLED", "true").lower() == "true"
@@ -439,7 +439,7 @@ class PIISanitizer:
 
 
 # ---------------------------------------------------------------------------
-# pii_audit_log — AI 600-1 §2.2 structured audit record
+# pii_audit_log — AI 600-1 §2.4 structured audit record
 # ---------------------------------------------------------------------------
 
 
