@@ -1307,3 +1307,90 @@ async def test_chat_span_exports_no_message_or_response_content(
     assert raw.attributes["gen_ai.request.model"] == "test-model"
     assert leaks(raw_spans, _PROMPT_CANARY, _RESPONSE_CANARY) == []
     assert leaks(capture.exported_spans(), _PROMPT_CANARY, _RESPONSE_CANARY) == []
+
+
+# ---------------------------------------------------------------------------
+# Passive, read-only X-Cage-Tokens-Remaining header on 200 OK responses
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_200_ok_response_includes_tokens_remaining_header(proxy_deps):
+    """Non-streaming 200 OK responses carry passive X-Cage-Tokens-Remaining header."""
+    from src.gateway.governance.token_quota_proxy import QuotaCheckResult
+
+    app = proxy_deps["app"]
+    quota_proxy = proxy_deps["quota_proxy"]
+    quota_proxy.check_and_increment = AsyncMock(
+        return_value=QuotaCheckResult(
+            allowed=True,
+            agent_id="agent-1",
+            step_count=2,
+            accumulated_tokens=15_000,
+            step_quota_max=12,
+            token_quota_max=100_000,
+            block_reason=None,
+            session_ttl=3600,
+        )
+    )
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.post("/v1/chat/completions", json=_chat_body())
+
+    assert resp.status_code == 200
+    assert resp.headers.get("X-Cage-Tokens-Remaining") == "85000"
+
+
+@pytest.mark.asyncio
+async def test_streaming_200_ok_response_includes_tokens_remaining_header(proxy_deps):
+    """Streaming 200 OK responses also carry passive X-Cage-Tokens-Remaining header."""
+    from src.gateway.governance.token_quota_proxy import QuotaCheckResult
+
+    app = proxy_deps["app"]
+    mod = proxy_deps["module"]
+    quota_proxy = proxy_deps["quota_proxy"]
+    quota_proxy.check_and_increment = AsyncMock(
+        return_value=QuotaCheckResult(
+            allowed=True,
+            agent_id="agent-stream",
+            step_count=1,
+            accumulated_tokens=4_000,
+            step_quota_max=12,
+            token_quota_max=50_000,
+            block_reason=None,
+            session_ttl=3600,
+        )
+    )
+
+    sse_chunks = [
+        b'data: {"choices": [{"delta": {"content": "Hello"}}]}\n\n',
+        b"data: [DONE]\n\n",
+    ]
+
+    async def _fake_aiter_bytes():
+        for chunk in sse_chunks:
+            yield chunk
+
+    fake_stream_resp = MagicMock()
+    fake_stream_resp.status_code = 200
+    fake_stream_resp.aiter_bytes = _fake_aiter_bytes
+    fake_stream_resp.aread = AsyncMock(return_value=b"")
+
+    fake_cm = MagicMock()
+    fake_cm.__aenter__ = AsyncMock(return_value=fake_stream_resp)
+    fake_cm.__aexit__ = AsyncMock(return_value=False)
+
+    stream_client = MagicMock(spec=httpx.AsyncClient)
+    stream_client.is_closed = False
+    stream_client.stream = MagicMock(return_value=fake_cm)
+    mod._get_http_client = lambda: stream_client
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        resp = await client.post("/v1/chat/completions", json=_chat_body(stream=True))
+
+    assert resp.status_code == 200
+    assert resp.headers.get("X-Cage-Tokens-Remaining") == "46000"
