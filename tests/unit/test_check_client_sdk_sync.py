@@ -339,3 +339,63 @@ def test_read_tagged_package_files_handles_non_ascii_paths(tmp_path: Path) -> No
     ok, files = sdk_gate._read_tagged_package_files(repo, "client-v0.4.0")
     assert ok is True
     assert files[Path("notes — utf8.txt")] == b"utf8-payload\n"
+
+
+def test_release_state_scopes_tags_to_head_ancestry_on_historical_rerun(
+    tmp_path: Path,
+) -> None:
+    """Issue #927: future client-v* tags on main must not break historical CI reruns."""
+    import subprocess
+
+    repo = _make_fake_repo(tmp_path, pkg_version="0.4.1", release_status="unreleased")
+    pkg_pyproject = repo / "packages" / "cage-client" / "pyproject.toml"
+    pkg_init = repo / "packages" / "cage-client" / "src" / "cage_client" / "__init__.py"
+
+    def _git(*args: str) -> str:
+        proc = subprocess.run(
+            ["git", *args], cwd=repo, capture_output=True, text=True, check=True
+        )
+        return proc.stdout.strip()
+
+    _git("init", "-q")
+    _git("config", "user.email", "test@example.com")
+    _git("config", "user.name", "Test")
+    _git("add", ".")
+    _git("commit", "-q", "-m", "v0.4.1 unreleased")
+    _git("tag", "client-v0.4.0")
+    historical_sha = _git("rev-parse", "HEAD")
+
+    pkg_pyproject.write_text(
+        '[project]\nname = "cage-client"\nversion = "0.5.0"\n'
+        '[tool.cage.release]\nstatus = "published"\n',
+        encoding="utf-8",
+    )
+    pkg_init.write_text(
+        'import json\nfrom .core import CageClient\n__version__ = "0.5.0"\n__all__ = ["CageClient"]\n',
+        encoding="utf-8",
+    )
+    _git("add", ".")
+    _git("commit", "-q", "-m", "release v0.5.0")
+    _git("tag", "client-v0.5.0")
+
+    # Checking out the historical commit after client-v0.5.0 exists still passes.
+    _git("checkout", "-q", historical_sha)
+    assert sdk_gate.release_state_violations(repo) == []
+
+    # Cutting a new release tag still inspects repo-wide tags to prevent collisions.
+    cut_errs = sdk_gate.release_state_violations(
+        repo, cutting_release_tag="client-v0.4.1"
+    )
+    assert any(
+        "strictly greater than existing release '0.5.0'" in err for err in cut_errs
+    )
+
+    # On main where client-v0.5.0 is an ancestor, claiming 0.4.1/0.5.0 unreleased fails.
+    _git("checkout", "-q", "-")
+    pkg_pyproject.write_text(
+        '[project]\nname = "cage-client"\nversion = "0.5.0"\n'
+        '[tool.cage.release]\nstatus = "unreleased"\n',
+        encoding="utf-8",
+    )
+    unrel_errs = sdk_gate.release_state_violations(repo)
+    assert any("already exists" in err for err in unrel_errs)

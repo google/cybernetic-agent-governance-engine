@@ -409,9 +409,30 @@ def _git_bytes(repo_root: Path, *args: str) -> tuple[bool, bytes]:
     return result.returncode == 0, result.stdout
 
 
-def _list_conformance_release_tags(repo_root: Path) -> tuple[bool, list[str]]:
-    """Return ``(git_available, conformance_v_tags)`` from local git refs."""
-    ok, raw = _git_bytes(repo_root, "tag", "-l", f"{CONFORMANCE_TAG_PREFIX}*")
+def _list_conformance_release_tags(
+    repo_root: Path, *, merged_into: str | None = "HEAD"
+) -> tuple[bool, list[str]]:
+    """Return ``(git_available, conformance_v_tags)`` from local git refs.
+
+    When ``merged_into`` is set (default ``HEAD``), only tags reachable from that
+    commit are returned so re-running CI on a historical commit is unaffected by
+    later ``conformance-v*`` releases. Release cuts pass ``merged_into=None``.
+    """
+    if merged_into is not None:
+        has_ref, _ = _git_bytes(repo_root, "rev-parse", "--verify", merged_into)
+        if not has_ref:
+            is_repo, _ = _git_bytes(repo_root, "rev-parse", "--git-dir")
+            return (True, []) if is_repo else (False, [])
+        args: tuple[str, ...] = (
+            "tag",
+            "--merged",
+            merged_into,
+            "-l",
+            f"{CONFORMANCE_TAG_PREFIX}*",
+        )
+    else:
+        args = ("tag", "-l", f"{CONFORMANCE_TAG_PREFIX}*")
+    ok, raw = _git_bytes(repo_root, *args)
     if not ok:
         return False, []
     tags = [
@@ -511,7 +532,10 @@ def release_state_violations(
     if git_tags is not None:
         tags = list(git_tags)
     else:
-        git_ok, tags = _list_conformance_release_tags(repo_root)
+        git_ok, tags = _list_conformance_release_tags(
+            repo_root,
+            merged_into=None if cutting_release_tag is not None else "HEAD",
+        )
         if not git_ok:
             return [
                 "Unable to query git conformance-v* tags to verify "
