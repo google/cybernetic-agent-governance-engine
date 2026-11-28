@@ -492,16 +492,51 @@ def test_new_violation_fails_even_when_total_does_not_rise(
     assert _check(repo, path, swapped) == 1
 
 
-def test_lowering_allowed_and_raising_refused(repo: Repo, tmp_path: Path) -> None:
+def test_lowering_allowed_and_raising_refused(
+    repo: Repo, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     path = _baseline(repo, tmp_path, TWO_DEFECTS)
     one = "Remediation commit: `abcdef1`.\n"
-    assert _check(repo, path, one) == 0
+    capsys.readouterr()
+    # Issue #931: dropping below baseline must fail until --update-baseline tightens it.
+    assert _check(repo, path, one) == 1
+    assert "--update-baseline" in capsys.readouterr().err
     assert _check(repo, path, one, "--update-baseline") == 0
+    assert _check(repo, path, one) == 0
     data = json.loads(path.read_text())
     assert data["baseline"] == 1 and data["history"][-1]["event"] == "update"
     assert _check(repo, path, TWO_DEFECTS) == 1
     assert _check(repo, path, TWO_DEFECTS, "--update-baseline") == 1
     assert json.loads(path.read_text())["baseline"] == 1
+
+
+def test_planted_ratchet_slack_fails_compare_and_cli_without_blocking_update(
+    repo: Repo, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = _baseline(repo, tmp_path, TWO_DEFECTS)
+    one = "Remediation commit: `abcdef1`.\n"
+    res = _scan(repo, one)
+    state, err = gate.read_baseline(path)
+    assert err is None and state is not None
+    det = gate.compute_detector_fingerprint()
+
+    failures = gate.compare_to_baseline(res, state, detector_sha256=det)
+    assert len(failures) == 1
+    assert "ratchet slack" in failures[0]
+    assert "unlabelled_unresolved: 1 -> 0" in failures[0]
+    assert (
+        gate.compare_to_baseline(res, state, detector_sha256=det, allow_slack=True)
+        == []
+    )
+
+    capsys.readouterr()
+    assert _check(repo, path, one) == 1
+    err_out = capsys.readouterr().err
+    assert "ratchet slack" in err_out
+    assert "--update-baseline" in err_out
+
+    assert _check(repo, path, one, "--update-baseline") == 0
+    assert _check(repo, path, one) == 0
 
 
 def test_detector_change_requires_recompute_with_reason(

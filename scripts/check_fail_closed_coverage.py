@@ -2146,6 +2146,8 @@ def write_initial_shadow_except_baseline(
 def _check_shadow_counts(
     uncovered: Sequence[ShadowExceptPair],
     state: ShadowBaselineState,
+    *,
+    allow_slack: bool = False,
 ) -> Violation | None:
     if len(uncovered) > state.baseline:
         sample = "; ".join(
@@ -2173,6 +2175,23 @@ def _check_shadow_counts(
             "offset by @pytest.mark.covers pins — add a structured "
             "code/failure_kind discriminator or collapse the handlers.",
         )
+    if not allow_slack:
+        if len(uncovered) < state.baseline:
+            return Violation(
+                "SHADOW_EXCEPT_BASELINE_SLACK",
+                SHADOW_EXCEPT_BASELINE_REL_PATH.as_posix(),
+                f"uncovered outcome-normalizing except pairs dropped below baseline "
+                f"({state.baseline} -> {len(uncovered)}); run --update-baseline to "
+                "tighten tests/.shadow-except-baseline.",
+            )
+        if live_prose < max_prose:
+            return Violation(
+                "SHADOW_EXCEPT_BASELINE_SLACK",
+                SHADOW_EXCEPT_BASELINE_REL_PATH.as_posix(),
+                f"needs_structured_discriminator shadow-except pairs dropped below "
+                f"recorded breakdown ({max_prose} -> {live_prose}); run "
+                "--update-baseline to tighten tests/.shadow-except-baseline.",
+            )
     return None
 
 
@@ -2874,7 +2893,7 @@ def _run_update_baseline(
     )
     covered_count = len(evaluated) - len(uncovered)
     breakdown = summarize_shadow_uncovered_breakdown(uncovered)
-    count_err = _check_shadow_counts(uncovered, existing)
+    count_err = _check_shadow_counts(uncovered, existing, allow_slack=True)
     if count_err is not None:
         print(
             f"FAIL: refusing to raise shadow-except baseline (monotonic ratchet): "
