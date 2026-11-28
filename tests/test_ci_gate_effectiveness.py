@@ -2347,18 +2347,17 @@ def test_poam_2026_214_resolved_payload_hygiene_and_zero_commit_push_guard(
     """POAM-2026-214: a clean payload at a path matching a denylist token must not be refused,
     while leaks inside referenced payloads/heredocs/inline args and 0-commit pushes fail closed.
 
-    Contract counterpart: external pre-execution guard referenced-payload reader
-    (``leak_guard.py:672-687``) covering ``--body-file``, ``--input``, ``-F @file``
-    (plus ``--field`` / ``--raw-field``), and their ``=`` forms. Keep this option set
-    synchronized with the external reader so neither drift reopens false positives nor
-    leaves a bypass across uninspected file flags.
+    Contract direction (``POAM-2026-258``): ``--body-file``, ``--input``, and ``-F @``
+    match the external reader, while ``--field @`` leads the external guard
+    (keep it in the mirror; external Patch 3 catches up). ``-f`` / ``--raw-field``
+    send static literal strings and were removed from excision, while ``--notes-file``
+    and sibling long-form flags stay held until Patch 3 lands in lockstep.
     """
     assert set(check_command_payload_hygiene.SUPPORTED_FILE_PAYLOAD_OPTIONS) == {
         "--body-file",
         "--input",
         "-F @",
         "--field @",
-        "--raw-field @",
     }
 
     token = "example-denied-token"
@@ -2415,3 +2414,25 @@ def test_poam_2026_214_resolved_payload_hygiene_and_zero_commit_push_guard(
         )
         == []
     )
+
+
+def test_poam_2026_258_raw_field_at_syntax_stays_scanned_inline(
+    tmp_path: Path,
+) -> None:
+    """POAM-2026-258: in ``gh api`` / ``gh workflow run``, ``-f`` / ``--raw-field`` sends
+    a literal string and never opens ``@<path>``, so ``key=@token`` must remain in
+    scanned command text rather than being excised as a file path."""
+    token = "example-denied-token"
+    clean_file = tmp_path / token
+    clean_file.write_text("clean content on disk\n", encoding="utf-8")
+
+    for cmd in (
+        f"gh api repos/o/r -f body=@{token}",
+        f"gh api repos/o/r --raw-field body=@{token}",
+        f"gh api repos/o/r --raw-field=body=@{token}",
+    ):
+        violations = check_command_payload_hygiene.audit_command_payloads(
+            cmd, cwd=tmp_path, prohibited_identifiers=[token]
+        )
+        assert any("command arguments/data" in v for v in violations), (cmd, violations)
+        assert not any("referenced payload" in v for v in violations), (cmd, violations)
