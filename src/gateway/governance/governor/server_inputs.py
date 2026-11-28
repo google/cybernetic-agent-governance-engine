@@ -149,13 +149,17 @@ def strip_untrusted_shadow_params(
 
 
 def _iter_scannable_strings(value: Any) -> Iterator[str]:
-    """Yield string leaves from nested request parameter structures."""
+    """Yield every caller string in nested params: string leaves and mapping keys.
+
+    Nothing is skipped by key name. Only top-level kernel keys are stripped
+    from the params, so a nested key named like one is ordinary caller data.
+    """
     if isinstance(value, str):
         yield value
     elif isinstance(value, Mapping):
         for k, v in value.items():
-            if isinstance(k, str) and k in KERNEL_SERVER_INPUT_KEYS:
-                continue
+            if isinstance(k, str):
+                yield k
             yield from _iter_scannable_strings(v)
     elif isinstance(value, (list, tuple, set, frozenset)):
         for item in value:
